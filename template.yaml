@@ -1,0 +1,248 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: SAM Template for Puppeteer PDF Generation and Email Sending with Lambda Function URL and S3 Integration
+
+Globals:
+  Function:
+    Runtime: nodejs18.x
+    Timeout: 120
+    Environment:
+      Variables:
+        SEMAPHOR_APP_URL: !Ref SemaphorAppUrl
+        LAMBDA_API_KEY: !Ref LambdaApiKey
+
+Parameters:
+  SemaphorAppUrl:
+    Type: String
+    Description: Base URL for Semaphor application
+    Default: https://semaphor.cloud
+
+  LambdaApiKey:
+    Type: String
+    Description: API key for Lambda authentication with Semaphor backend
+    NoEcho: true
+
+
+Resources:
+  # S3 Bucket Resource
+  PdfBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'semaphor-reports-${AWS::AccountId}-${AWS::StackName}'
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldPdfs
+            Status: Enabled
+            ExpirationInDays: 30
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:Put
+            Function: !GetAtt EmailSenderFunction.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: emails/
+
+  # S3 Bucket Policy to Control Access
+  PdfBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PdfBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowLambdaAccessGeneratePdf
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt GeneratePdfFunctionRole.Arn
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:PutObjectTagging
+            Resource:
+              - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/pdfs/*'
+              - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/emails/*'
+          - Sid: AllowLambdaAccessEmailSender
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt EmailSenderFunctionRole.Arn
+            Action:
+              - s3:GetObject
+              - s3:GetObjectTagging
+            Resource:
+              - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/emails/*'
+
+  # IAM Role for GeneratePdfFunction
+  GeneratePdfFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:PutObjectTagging
+                Resource:
+                  - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/pdfs/*'
+                  - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/emails/*'
+
+  # Lambda Function for PDF Generation
+  GeneratePdfFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.handler
+      CodeUri: ./pdf-generation # Directory for PDF generation code
+      MemorySize: 4096
+      Role: !GetAtt GeneratePdfFunctionRole.Arn
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins: ['*']
+          AllowMethods: ['GET', 'POST']
+      Environment:
+        Variables:
+          S3_BUCKET_NAME: !Ref PdfBucket
+
+  # IAM Role for EmailSenderFunction
+  EmailSenderFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3AndSESPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectTagging
+                Resource: !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/emails/*'
+              - Effect: Allow
+                Action:
+                  - ses:SendRawEmail
+                Resource: '*'
+
+  # Lambda Function for Email Sending
+  EmailSenderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.handler
+      CodeUri: ./email-sender # Directory for email sending code
+      MemorySize: 128 # Smaller memory since it’s lightweight
+      Role: !GetAtt EmailSenderFunctionRole.Arn
+      Events:
+        S3UploadTrigger:
+          Type: S3
+          Properties:
+            Bucket: !Ref PdfBucket
+            Events: s3:ObjectCreated:Put
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: emails/
+
+  # Lambda Function to process schedules
+  ScheduleProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.handler
+      Runtime: nodejs18.x
+      Timeout: 120 # 2 minutes timeout
+      MemorySize: 256
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+                - lambda:InvokeAsync
+              Resource: !GetAtt GeneratePdfFunction.Arn
+        - AWSLambdaBasicExecutionRole # For CloudWatch Logs
+      Environment:
+        Variables:
+          GENERATE_PDF_FUNCTION_NAME: !Ref GeneratePdfFunction
+      PackageType: Zip
+      CodeUri: ./schedule-processor # Directory containing your Lambda code
+
+  # EventBridge Rule to trigger the Lambda every 15 minutes
+  ScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Trigger schedule processor every 60 minutes
+      ScheduleExpression: rate(60 minutes)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt ScheduleProcessorFunction.Arn
+          Id: ScheduleProcessorTarget
+
+  # Permission for EventBridge to invoke Lambda
+  ScheduleProcessorPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ScheduleProcessorFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduleRule.Arn
+
+Outputs:
+  GeneratePdfFunctionUrl:
+    Description: 'Lambda Function URL for PDF generation'
+    Value: !GetAtt GeneratePdfFunctionUrl.FunctionUrl
+    Export:
+      Name: GeneratePdfFunctionUrl
+  GeneratePdfFunctionArn:
+    Description: 'ARN of the Generate PDF Lambda function'
+    Value: !GetAtt GeneratePdfFunction.Arn
+    Export:
+      Name: GeneratePdfFunctionArn
+  S3BucketName:
+    Description: 'Name of the S3 bucket for storing PDFs'
+    Value: !Ref PdfBucket
+    Export:
+      Name: S3BucketName
+  S3BucketArn:
+    Description: 'ARN of the S3 bucket'
+    Value: !GetAtt PdfBucket.Arn
+    Export:
+      Name: S3BucketArn
+  EmailSenderFunctionArn:
+    Description: 'ARN of the Email Sender Lambda function'
+    Value: !GetAtt EmailSenderFunction.Arn
+    Export:
+      Name: EmailSenderFunctionArn
+
+  ScheduleProcessorFunctionArn:
+    Description: 'ARN of the Schedule Processor Lambda function'
+    Value: !GetAtt ScheduleProcessorFunction.Arn
+    Export:
+      Name: ScheduleProcessorFunctionArn
