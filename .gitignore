@@ -1,8 +1,0 @@
-node_modules
-.aws-sam
-
-# Environment variables
-.env
-
-# macOS
-.DS_Store
