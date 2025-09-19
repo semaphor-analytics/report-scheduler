@@ -29,7 +29,7 @@ export const handler = async (event) => {
     }
 
     // Url
-    // console.log('Url:', url);
+    console.log('Url:', url);
 
     // Parse reportParams if provided
     let reportParams = {};

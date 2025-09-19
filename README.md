@@ -1,246 +1,156 @@
-# Print to PDF Lambda - AWS SAM Application
+# Semaphor Report Scheduler
 
-This AWS SAM application provides automated PDF/CSV generation and email delivery for Semaphor dashboards. It processes scheduled reports, generates PDFs/CSVs from dashboards, and sends them via email.
-
-## Architecture Overview
-
-The application consists of three Lambda functions:
-
-1. **ScheduleProcessorFunction** - Fetches ready schedules and triggers PDF generation (runs every 60 minutes)
-2. **GeneratePdfFunction** - Generates PDFs/CSVs from dashboard URLs using Puppeteer
-3. **EmailSenderFunction** - Sends emails with generated attachments via AWS SES
+AWS SAM application for automated report generation and email delivery.
 
 ## Prerequisites
 
 - AWS CLI configured with appropriate credentials
-- AWS SAM CLI installed
-- Node.js 18.x
-- An AWS account with permissions to create Lambda functions, S3 buckets, and IAM roles
+- [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html) installed
+- Node.js 18.x or later
+- Docker (for building Lambda functions)
+- AWS SES configured for email sending
 
-## Setup
+## Quick Start
 
-### 1. Clone the repository
+### 1. Clone and Configure
 
 ```bash
+# Clone the repository
 git clone <repository-url>
-cd semaphor-report-scheduler
+cd report-scheduler
+
+# Create your configuration file
+cp .env.example .env
 ```
 
-### 2. Create environment configuration
+### 2. Update Configuration
 
-Create a `.env` file in the project root with your configuration:
+Edit `.env` with your values:
 
 ```bash
-# Semaphor Application Configuration
+# Your Semaphor application URL
 SEMAPHOR_APP_URL=https://your-semaphor-instance.com
+
+# API key for Lambda authentication
 LAMBDA_API_KEY=your-api-key-here
 ```
 
-**Important:** The `.env` file is already added to `.gitignore` to prevent committing sensitive data.
-
-### 3. Install dependencies (if needed for local development)
+### 3. Deploy to AWS
 
 ```bash
-cd schedule-processor && npm install && cd ..
-cd pdf-generation && npm install && cd ..
-cd email-sender && npm install && cd ..
-```
-
-## Deployment
-
-### Quick Deploy
-
-Use the provided deployment script:
-
-```bash
+# Deploy using the included script
 ./deploy.sh
-```
 
-This script will:
-1. Load environment variables from `.env`
-2. Build the SAM application
-3. Deploy with parameter overrides
-4. Skip confirmation prompts for CI/CD environments
-
-### Manual Deploy
-
-Alternatively, deploy manually:
-
-```bash
-# Load environment variables
-source .env
-
-# Build the application
-sam build
-
-# Deploy with parameters
-sam deploy \
-    --parameter-overrides \
-    SemaphorAppUrl=$SEMAPHOR_APP_URL \
-    LambdaApiKey=$LAMBDA_API_KEY \
-    --no-confirm-changeset
-```
-
-### First-Time Deployment
-
-For first-time deployment with guided setup:
-
-```bash
-# Load environment variables
-source .env
-
-# Build and deploy with guided setup
-sam build
-sam deploy --guided \
-    --parameter-overrides \
-    SemaphorAppUrl=$SEMAPHOR_APP_URL \
-    LambdaApiKey=$LAMBDA_API_KEY
+# Or deploy manually
+sam build --use-container
+sam deploy --guided  # First time only
 ```
 
 ## Configuration
 
-### Environment Variables
+### Required Environment Variables
 
-The application uses the following environment variables (configured via `.env`):
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `SEMAPHOR_APP_URL` | Base URL of your Semaphor application | `https://app.semaphor.com` |
+| `LAMBDA_API_KEY` | API key for Lambda function authentication | `sk_lambda_abc123...` |
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `SEMAPHOR_APP_URL` | Base URL for Semaphor application | Yes |
-| `LAMBDA_API_KEY` | API key for Lambda authentication | Yes |
+### AWS Resources Created
 
-### CloudFormation Parameters
+The deployment will create:
+- 3 Lambda functions (Schedule Processor, PDF Generator, Email Sender)
+- S3 bucket for storing generated reports
+- EventBridge rule for scheduling
+- IAM roles with appropriate permissions
 
-The SAM template accepts these parameters:
+### Email Configuration
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `SemaphorAppUrl` | Base URL for Semaphor application | https://semaphor.cloud |
-| `LambdaApiKey` | API key for Lambda authentication | (no default - must be provided) |
-| `S3BucketName` | S3 bucket name for PDFs | semaphor-pdf-generation-bucket |
+Ensure AWS SES is configured in your region:
+1. Verify your sender email domain in AWS SES
+2. Move out of SES sandbox for production use
+3. Configure appropriate sending limits
 
-### Changing Schedule Frequency
+## Deployment Options
 
-To modify how often schedules are processed, edit the `ScheduleRule` in `template.yaml`:
-
-```yaml
-ScheduleRule:
-  Properties:
-    ScheduleExpression: rate(60 minutes)  # Change this value
-```
-
-## CloudFormation Outputs
-
-After deployment, the stack provides these outputs:
-
-- `GeneratePdfFunctionUrl` - Lambda Function URL for PDF generation
-- `GeneratePdfFunctionArn` - ARN of Generate PDF function
-- `S3BucketName` - Name of S3 bucket for storing PDFs
-- `EmailSenderFunctionArn` - ARN of Email Sender function
-- `ScheduleProcessorFunctionArn` - ARN of Schedule Processor function
-
-View outputs:
+### First-Time Deployment
 
 ```bash
-sam list stack-outputs --stack-name semaphor-report-scheduler
+# Build and deploy with guided configuration
+sam build --use-container
+sam deploy --guided
 ```
 
-## Testing
+You'll be prompted for:
+- Stack name (default: `semaphor-report-scheduler`)
+- AWS Region (default: `us-east-1`)
+- Parameter values
+- Confirmation to deploy
 
-### Validate Template
+### Update Deployment
 
 ```bash
-sam validate
+# After initial deployment, simply run
+./deploy.sh
 ```
 
-### View Logs
+### Custom Stack Name
 
 ```bash
-# Schedule Processor logs
-sam logs -n ScheduleProcessorFunction --stack-name semaphor-report-scheduler --tail
-
-# PDF Generator logs
-sam logs -n GeneratePdfFunction --stack-name semaphor-report-scheduler --tail
-
-# Email Sender logs
-sam logs -n EmailSenderFunction --stack-name semaphor-report-scheduler --tail
+# Deploy with custom stack name
+sam deploy --stack-name my-custom-stack
 ```
-
-## Security Considerations
-
-1. **API Key Security**: The `LAMBDA_API_KEY` is stored in `.env` and never committed to version control
-2. **Parameter Protection**: The template uses `NoEcho: true` for the API key parameter to prevent it from appearing in CloudFormation logs
-3. **S3 Bucket**:
-   - Versioning enabled
-   - 30-day lifecycle policy for automatic cleanup
-   - Public access blocked
-4. **IAM Roles**: Lambda functions use least-privilege IAM roles
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Deployment fails with "Parameter validation failed"**
-   - Ensure your `.env` file exists and contains both required variables
-   - Check that you're sourcing the `.env` file before deployment
+**Build Fails**
+- Ensure Docker is running: `docker ps`
+- Check Node.js version: `node --version` (should be 18.x or later)
 
-2. **Lambda function fails with "Missing environment variable"**
-   - Verify that the deployment completed successfully
-   - Check CloudFormation stack parameters in AWS Console
+**Deployment Fails**
+- Verify AWS credentials: `aws sts get-caller-identity`
+- Check IAM permissions for CloudFormation, Lambda, S3
 
-3. **Emails not being sent**
-   - Verify AWS SES is configured and email addresses are verified
-   - Check EmailSenderFunction logs for errors
-   - Ensure files are uploaded to the correct S3 prefix (`emails/`)
+**Functions Not Running**
+- Check CloudWatch Logs: `aws logs tail /aws/lambda/your-function-name`
+- Verify environment variables are set correctly
 
-4. **PDF shows error page instead of dashboard content**
-   - This occurs when the JWT token in the dashboard URL contains incorrect API endpoints
-   - Check the JWT token payload - it should NOT contain localhost URLs
-   - **Incorrect token** (will fail in Lambda):
-     ```json
-     {
-       "apiServiceUrl": "http://localhost:3000/api",
-       "dataServiceUrl": "http://localhost"
-     }
-     ```
-   - **Correct token** (will work in Lambda):
-     ```json
-     {
-       "apiServiceUrl": "https://semaphor.cloud/api",
-       "dataServiceUrl": "https://semaphor.cloud"
-     }
-     ```
-   - The Lambda function cannot reach localhost endpoints from AWS
-   - Ensure the backend generates JWT tokens with production API URLs when creating dashboard links for scheduled reports
+**Email Not Sending**
+- Verify SES configuration in your AWS region
+- Check sender email is verified in SES
+- Review SES sending limits
 
-## File Structure
+### Logs
 
-```
-semaphor-report-scheduler/
-├── .env                     # Environment variables (not in git)
-├── .gitignore              # Git ignore file
-├── README.md               # This file
-├── CLAUDE.md               # AI assistant guide
-├── deploy.sh               # Deployment script
-├── template.yaml           # SAM/CloudFormation template
-├── samconfig.toml          # SAM configuration
-├── schedule-processor/
-│   └── app.js             # Schedule processing Lambda
-├── pdf-generation/
-│   ├── app.js             # PDF generation Lambda
-│   └── lib/
-│       ├── pdf-generator.js
-│       ├── csv-extractor.js
-│       └── dashboard-helpers.js
-└── email-sender/
-    └── app.js             # Email sending Lambda
+View Lambda logs in CloudWatch:
+
+```bash
+# Tail logs for specific function
+sam logs -n ScheduleProcessorFunction --stack-name semaphor-report-scheduler --tail
 ```
 
-## Contributing
+## Updating
 
-1. Never commit the `.env` file or API keys
-2. Test template changes with `sam validate` before deployment
-3. Update this README when adding new features or changing configuration
+To update the application:
+
+1. Pull latest changes
+2. Update `.env` if needed
+3. Run `./deploy.sh`
+
+## Cleanup
+
+To remove all resources:
+
+```bash
+# Delete the CloudFormation stack
+sam delete --stack-name semaphor-report-scheduler
+```
+
+## Support
+
+For issues or questions, please contact your administrator or refer to the [AWS SAM documentation](https://docs.aws.amazon.com/serverless-application-model/).
 
 ## License
 
-[Your License Here]
+© 2025 Semaphor Analytics. All rights reserved.
