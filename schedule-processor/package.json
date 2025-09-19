@@ -1,0 +1,15 @@
+{
+  "name": "schedule-processor",
+  "version": "1.0.0",
+  "description": "This functions processes the active schdeules and triggers pdf generation",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Rohit Pujari",
+  "license": "ISC",
+  "dependencies": {
+    "aws-sdk": "^2.1692.0",
+    "axios": "^1.8.3"
+  }
+}
