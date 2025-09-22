@@ -54,6 +54,7 @@ sam deploy --guided  # First time only
 |----------|-------------|---------|
 | `SEMAPHOR_APP_URL` | Base URL of your Semaphor application | `https://app.semaphor.com` |
 | `LAMBDA_API_KEY` | API key for Lambda function authentication | `sk_lambda_abc123...` |
+| `SES_SENDER_EMAIL` | Verified sender email address for reports | `noreply@yourdomain.com` |
 
 ### AWS Resources Created
 
@@ -63,12 +64,18 @@ The deployment will create:
 - EventBridge rule for scheduling
 - IAM roles with appropriate permissions
 
-### Email Configuration
+### Email Configuration (AWS SES)
 
-Ensure AWS SES is configured in your region:
-1. Verify your sender email domain in AWS SES
-2. Move out of SES sandbox for production use
-3. Configure appropriate sending limits
+AWS Simple Email Service (SES) must be configured before deployment:
+
+1. **Verify sender email address** in AWS SES console
+2. **Configure sender email** in `.env` file:
+   ```bash
+   SES_SENDER_EMAIL=noreply@yourdomain.com
+   ```
+3. **For production**: Request production access to remove sandbox restrictions
+
+📚 **For detailed SES setup instructions, see [SES-SETUP.md](SES-SETUP.md)**
 
 ## Deployment Options
 

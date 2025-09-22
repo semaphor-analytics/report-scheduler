@@ -22,6 +22,10 @@ Parameters:
     Description: API key for Lambda authentication with Semaphor backend
     NoEcho: true
 
+  SesSenderEmail:
+    Type: String
+    Description: SES verified email address for sending reports (e.g., noreply@yourdomain.com)
+    Default: noreply@semaphor.cloud
 
 Resources:
   # S3 Bucket Resource
@@ -158,8 +162,11 @@ Resources:
     Properties:
       Handler: app.handler
       CodeUri: ./email-sender # Directory for email sending code
-      MemorySize: 128 # Smaller memory since it’s lightweight
+      MemorySize: 128 # Smaller memory since it's lightweight
       Role: !GetAtt EmailSenderFunctionRole.Arn
+      Environment:
+        Variables:
+          SES_SENDER_EMAIL: !Ref SesSenderEmail
       Events:
         S3UploadTrigger:
           Type: S3

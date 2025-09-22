@@ -18,6 +18,7 @@ sam deploy \
     --parameter-overrides \
     SemaphorAppUrl="${SEMAPHOR_APP_URL}" \
     LambdaApiKey="${LAMBDA_API_KEY}" \
+    SesSenderEmail="${SES_SENDER_EMAIL}" \
     --no-confirm-changeset
 
 echo "Deployment complete!"
