@@ -33,6 +33,9 @@ SEMAPHOR_APP_URL=https://your-semaphor-instance.com
 
 # API key for Lambda authentication
 LAMBDA_API_KEY=your-api-key-here
+
+# SES verified sender email address
+SES_SENDER_EMAIL=noreply@yourdomain.com
 ```
 
 ### 3. Deploy to AWS
