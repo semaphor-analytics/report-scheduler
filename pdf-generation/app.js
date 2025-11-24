@@ -1,12 +1,120 @@
 import AWS from 'aws-sdk';
 import { generatePdf } from './lib/pdf-generator.js';
 import { generateCsv } from './lib/csv-extractor.js';
+import { generatePdfFromData } from './lib/pdf-from-data-generator.js';
 
 // Initialize S3 client
 const s3 = new AWS.S3();
 
+/**
+ * Handle data-direct POST requests (fast path)
+ * Receives pre-organized table structure and generates PDF without URL rendering
+ */
+async function handleDataDirectRequest(event) {
+  try {
+    // Parse request body
+    const payload = JSON.parse(event.body);
+    console.log('Data-direct payload received:', {
+      cardType: payload.cardType,
+      reportTitle: payload.reportTitle,
+      rows: payload.tableStructure?.rows?.length || 0,
+    });
+
+    // Validate payload
+    if (!payload.cardType || !payload.tableStructure || !payload.reportTitle) {
+      throw new Error('Missing required fields: cardType, tableStructure, reportTitle');
+    }
+
+    // Normalize defaults expected by generator
+    payload.pageSize = payload.pageSize || 'Letter';
+    payload.orientation = payload.orientation || 'portrait';
+    payload.timezone = payload.timezone || 'UTC';
+    payload.filterLine = payload.filterLine || '';
+    payload.rowCount =
+      typeof payload.rowCount === 'number'
+        ? payload.rowCount
+        : payload.tableStructure?.rows?.length || 0;
+
+    const options = { isLambda: true };
+
+    console.log('Generating PDF from data with options:', options);
+
+    // Generate PDF from data
+    let pdfBuffer = await generatePdfFromData(payload, options);
+
+    if (!pdfBuffer || pdfBuffer.length === 0) {
+      throw new Error('Empty PDF buffer generated');
+    }
+
+    console.log('PDF generated successfully:', pdfBuffer.length, 'bytes');
+
+    // Upload to S3
+    const bucketName = process.env.S3_BUCKET_NAME;
+    if (!bucketName) {
+      throw new Error('S3_BUCKET_NAME environment variable is not set');
+    }
+
+    const fileKey = `pdfs/document-${Date.now()}.pdf`;
+    console.log('Uploading to S3:', fileKey);
+
+    const uploadParams = {
+      Bucket: bucketName,
+      Key: fileKey,
+      Body: pdfBuffer,
+      ContentType: 'application/pdf',
+      ACL: 'private',
+    };
+
+    await s3.putObject(uploadParams).promise();
+    console.log('PDF uploaded to S3:', `${bucketName}/${fileKey}`);
+
+    // Generate presigned URL
+    const presignedUrl = s3.getSignedUrl('getObject', {
+      Bucket: bucketName,
+      Key: fileKey,
+      Expires: 60 * 60, // 1 hour expiry
+      ResponseContentDisposition: `attachment; filename="${fileKey.split('/').pop()}"`,
+    });
+
+    console.log('Returning presigned URL');
+    return {
+      statusCode: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+      },
+      body: JSON.stringify({ url: presignedUrl }),
+    };
+  } catch (error) {
+    console.error('Data-direct PDF generation error:', error);
+    return {
+      statusCode: error.message?.includes('invalid') ? 400 : 500,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: error.message || 'Internal server error',
+        error: error.message,
+      }),
+    };
+  }
+}
+
 export const handler = async (event) => {
   try {
+    // Check if this is a data-direct POST request (fast path)
+    // Lambda Function URLs use requestContext.http.method, not httpMethod
+    const method = event.requestContext?.http?.method || event.httpMethod;
+
+    console.log('Lambda invocation - Method:', method, 'Has body:', !!event.body);
+
+    if (event.body && method === 'POST') {
+      console.log('Detected data-direct POST request (fast path)');
+      return await handleDataDirectRequest(event);
+    }
+
+    // Traditional URL-based request
+    console.log('Using traditional URL-based PDF generation');
+
     // Extract parameters from query string
     const url = event?.queryStringParameters?.url;
     const email = event?.queryStringParameters?.email;

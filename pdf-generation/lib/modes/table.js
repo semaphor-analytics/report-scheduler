@@ -217,6 +217,21 @@ export async function preparePage(page, options = {}) {
           background-color: #f0f0f0;
           font-weight: bold;
         }
+
+        /* Allow footer/totals rows to display full content */
+        tfoot td,
+        tfoot th,
+        tr[class*="total"] td,
+        tr[class*="total"] th,
+        tr[class*="subtotal"] td,
+        tr[class*="subtotal"] th {
+          white-space: normal !important;
+          word-break: break-word !important;
+          overflow: visible !important;
+          text-overflow: clip !important;
+          height: auto !important;
+          max-height: none !important;
+        }
       }
     `
   });

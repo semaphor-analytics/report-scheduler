@@ -16,7 +16,20 @@ export function getPdfOptions(dimensions, pageSize = 'A4', options = {}) {
       left: '10mm',
       right: '10mm',
     },
-    displayHeaderFooter: false, // We'll include headers/footers in the HTML
+    displayHeaderFooter: true,
+    headerTemplate: '<div></div>',
+    footerTemplate: `
+      <div style="
+        font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
+        font-size:9pt;
+        color:#555;
+        width:100%;
+        text-align:right;
+        padding-right:20px;
+      ">
+        Page <span class="pageNumber"></span> of <span class="totalPages"></span>
+      </div>
+    `,
     preferCSSPageSize: false,
     scale: 0.95,
   };
@@ -48,7 +61,7 @@ export async function preparePage(page, options = {}) {
   console.log(`Created ${pages.length} pages for aggregate table`);
 
   // Generate the new HTML with pre-paginated tables
-  const html = generatePaginatedHTML(pages, options);
+  const html = renderAggregateTableHtml(pages, options);
 
   // Replace the page content
   await page.setContent(html, {
@@ -59,13 +72,16 @@ export async function preparePage(page, options = {}) {
   console.log('Page content replaced with paginated aggregate table');
 }
 
-function generatePaginatedHTML(pages, options = {}) {
+export function renderAggregateTableHtml(pages, options = {}) {
   const reportTitle = options.reportTitle || 'Aggregate Table Report';
   const timezone = options.timezone || 'UTC';
   const filterLine = options.filterLine || '';
+  const dataRowCount = options.dataRowCount ?? (Array.isArray(pages)
+    ? pages.reduce((sum, page) => sum + (page.rows?.length || 0), 0)
+    : 0);
   const now = new Date();
 
-  const currentDate = now.toLocaleDateString('en-US', {
+  const currentDateFull = now.toLocaleDateString('en-US', {
     timeZone: timezone,
     weekday: 'long',
     year: 'numeric',
@@ -85,278 +101,173 @@ function generatePaginatedHTML(pages, options = {}) {
     timeZoneName: 'short'
   }).split(' ').pop();
 
+  const headerLineParts = [];
+  if (filterLine) {
+    headerLineParts.push(`Filters: ${escapeHtml(filterLine)}`);
+  }
+  if (dataRowCount) {
+    headerLineParts.push(`Rows: ${Number(dataRowCount).toLocaleString('en-US')}`);
+  }
+  const headerMetaLine = headerLineParts.length
+    ? `<div class="metadata-line">${headerLineParts.join(' &bull; ')}</div>`
+    : '';
+
+  const tableHeaders = (pages[0]?.headers || []).map((headerRow) => `
+    <tr>
+      ${headerRow.cells.map((cell) => `
+        <th colspan="${cell.colspan}" rowspan="${cell.rowspan}" class="${cell.className || ''}">
+          ${escapeHtml(cell.text)}
+        </th>
+      `).join('')}
+    </tr>
+  `).join('');
+
+  let bodyRowsHtml = pages.flatMap((page) => page.rows || []).map((row) => `
+    <tr class="${row.type === 'subtotal' ? 'subtotal' : ''}">
+      ${row.cells.map((cell) => `
+        <${cell.isHeader ? 'th' : 'td'} colspan="${cell.colspan}" rowspan="${cell.rowspan || 1}" class="${cell.className || ''}">
+          ${escapeHtml(cell.text)}
+        </${cell.isHeader ? 'th' : 'td'}>
+      `).join('')}
+    </tr>
+  `).join('');
+
+  const grandTotal = [...pages].reverse().find((page) => page.grandTotal)?.grandTotal || null;
+  if (grandTotal) {
+    bodyRowsHtml += `
+      <tr class="grand-total">
+        ${grandTotal.cells.map((cell) => `
+          <td colspan="${cell.colspan || 1}" class="${cell.className || ''}">
+            ${escapeHtml(cell.text)}
+          </td>
+        `).join('')}
+      </tr>
+    `;
+  }
+
   const html = `
     <!DOCTYPE html>
     <html>
-    <head>
-      <meta charset="UTF-8">
-      <title>${reportTitle}</title>
-      <style>
-        * {
-          margin: 0;
-          padding: 0;
-          box-sizing: border-box;
-        }
-
-        body {
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-          font-size: 11pt;
-          line-height: 1.4;
-          color: #000;
-        }
-
-        .page {
-          page-break-after: always;
-          page-break-inside: avoid;  /* Prevent page from splitting */
-          padding: 20px;
-          /* Removed min-height to avoid stretching and overflow */
-          display: flex;
-          flex-direction: column;
-        }
-
-        .page:last-child {
-          page-break-after: auto;
-        }
-
-        .page-header {
-          margin-bottom: 8px;
-          padding-bottom: 4px;
-          border-bottom: 1px solid #333;
-        }
-
-        .page-header h1 {
-          font-size: 14pt;
-          font-weight: bold;
-          margin-bottom: 2px;
-          color: #000;
-        }
-
-        .page-header .date {
-          font-size: 9pt;
-          color: #444;
-          line-height: 1.2;
-        }
-
-        .page-header .page-info {
-          float: right;
-          font-size: 8pt;
-          color: #444;
-        }
-
-        .page-header .filters {
-          font-size: 8.5pt;
-          color: #555;
-          font-style: italic;
-          margin-top: 2px;
-        }
-
-        table {
-          width: 100%;
-          border-collapse: collapse; /* collapse to keep borders tight and heights stable */
-          border-spacing: 0;
-          margin: 0;
-          background: white;
-          font-size: 11pt;
-          table-layout: fixed; /* enforce stable column widths and row heights */
-          page-break-inside: avoid; /* don't split our pre-paginated table */
-        }
-
-        th, td {
-          border: 1px solid #666;
-          padding: 5px 7px;
-          text-align: left;
-          line-height: 1.35;
-          height: 27px;
-          max-height: 27px;
-          overflow: hidden;
-          position: relative;
-        }
-
-        thead th {
-          font-weight: 700;
-          font-size: 11pt;
-          border: 1px solid #666;
-          background: #e0e0e0;
-          background-clip: padding-box;
-          vertical-align: bottom;
-          z-index: 1;
-        }
-
-        tbody td {
-          border: 1px solid #999;
-          background-clip: padding-box;
-        }
-
-        /* Style for subtotal rows */
-        tr.subtotal {
-          background: #f0f0f0;
-          font-weight: 700;
-        }
-
-        tr.subtotal td {
-          border-top: 1px solid #666; /* keep same thickness as data rows */
-          font-size: 10pt;
-          padding: 5px 7px; /* match row height */
-        }
-
-        /* Style for grand total */
-        .grand-total-wrapper {
-          margin-top: 24px;
-          border-top: 3px solid #000;
-          padding-top: 12px;
-        }
-
-        .grand-total-wrapper table {
-          background: #e0e0e0;
-        }
-
-        .grand-total-wrapper td {
-          font-weight: bold;
-          background: #d8d8d8;
-          font-size: 11pt;
-          padding: 10px;
-          border: 2px solid #666;
-        }
-
-        /* Row striping for better readability */
-        tbody tr:nth-child(even):not(.subtotal) {
-          background: #f9f9f9;
-        }
-
-        tbody tr:hover:not(.subtotal) {
-          background: #f5f5f5;
-        }
-
-        td, th {
-          white-space: nowrap; /* keep single-line to maintain fixed heights */
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-
-        /* Avoid wrapping first column to keep heights stable */
-
-        .page-footer {
-          margin-top: 8px;
-          padding-top: 4px;
-          border-top: 1px solid #e5e5e5;
-          text-align: center;
-          font-size: 8pt;
-          color: #999;
-          line-height: 1.2;
-        }
-
-        @media print {
-          body {
-            font-size: 11pt;
-          }
-
-          .page {
-            padding: 0;
+      <head>
+        <meta charset="UTF-8" />
+        <title>${reportTitle}</title>
+        <style>
+          * {
             margin: 0;
+            padding: 0;
+            box-sizing: border-box;
           }
 
-          .page-header {
-            margin-bottom: 6px;
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            font-size: 10pt;
+            line-height: 1.4;
+            color: #000;
+            padding: 20px;
+          }
+
+          .report-header {
+            margin-bottom: 16px;
+          }
+
+          .header-top {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            border-bottom: 1px solid #333;
+            padding-bottom: 8px;
+          }
+
+          .report-title {
+            font-size: 18pt;
+            font-weight: 700;
+            color: #111;
+          }
+
+          .report-subtitle {
+            font-size: 10pt;
+            color: #555;
+            margin-top: 4px;
+          }
+
+          .metadata-line {
+            font-size: 9pt;
+            color: #555;
+            font-style: italic;
+            margin-top: 6px;
           }
 
           table {
-            font-size: 11pt;
-            page-break-inside: avoid;
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            background: #fff;
           }
 
-          th, td {
-            padding: 5px 7px;  /* match main CSS */
+          thead th,
+          tbody th,
+          tbody td {
+            border: 1px solid #666;
+            padding: 5px 7px;
+            text-align: left;
             line-height: 1.35;
-            height: 27px;
-            max-height: 27px;
-            overflow: hidden;
-            white-space: nowrap;
-            text-overflow: ellipsis;
+            vertical-align: top;
+            word-break: break-word;
           }
 
-          th {
-            background: #d0d0d0 !important;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
+          thead th {
+            background: #e2e2e2;
+            color: #111;
+            font-weight: 600;
           }
 
-          tr.subtotal {
-            background: #e8e8e8 !important;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
+          thead th {
+            background: #f3f3f3;
+            color: #111;
+            font-weight: 600;
           }
 
           tbody tr:nth-child(even):not(.subtotal) {
-            background: #f5f5f5 !important;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
+            background: #f7f7f7;
           }
 
-          .grand-total-wrapper td {
-            background: #c0c0c0 !important;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
+          tr.subtotal {
+            background: #f0f0f0;
+            font-weight: 600;
           }
-        }
-      </style>
-    </head>
-    <body>
-      ${pages.map((page) => `
-        <div class="page">
-          <div class="page-header">
-            <div class="page-info">Page ${page.pageNumber} of ${page.totalPages}</div>
-            <h1>${reportTitle}</h1>
-            <div class="date">Generated on ${currentDate} at ${currentTime} ${timeZoneAbbr || ''}</div>
-            ${filterLine ? `<div class="filters">Filters: ${escapeHtml(filterLine)}</div>` : ''}
-          </div>
 
-          <table>
-            <thead>
-              ${page.headers.map((headerRow) => `
-                <tr>
-                  ${headerRow.cells.map(cell => `
-                    <th colspan="${cell.colspan}" rowspan="${cell.rowspan}">
-                      ${escapeHtml(cell.text)}
-                    </th>
-                  `).join('')}
-                </tr>
-              `).join('')}
-            </thead>
-            <tbody>
-              ${page.rows.map(row => `
-                <tr class="${row.type === 'subtotal' ? 'subtotal' : ''}">
-                  ${row.cells.map(cell => `
-                    <${cell.isHeader ? 'th' : 'td'} colspan="${cell.colspan}" rowspan="${cell.rowspan || 1}">
-                      ${escapeHtml(cell.text)}
-                    </${cell.isHeader ? 'th' : 'td'}>
-                  `).join('')}
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
+          tr.grand-total td {
+            background: #d8d8d8;
+            font-weight: 700;
+          }
 
-          ${page.grandTotal ? `
-            <div class="grand-total-wrapper">
-              <table>
-                <tbody>
-                  <tr>
-                    ${page.grandTotal.cells.map(cell => `
-                      <td colspan="${cell.colspan || 1}">
-                        ${escapeHtml(cell.text)}
-                      </td>
-                    `).join('')}
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          ` : ''}
+          @media print {
+            body {
+              padding: 8mm;
+            }
 
-          <div class="page-footer">
-            <!-- Footer removed as timestamp is now in header -->
+            thead { display: table-header-group; }
+            tr, .group { page-break-inside: avoid; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="report-header">
+          <div class="header-top">
+            <div class="report-title">${reportTitle}</div>
+            <div class="report-subtitle">Generated on ${currentDateFull} at ${currentTime} ${timeZoneAbbr || ''}</div>
+            ${headerMetaLine}
           </div>
         </div>
-      `).join('')}
-    </body>
+        <table>
+          <thead>
+            ${tableHeaders}
+          </thead>
+          <tbody>
+            ${bodyRowsHtml}
+          </tbody>
+        </table>
+      </body>
     </html>
   `;
 

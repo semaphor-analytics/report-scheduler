@@ -88,17 +88,35 @@ exports.handler = async (event) => {
         console.log('    Title:', attachment.title);
         console.log('    Format:', attachment.format);
         console.log('    ViewUrl:', attachment.viewUrl);
+        console.log('    Settings:', JSON.stringify(attachment.settings || {}));
 
         // Extract settings from attachment or fallback to reportParams
+        const settings = attachment.settings || {};
         const pageSize =
+          settings.pageSize ||
           attachment.pdfOptions?.pageSize ||
           reportParams?.pdfOptions?.pageSize ||
           'letter';
         const orientation =
+          settings.orientation ||
           attachment.pdfOptions?.orientation ||
           reportParams?.pdfOptions?.orientation ||
           'portrait';
         const format = attachment.format || 'pdf';
+
+        // Build reportParams from attachment settings for Lambda
+        const lambdaReportParams = {};
+        if (settings.sheetSelection) {
+          lambdaReportParams.sheetSelection = settings.sheetSelection;
+        }
+        if (settings.includeFilters !== undefined) {
+          lambdaReportParams.includeFilters = settings.includeFilters;
+        }
+        if (settings.includeTimestamp !== undefined) {
+          lambdaReportParams.includeTimestamp = settings.includeTimestamp;
+        }
+
+        console.log('    Lambda reportParams:', JSON.stringify(lambdaReportParams));
 
         // Prepare payload for generate-pdf Lambda
         // Include attachment metadata for the email sender to use
@@ -126,6 +144,10 @@ exports.handler = async (event) => {
               timezone: timezone, // Pass timezone for PDF timestamp formatting
               // Pass attachment metadata for email sender
               attachmentMetadata: JSON.stringify(attachmentMetadata),
+              // Pass reportParams if we have any settings
+              ...(Object.keys(lambdaReportParams).length > 0 && {
+                reportParams: JSON.stringify(lambdaReportParams),
+              }),
             },
           }),
         };

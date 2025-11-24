@@ -11,30 +11,44 @@ export async function getScheduleDetails(scheduleId) {
   if (!scheduleId) {
     throw new Error('Schedule ID is required');
   }
-  
+
   const apiUrl = process.env.SEMAPHOR_APP_URL || 'https://semaphor.cloud';
+  const apiKey = process.env.LAMBDA_API_KEY;
   const url = `${apiUrl}/api/v1/schedules/${scheduleId}/internal`;
-  
-  console.log(`Fetching schedule details from: ${url}`);
-  
+
+  console.log(`[getScheduleDetails] Fetching schedule details`);
+  console.log(`  URL: ${url}`);
+  console.log(`  Has API Key: ${!!apiKey}`);
+
+  if (!apiKey) {
+    throw new Error('LAMBDA_API_KEY environment variable is not set');
+  }
+
   try {
     const response = await fetch(url, {
       method: 'GET',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey
       }
     });
-    
+
+    console.log(`  Response status: ${response.status} ${response.statusText}`);
+
     if (!response.ok) {
+      const errorBody = await response.text();
+      console.error(`  Error response body: ${errorBody}`);
       throw new Error(`Failed to fetch schedule: ${response.status} ${response.statusText}`);
     }
-    
+
     const data = await response.json();
-    console.log('Successfully fetched schedule details');
-    
+    console.log(`  Successfully fetched schedule details`);
+    console.log(`  Dashboard ID: ${data.dashboardId}`);
+    console.log(`  Has token: ${!!data.token}`);
+
     return data;
   } catch (error) {
-    console.error('Error fetching schedule details:', error);
+    console.error('[getScheduleDetails] Error:', error.message);
     throw error;
   }
 }
@@ -49,16 +63,18 @@ export async function getDashboardData(dashboardId, token) {
   if (!dashboardId) {
     throw new Error('Dashboard ID is required');
   }
-  
+
   if (!token) {
     throw new Error('Authentication token is required');
   }
-  
+
   const apiUrl = process.env.SEMAPHOR_APP_URL || 'https://semaphor.cloud';
   const url = `${apiUrl}/api/management/v1/dashboards/${dashboardId}`;
-  
-  console.log(`Fetching dashboard data from: ${url}`);
-  
+
+  console.log(`[getDashboardData] Fetching dashboard data`);
+  console.log(`  URL: ${url}`);
+  console.log(`  Dashboard ID: ${dashboardId}`);
+
   try {
     const response = await fetch(url, {
       method: 'GET',
@@ -67,27 +83,38 @@ export async function getDashboardData(dashboardId, token) {
         'Content-Type': 'application/json'
       }
     });
-    
+
+    console.log(`  Response status: ${response.status} ${response.statusText}`);
+
     if (!response.ok) {
+      const errorBody = await response.text();
+      console.error(`  Error response body: ${errorBody}`);
       throw new Error(`Failed to fetch dashboard: ${response.status} ${response.statusText}`);
     }
-    
+
     const data = await response.json();
-    
+    console.log(`  Dashboard fetched successfully`);
+
     // Parse the template to get sheets
     if (!data.template) {
+      console.error('  Dashboard template not found in response');
       throw new Error('Dashboard template not found');
     }
-    
-    const template = typeof data.template === 'string' 
-      ? JSON.parse(data.template) 
+
+    const template = typeof data.template === 'string'
+      ? JSON.parse(data.template)
       : data.template;
-    
+
     if (!template.sheets || !Array.isArray(template.sheets)) {
+      console.error('  Dashboard sheets not found in template');
+      console.error('  Template keys:', Object.keys(template));
       throw new Error('Dashboard sheets not found in template');
     }
-    
-    console.log(`Found ${template.sheets.length} sheets in dashboard`);
+
+    console.log(`  Found ${template.sheets.length} sheets in dashboard`);
+    template.sheets.forEach((sheet, index) => {
+      console.log(`    Sheet ${index + 1}: ${sheet.title} (ID: ${sheet.id})`);
+    });
     
     return {
       id: dashboardId,

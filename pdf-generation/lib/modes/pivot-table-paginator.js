@@ -218,8 +218,8 @@ function getDataRowsPerPage(pageSize, orientation, headerRowCount) {
   const rowHeightPx = 27; // must match CSS height for th/td
   const headerHeightPx = (headerRowCount || 1) * rowHeightPx;
 
-  // Minor safety buffer to account for border collapsing and rendering rounding
-  const roundingSafetyPx = 16;
+  // Moderated safety buffer to keep totals visible without wasting space
+  const roundingSafetyPx = 8;
   const availablePx = heightPx - verticalPdfMarginsPx - verticalPagePaddingPx - pageHeaderPx - headerHeightPx - roundingSafetyPx;
   const dataRows = Math.max(1, Math.floor(availablePx / rowHeightPx) - 1);
 

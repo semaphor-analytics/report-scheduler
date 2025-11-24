@@ -38,7 +38,20 @@ export function getPdfOptions(dimensions, pageSize = 'A4', options = {}) {
       left: '10mm',
       right: '10mm',
     },
-    displayHeaderFooter: false,  // Disable PDF header/footer - use HTML page numbers instead
+    displayHeaderFooter: true,
+    headerTemplate: '<div></div>',
+    footerTemplate: `
+      <div style="
+        font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
+        font-size:9pt;
+        color:#555;
+        width:100%;
+        text-align:right;
+        padding-right:20px;
+      ">
+        Page <span class="pageNumber"></span> of <span class="totalPages"></span>
+      </div>
+    `,
     preferCSSPageSize: false,
     scale: 0.95,
   };
@@ -70,7 +83,7 @@ export async function preparePage(page, options = {}) {
   console.log(`Created ${pages.length} pages using dynamic height-based pagination`);
 
   // Generate the new HTML with pre-paginated tables
-  const html = generatePaginatedHTML(pages, options);
+  const html = renderPivotTableHtml(pages, options);
 
   // Replace the page content with our pre-paginated version
   await page.setContent(html, {
@@ -81,14 +94,17 @@ export async function preparePage(page, options = {}) {
   console.log('Page content replaced with paginated version');
 }
 
-function generatePaginatedHTML(pages, options = {}) {
+
+export function renderPivotTableHtml(pages, options = {}) {
   const reportTitle = options.reportTitle || 'Pivot Table Report';
   const timezone = options.timezone || 'UTC';
   const filterLine = options.filterLine || '';
+  const dataRowCount = options.dataRowCount ?? (Array.isArray(pages)
+    ? pages.reduce((sum, page) => sum + (page.rows?.length || 0), 0)
+    : 0);
   const now = new Date();
 
-  // Format date with timezone
-  const currentDate = now.toLocaleDateString('en-US', {
+  const currentDateFull = now.toLocaleDateString('en-US', {
     timeZone: timezone,
     weekday: 'long',
     year: 'numeric',
@@ -96,7 +112,6 @@ function generatePaginatedHTML(pages, options = {}) {
     day: 'numeric'
   });
 
-  // Format time with timezone
   const currentTime = now.toLocaleTimeString('en-US', {
     timeZone: timezone,
     hour: 'numeric',
@@ -104,373 +119,201 @@ function generatePaginatedHTML(pages, options = {}) {
     hour12: true
   });
 
-  // Get timezone abbreviation
   const timeZoneAbbr = now.toLocaleTimeString('en-US', {
     timeZone: timezone,
     timeZoneName: 'short'
   }).split(' ').pop();
 
+  const headerLineParts = [];
+  if (filterLine) {
+    headerLineParts.push(`Filters: ${escapeHtml(filterLine)}`);
+  }
+  if (dataRowCount) {
+    headerLineParts.push(`Rows: ${Number(dataRowCount).toLocaleString('en-US')}`);
+  }
+  const headerMetaLine = headerLineParts.length
+    ? `<div class="metadata-line">${headerLineParts.join(' &bull; ')}</div>`
+    : '';
+
+  const firstPage = pages[0] || { headers: [] };
+
+  const headerRowsHtml = (firstPage.headers || []).map((headerRow, rowIndex) => {
+    if (headerRow.headerType !== undefined) {
+      return `
+        <tr data-header-type="${headerRow.headerType || ''}" data-header-row-index="${headerRow.headerRowIndex || rowIndex}" data-repeat-header="${headerRow.repeatHeader || 'false'}">
+          ${headerRow.cells.map((cell) => `
+            <th colspan="${cell.colspan}" rowspan="${cell.rowspan}" ${cell.columnId ? `data-column-id="${cell.columnId}"` : ''} class="${cell.className || ''}">${escapeHtml(cell.text)}</th>
+          `).join('')}
+        </tr>`;
+    }
+
+    if (Array.isArray(headerRow)) {
+      return `
+        <tr data-header-index="${rowIndex}">
+          ${headerRow.map((cell) => `
+            <th colspan="${cell.colspan}" rowspan="${cell.rowspan}">
+              ${escapeHtml(cell.text)}
+            </th>
+          `).join('')}
+        </tr>`;
+    }
+
+    return '';
+  }).join('');
+
+  let bodyRowsHtml = pages.flatMap((page) => page.rows || []).map((row) => `
+    <tr class="${row.type === 'subtotal' ? 'subtotal' : ''}">
+      ${row.cells.map((cell) => `
+        <${cell.isHeader ? 'th' : 'td'} colspan="${cell.colspan}" rowspan="${cell.rowspan || 1}" class="${cell.className || ''} ${cell.isNumeric ? 'numeric' : ''}">
+          ${escapeHtml(cell.text)}
+        </${cell.isHeader ? 'th' : 'td'}>
+      `).join('')}
+    </tr>
+  `).join('');
+
+  const grandTotal = [...pages].reverse().find((page) => page.grandTotal)?.grandTotal || null;
+
+  if (grandTotal) {
+    bodyRowsHtml += `
+      <tr class="grand-total">
+        ${grandTotal.cells.map((cell) => `
+          <td colspan="${cell.colspan || 1}" class="${cell.className || ''}">${escapeHtml(cell.text)}</td>
+        `).join('')}
+      </tr>
+    `;
+  }
+
   const html = `
     <!DOCTYPE html>
     <html>
-    <head>
-      <meta charset="UTF-8">
-      <title>${reportTitle}</title>
-      <style>
-        * {
-          margin: 0;
-          padding: 0;
-          box-sizing: border-box;
-        }
-
-        body {
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-          font-size: 11pt;
-          line-height: 1.4;
-          color: #000;
-        }
-
-        .page {
-          page-break-after: always;
-          page-break-inside: avoid;  /* Prevent page from splitting */
-          padding: 20px;
-          /* Removed min-height to prevent stretching when fewer rows */
-        }
-
-        .page:last-child {
-          page-break-after: auto;
-        }
-
-        .page-header {
-          margin-bottom: 8px;
-          padding-bottom: 4px;
-          border-bottom: 1px solid #333;
-        }
-
-        .page-header h1 {
-          font-size: 14pt;
-          font-weight: bold;
-          margin-bottom: 2px;
-          color: #000;
-          font-family: 'Arial', 'Helvetica', sans-serif;
-        }
-
-        .page-header .date {
-          font-size: 9pt;
-          color: #444;
-          line-height: 1.2;
-        }
-
-        .page-header .filters {
-          font-size: 8.5pt;
-          color: #555;
-          font-style: italic;
-          margin-top: 2px;
-        }
-
-        .page-header .page-info {
-          float: right;
-          font-size: 8pt;
-          color: #444;
-        }
-
-        table {
-          width: 100%;
-          border-collapse: collapse;  /* Changed from separate to collapse to prevent border accumulation */
-          margin: 0;
-          background: white;
-          font-size: 11pt;
-          table-layout: fixed; /* Enforce consistent column widths and row heights */
-        }
-
-        th, td {
-          border: 1px solid #666;
-          padding: 5px 7px;  /* Optimal padding */
-          text-align: left;
-          line-height: 1.35;  /* Optimal line height */
-          height: 27px;
-          max-height: 27px;  /* Enforce consistent height */
-          overflow: hidden;  /* Prevent content from expanding cells */
-          position: relative;
-        }
-
-        /* Ensure all borders are visible with proper layering */
-        thead th {
-          font-weight: 700;
-          font-size: 11pt;
-          border: 1px solid #666;
-          background: #e0e0e0;
-          background-clip: padding-box;
-          z-index: 1;
-          vertical-align: bottom;
-        }
-
-        tbody td {
-          border: 1px solid #999;
-          background-clip: padding-box;
-        }
-
-        /* Remove conflicting background styles */
-        thead {
-          font-weight: bold;
-        }
-
-        thead tr {
-          /* No background here to avoid covering borders */
-        }
-
-        /* Style for different header types */
-        tr[data-header-type="pivot-hierarchy"] th {
-          background: #d0d0d0;
-          background-clip: padding-box;
-          font-size: 10pt;
-          border: 1px solid #666;
-          vertical-align: bottom;
-        }
-
-        tr[data-header-type="pivot-values"] th {
-          background: #d8d8d8;
-          background-clip: padding-box;
-          font-size: 9pt;
-          border: 1px solid #666;
-          text-align: center;
-        }
-
-        tr[data-header-type="metrics"] th {
-          background: #e0e0e0;
-          background-clip: padding-box;
-          font-size: 9pt;
-          border: 1px solid #666;
-          text-align: right;
-        }
-
-        /* Legacy style for pivot hierarchy headers */
-        tr[data-header-index="0"] th {
-          background: #d8d8d8;
-          background-clip: padding-box;
-          font-size: 12pt;
-          border: 1px solid #666;
-        }
-
-        /* Style for subtotal rows (keep same height as data rows) */
-        tr.subtotal {
-          background: #f0f0f0;
-          font-weight: 700;
-        }
-
-        tr.subtotal td {
-          border-top: 1px solid #666; /* match data row border thickness */
-          font-size: 10pt;
-          padding: 5px 7px; /* keep identical padding to maintain height */
-        }
-
-        /* Style for grand total */
-        .grand-total-wrapper {
-          margin-top: 24px;
-          border-top: 3px solid #000;
-          padding-top: 12px;
-        }
-
-        .grand-total-wrapper table {
-          background: #e0e0e0;
-        }
-
-        .grand-total-wrapper td {
-          font-weight: bold;
-          background: #d8d8d8;
-          font-size: 11pt;
-          padding: 10px;
-          border: 2px solid #666;
-        }
-
-        /* Row striping for better readability */
-        tbody tr:nth-child(even):not(.subtotal) {
-          background: #f9f9f9;
-        }
-
-        tbody tr:hover:not(.subtotal) {
-          background: #f5f5f5;
-        }
-
-        /* Text overflow handling: enforce single-line to keep row heights stable */
-        td, th {
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-
-        /* Page footer */
-        .page-footer {
-          margin-top: 8px;
-          padding-top: 4px;
-          border-top: 1px solid #e5e5e5;
-          text-align: center;
-          font-size: 8pt;
-          color: #999;
-          line-height: 1.2;
-          page-break-inside: avoid;  /* Prevent footer from breaking to new page */
-          page-break-before: avoid;   /* Keep with previous content */
-        }
-
-        /* Numeric data alignment */
-        td.numeric {
-          text-align: right;
-          font-family: 'Courier New', monospace;
-        }
-
-        @media print {
-          body {
-            font-size: 11pt;
-          }
-
-          .page {
-            padding: 0;
+      <head>
+        <meta charset="UTF-8" />
+        <title>${reportTitle}</title>
+        <style>
+          * {
             margin: 0;
+            padding: 0;
+            box-sizing: border-box;
           }
 
-          .page-header {
-            margin-bottom: 6px;
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            font-size: 10pt;
+            line-height: 1.4;
+            color: #000;
+            padding: 20px;
+          }
+
+          .report-header {
+            margin-bottom: 16px;
+          }
+          
+          .header-top {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            border-bottom: 1px solid #333;
+            padding-bottom: 8px;
+          }
+
+          .report-title {
+            font-size: 18pt;
+            font-weight: 700;
+            color: #111;
+          }
+
+          .report-subtitle {
+            font-size: 10pt;
+            color: #555;
+            margin-top: 4px;
+          }
+
+          .metadata-line {
+            font-size: 9pt;
+            color: #555;
+            font-style: italic;
+            margin-top: 6px;
           }
 
           table {
-            font-size: 11pt;
+            width: 100%;
+            border-collapse: collapse;
+            background: #fff;
+            table-layout: fixed;
           }
 
-          th, td {
-            padding: 5px 7px;  /* Match the main CSS */
+          thead th,
+          tbody th,
+          tbody td {
+            border: 1px solid #666;
+            padding: 5px 7px;
+            text-align: left;
             line-height: 1.35;
-            height: 27px;
-            max-height: 27px;
-            overflow: hidden;
-            white-space: nowrap;
-            text-overflow: ellipsis;
+            vertical-align: top;
+            word-break: break-word;
           }
 
-          /* Ensure good contrast for printing */
-          th {
-            background: #d0d0d0 !important;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
+          thead th {
+            background: #e2e2e2;
+            color: #111;
+            font-weight: 600;
           }
 
-          /* Multi-row header styles for print */
-          tr[data-header-type="pivot-hierarchy"] th {
-            background: #c0c0c0 !important;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
-          }
-
-          tr[data-header-type="pivot-values"] th {
-            background: #d0d0d0 !important;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
-          }
-
-          tr[data-header-type="metrics"] th {
-            background: #d8d8d8 !important;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
-          }
-
-          tr.subtotal {
-            background: #e8e8e8 !important;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
+          tbody td.numeric,
+          tbody th.numeric {
+            text-align: right;
           }
 
           tbody tr:nth-child(even):not(.subtotal) {
-            background: #f5f5f5 !important;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
+            background: #f7f7f7;
           }
-        }
-      </style>
-    </head>
-    <body>
-      ${pages.map((page, pageIndex) => `
-        <div class="page">
-          <div class="page-header">
-            <div class="page-info">Page ${page.pageNumber} of ${page.totalPages}</div>
-            <h1>${reportTitle}</h1>
-            <div class="date">Generated on ${currentDate} at ${currentTime} ${timeZoneAbbr || ''}</div>
-            ${filterLine ? `<div class="filters">Filters: ${escapeHtml(filterLine)}</div>` : ''}
+
+          tr.subtotal {
+            background: #e8e8e8;
+            font-weight: 600;
+          }
+
+          tr.grand-total td {
+            background: #d8d8d8;
+            font-weight: 700;
+          }
+
+          @media print {
+            body {
+              padding: 8mm;
+            }
+
+            thead { display: table-header-group; }
+
+            tr,
+            .group {
+              page-break-inside: avoid;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="report-header">
+          <div class="header-top">
+            <div class="report-title">${reportTitle}</div>
+            <div class="report-subtitle">Generated on ${currentDateFull} at ${currentTime} ${timeZoneAbbr || ''}</div>
           </div>
-
-          <table>
-            <thead>
-              ${page.headers.map((headerRow, rowIndex) => {
-                // Check if this is the new header structure with metadata
-                if (headerRow.headerType !== undefined) {
-                  // New structure with header metadata
-                  return `
-                    <tr data-header-type="${headerRow.headerType || ''}"
-                        data-header-row-index="${headerRow.headerRowIndex || rowIndex}"
-                        data-repeat-header="${headerRow.repeatHeader || 'false'}">
-                      ${headerRow.cells.map(cell => `
-                        <th colspan="${cell.colspan}"
-                            rowspan="${cell.rowspan}"
-                            ${cell.columnId ? `data-column-id="${cell.columnId}"` : ''}
-                            class="${cell.className || ''}">
-                          ${escapeHtml(cell.text)}
-                        </th>
-                      `).join('')}
-                    </tr>
-                  `;
-                } else if (Array.isArray(headerRow)) {
-                  // Legacy structure - array of cells
-                  return `
-                    <tr data-header-index="${rowIndex}">
-                      ${headerRow.map(cell => `
-                        <th colspan="${cell.colspan}" rowspan="${cell.rowspan}">
-                          ${escapeHtml(cell.text)}
-                        </th>
-                      `).join('')}
-                    </tr>
-                  `;
-                } else {
-                  // Fallback for unexpected structure
-                  console.warn('Unexpected header structure:', headerRow);
-                  return '';
-                }
-              }).join('')}
-            </thead>
-            <tbody>
-              ${page.rows.map(row => `
-                <tr class="${row.type === 'subtotal' ? 'subtotal' : ''}">
-                  ${row.cells.map(cell => `
-                    <${cell.isHeader ? 'th' : 'td'} colspan="${cell.colspan}" rowspan="${cell.rowspan || 1}">
-                      ${escapeHtml(cell.text)}
-                    </${cell.isHeader ? 'th' : 'td'}>
-                  `).join('')}
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-
-          ${page.grandTotal ? `
-            <div class="grand-total-wrapper">
-              <table>
-                <tbody>
-                  <tr>
-                    ${page.grandTotal.cells.map(cell => `
-                      <td colspan="${cell.colspan || 1}">
-                        ${escapeHtml(cell.text)}
-                      </td>
-                    `).join('')}
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          ` : ''}
+          ${headerMetaLine}
         </div>
-      `).join('')}
-    </body>
+        <table>
+          <thead>
+            ${headerRowsHtml}
+          </thead>
+          <tbody>
+            ${bodyRowsHtml}
+          </tbody>
+        </table>
+      </body>
     </html>
   `;
 
   return html;
 }
-
 function escapeHtml(text) {
   const div = typeof document !== 'undefined' ? document.createElement('div') : null;
   if (div) {

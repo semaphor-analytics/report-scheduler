@@ -1,4 +1,4 @@
-import { waitForDOMStability, waitForImages } from './content-stability.js';
+import { waitForDOMStability, waitForImages, waitForSizeStability } from './content-stability.js';
 
 export async function loadAllContent(page, options = {}) {
   // Step 1: Scroll main page to load lazy content
@@ -45,6 +45,7 @@ export async function loadAllContent(page, options = {}) {
     
     // Wait for DOM to stabilize after expansion
     await waitForDOMStability(page, 500, 3000);
+    await waitForSizeStability(page, null, { quietMs: 350, maxWait: 2000 });
   }
   
   // Step 4: Final scroll to load all visuals
@@ -52,6 +53,7 @@ export async function loadAllContent(page, options = {}) {
 
   // Wait for images to load (with short timeout)
   await waitForImages(page, 2000);
+  await waitForSizeStability(page, null, { quietMs: 350, maxWait: 2000 });
 
   // Additional stabilization wait for dashboard content
   const isDashboard = await page.evaluate(() => {
@@ -61,8 +63,11 @@ export async function loadAllContent(page, options = {}) {
   if (isDashboard) {
     console.log('Dashboard detected - waiting for content stabilization...');
     await waitForDOMStability(page, 500, 2000);
-    // Extra wait for any lazy-loaded dashboard cards
-    await new Promise(r => setTimeout(r, 1000));
+    await waitForSizeStability(
+      page,
+      '[data-role="dashboard-tabs-content"]',
+      { quietMs: 400, maxWait: 2000 }
+    );
   }
 
   // Step 5: Calculate and return dimensions
@@ -72,35 +77,31 @@ export async function loadAllContent(page, options = {}) {
 async function scrollMainPage(page) {
   console.log('Step 1: Scrolling main page...');
   await page.evaluate(async () => {
-    const scrollPage = async () => {
-      const distance = 100;
-      const delay = 100;
-      const maxScrolls = 100;
-      let scrollCount = 0;
-      
-      while (scrollCount < maxScrolls) {
-        const prevHeight = document.body.scrollHeight;
-        window.scrollBy(0, distance);
-        scrollCount++;
-        
-        await new Promise(r => setTimeout(r, delay));
-        
-        // Check if we've reached the bottom
-        if (window.innerHeight + window.scrollY >= document.body.scrollHeight) {
-          // Wait a bit more to see if new content loads
-          await new Promise(r => setTimeout(r, 500));
-          const newHeight = document.body.scrollHeight;
-          if (newHeight === prevHeight) {
-            break; // No new content loaded
-          }
-        }
+    const scrollDistance = Math.max(window.innerHeight * 0.7, 400);
+    const maxDuration = 4000;
+    const quietWindow = 350;
+    let lastHeight = document.body.scrollHeight;
+    let lastGrowthTime = performance.now();
+    const start = performance.now();
+
+    while (performance.now() - start < maxDuration) {
+      window.scrollBy(0, scrollDistance);
+      await new Promise(resolve => requestAnimationFrame(resolve));
+
+      const currentHeight = document.body.scrollHeight;
+      if (currentHeight > lastHeight + 4) {
+        lastHeight = currentHeight;
+        lastGrowthTime = performance.now();
       }
-      
-      // Scroll back to top
-      window.scrollTo(0, 0);
-    };
-    
-    await scrollPage();
+
+      if (performance.now() - lastGrowthTime > quietWindow) {
+        break;
+      }
+    }
+
+    window.scrollTo(0, document.body.scrollHeight);
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    window.scrollTo(0, 0);
   });
 }
 
@@ -131,17 +132,33 @@ async function scrollContainers(page) {
         });
         
         // Scroll this container more efficiently
-        let currentPos = 0;
-        const scrollStep = Math.min(200, element.scrollHeight / 10); // Larger, adaptive steps
-        while (currentPos < element.scrollHeight) {
-          element.scrollTop = currentPos;
-          currentPos += scrollStep;
-          await new Promise(r => setTimeout(r, 20)); // Shorter wait
+        const maxDuration = 4000;
+        const quietWindow = 250;
+        const startTime = performance.now();
+        let lastHeight = element.scrollHeight;
+        let lastGrowth = performance.now();
+        
+        while (performance.now() - startTime < maxDuration) {
+          const previousTop = element.scrollTop;
+          const step = Math.max(element.clientHeight, 200);
+          element.scrollTop = Math.min(element.scrollTop + step, element.scrollHeight);
+          
+          await new Promise(resolve => requestAnimationFrame(resolve));
+          
+          const currentHeight = element.scrollHeight;
+          if (currentHeight > lastHeight + 4) {
+            lastHeight = currentHeight;
+            lastGrowth = performance.now();
+          }
+          
+          if (element.scrollTop === previousTop && (performance.now() - lastGrowth) > quietWindow) {
+            break;
+          }
         }
         
-        // Quick scroll to bottom then back to top
+        // Quick scroll to bottom then back to top to trigger any final lazy load
         element.scrollTop = element.scrollHeight;
-        await new Promise(r => setTimeout(r, 100));
+        await new Promise(resolve => requestAnimationFrame(resolve));
         element.scrollTop = 0;
       }
     }
@@ -339,56 +356,57 @@ async function finalScrollForVisuals(page, options = {}) {
   const isTableMode = options.tableMode || false;
 
   await page.evaluate(async (tableMode) => {
-    // For dashboard mode: skip table container scrolling
-    // For table mode: scroll table containers to ensure full content
-    if (tableMode) {
-      // First, ensure all tables are fully visible
+    const waitNextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
+
+    const ensureTablesLoaded = async () => {
       const tables = document.querySelectorAll('table, [role="table"], [role="grid"]');
       for (const table of tables) {
-        // Scroll to each table to ensure it's loaded
         table.scrollIntoView({ behavior: 'instant', block: 'start' });
-        await new Promise(r => setTimeout(r, 100));
+        await waitNextFrame();
 
-        // If table has a parent container with scroll, scroll it too
-        let parent = table.parentElement;
-        while (parent && parent !== document.body) {
-          if (parent.scrollHeight > parent.clientHeight) {
-            parent.scrollTop = parent.scrollHeight;
-            await new Promise(r => setTimeout(r, 50));
+        if (tableMode) {
+          const visited = new Set();
+          let parent = table.parentElement;
+          while (parent && parent !== document.body && !visited.has(parent)) {
+            visited.add(parent);
+            if (parent.scrollHeight > parent.clientHeight + 4) {
+              parent.scrollTop = parent.scrollHeight;
+              await waitNextFrame();
+              parent.scrollTop = 0;
+              await waitNextFrame();
+            }
+            parent = parent.parentElement;
           }
-          parent = parent.parentElement;
         }
       }
-    } else {
-      // Dashboard mode: just scroll tables into view without scrolling their containers
-      const tables = document.querySelectorAll('table, [role="table"], [role="grid"]');
-      for (const table of tables) {
-        // Just make sure table is in viewport to trigger lazy loading
-        table.scrollIntoView({ behavior: 'instant', block: 'start' });
-        await new Promise(r => setTimeout(r, 100));
-        // Do NOT scroll inside the table's container
+    };
+
+    await ensureTablesLoaded();
+
+    const maxDuration = 4000;
+    const quietWindow = 300;
+    const start = performance.now();
+    let lastHeight = document.body.scrollHeight;
+    let lastGrowth = performance.now();
+    const step = Math.max(window.innerHeight * 1.5, 600);
+
+    while (performance.now() - start < maxDuration) {
+      window.scrollBy(0, step);
+      await waitNextFrame();
+
+      const currentHeight = document.body.scrollHeight;
+      if (currentHeight > lastHeight + 4) {
+        lastHeight = currentHeight;
+        lastGrowth = performance.now();
+      }
+
+      if (performance.now() - lastGrowth > quietWindow) {
+        break;
       }
     }
-    
-    // Now do the regular page scroll
-    const totalHeight = Math.max(
-      document.body.scrollHeight,
-      document.documentElement.scrollHeight
-    );
-    const step = window.innerHeight * 2; // Larger steps for faster scrolling
-    let currentPos = 0;
-    
-    while (currentPos < totalHeight) {
-      window.scrollTo(0, currentPos);
-      currentPos += step;
-      await new Promise(r => setTimeout(r, 200)); // Shorter wait
-    }
-    
-    // Ensure we scroll to the absolute bottom
-    window.scrollTo(0, totalHeight * 2); // Scroll beyond the actual height
-    await new Promise(r => setTimeout(r, 500));
-    
-    // Scroll back to top
+
+    window.scrollTo(0, document.body.scrollHeight);
+    await waitNextFrame();
     window.scrollTo(0, 0);
   }, isTableMode);
 }

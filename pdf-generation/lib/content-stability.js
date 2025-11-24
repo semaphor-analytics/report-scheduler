@@ -183,20 +183,24 @@ export async function waitForFrameworkReady(page, timeout = 5000) {
   
   const isReady = await page.evaluate(async (maxWait) => {
     const startTime = Date.now();
+    const waitForNextFrames = () => new Promise(resolve => {
+      const finish = () => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      };
+
+      if (document.readyState === 'complete') {
+        finish();
+      } else {
+        window.addEventListener('load', finish, { once: true });
+      }
+    });
     
     // Check for React
     if (window.React || window.__REACT_DEVTOOLS_GLOBAL_HOOK__) {
       console.log('React detected, waiting for hydration...');
       
       // Wait for React to finish initial render
-      await new Promise(resolve => {
-        if (document.readyState === 'complete') {
-          // Give React a moment to hydrate after DOM ready
-          setTimeout(resolve, 300);
-        } else {
-          window.addEventListener('load', () => setTimeout(resolve, 300));
-        }
-      });
+      await waitForNextFrames();
       
       return 'react';
     }
@@ -204,14 +208,14 @@ export async function waitForFrameworkReady(page, timeout = 5000) {
     // Check for Vue
     if (window.Vue || window.__VUE__) {
       console.log('Vue detected');
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await waitForNextFrames();
       return 'vue';
     }
     
     // Check for Angular
     if (window.ng || window.angular) {
       console.log('Angular detected');
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await waitForNextFrames();
       return 'angular';
     }
     
@@ -326,6 +330,71 @@ export async function waitForImages(page, timeout = 5000) {
   
   console.log(`Image loading: ${loaded ? 'complete' : 'timeout'}`);
   return loaded;
+}
+
+/**
+ * Wait for target element (or body) scroll height to stop changing
+ * @param {Page} page - Puppeteer page instance
+ * @param {string|null} selector - CSS selector to monitor (null for document body)
+ * @param {Object} options - { quietMs, maxWait, tolerance }
+ */
+export async function waitForSizeStability(page, selector = null, options = {}) {
+  const { quietMs = 400, maxWait = 2000, tolerance = 4 } = options;
+  console.log(
+    `Waiting for size stability on ${selector || 'document.body'} ` +
+    `(quiet ${quietMs}ms, max ${maxWait}ms)`
+  );
+  
+  const start = Date.now();
+  const settled = await page.evaluate(async ({ selectorArg, quiet, max, delta }) => {
+    const targetResolver = () => {
+      if (!selectorArg) {
+        return document.body;
+      }
+      return document.querySelector(selectorArg);
+    };
+    
+    const measure = (element) => {
+      if (!element) {
+        return document.body.scrollHeight;
+      }
+      return Math.max(
+        element.scrollHeight,
+        element.offsetHeight,
+        element.getBoundingClientRect().height + window.scrollY
+      );
+    };
+    
+    const target = targetResolver();
+    if (!target) {
+      return true;
+    }
+    
+    let lastSize = measure(target);
+    let lastChange = performance.now();
+    const overallStart = performance.now();
+    
+    while (performance.now() - overallStart < max) {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      const currentSize = measure(target);
+      
+      if (Math.abs(currentSize - lastSize) > delta) {
+        lastSize = currentSize;
+        lastChange = performance.now();
+      }
+      
+      if (performance.now() - lastChange >= quiet) {
+        return true;
+      }
+    }
+    
+    return false;
+  }, { selectorArg: selector, quiet: quietMs, max: maxWait, delta: tolerance });
+  
+  console.log(
+    `Size stability ${settled ? 'achieved' : 'timed out'} after ${Date.now() - start}ms`
+  );
+  return settled;
 }
 
 /**
