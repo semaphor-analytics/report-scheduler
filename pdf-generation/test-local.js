@@ -3,56 +3,156 @@ import path from 'path';
 import { generatePdf } from './lib/pdf-generator.js';
 import { generateCsv } from './lib/csv-extractor.js';
 
+/**
+ * Parse command line arguments into options object
+ */
+function parseArgs(args) {
+  const options = {
+    url: null,
+    format: 'pdf',
+    visual: false,
+    orientation: 'portrait',
+    pageSize: 'A4',
+    table: false,
+    password: null,
+    delimiter: ',',
+    watermarkEnabled: false,
+    watermarkText: null,
+    headerLogoUrl: null,
+    help: false,
+  };
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    switch (arg) {
+      case '--url':
+        options.url = args[++i];
+        break;
+      case '--format':
+        options.format = args[++i];
+        break;
+      case '--visual':
+        options.visual = true;
+        break;
+      case '--orientation':
+        options.orientation = args[++i];
+        break;
+      case '--page-size':
+        options.pageSize = args[++i];
+        break;
+      case '--table':
+        options.table = true;
+        break;
+      case '--password':
+        options.password = args[++i];
+        break;
+      case '--delimiter':
+        const delim = args[++i];
+        const delimiterMap = {
+          comma: ',',
+          semicolon: ';',
+          tab: '\t',
+        };
+        options.delimiter = delimiterMap[delim] ?? delim;
+        break;
+      case '--watermark':
+        options.watermarkEnabled = true;
+        options.watermarkText = args[++i];
+        break;
+      case '--header-logo':
+        options.headerLogoUrl = args[++i];
+        break;
+      case '--help':
+      case '-h':
+        options.help = true;
+        break;
+      default:
+        // If it looks like a URL and no --url was provided, use it as the URL
+        if (!options.url && (arg.startsWith('http://') || arg.startsWith('https://'))) {
+          options.url = arg;
+        }
+        break;
+    }
+  }
+
+  return options;
+}
+
+/**
+ * Print usage help
+ */
+function printHelp() {
+  console.log(`
+📖 PDF/CSV Test Generator
+
+Usage:
+  node test-local.js --url <url> [options]
+  node test-local.js <url> [options]
+
+Options:
+  --url <url>           URL to convert (required)
+  --format <type>       Output format: pdf (default) or csv
+  --visual              Single visual export mode (fits chart to one page)
+  --orientation <dir>   PDF orientation: portrait (default) or landscape
+  --page-size <size>    PDF page size: A4 (default), Letter, Legal, A3, Tabloid
+  --table               Table mode (paginated PDF)
+  --password <pwd>      PDF password protection
+  --delimiter <char>    CSV delimiter: comma (default), semicolon, tab
+  --watermark <text>    Add watermark text to PDF (diagonal across pages)
+  --header-logo <url>   Add header logo to PDF (URL to logo image)
+  --help, -h            Show this help
+
+Examples:
+  # Visual export - landscape Letter
+  node test-local.js --url "http://localhost:5173/?isPdfRender=true" --visual --orientation landscape --page-size letter
+
+  # Visual export - portrait A4
+  node test-local.js --url "http://localhost:5173/?isPdfRender=true" --visual
+
+  # Dashboard export (default mode)
+  node test-local.js --url "http://localhost:3000/dashboard/123"
+
+  # Table export with pagination
+  node test-local.js --url "http://localhost:3000/view/456" --table --page-size letter
+
+  # CSV export
+  node test-local.js --url "http://localhost:3000/view/456" --format csv
+
+  # CSV with semicolon delimiter
+  node test-local.js --url "http://localhost:3000/view/456" --format csv --delimiter semicolon
+
+  # PDF with watermark
+  node test-local.js --url "http://localhost:5173/?isPdfRender=true" --visual --watermark "CONFIDENTIAL"
+
+  # PDF with header logo
+  node test-local.js --url "http://localhost:5173/?isPdfRender=true" --visual --header-logo "https://example.com/logo.png"
+
+  # PDF with both watermark and header logo
+  node test-local.js --url "http://localhost:5173/?isPdfRender=true" --visual --watermark "DRAFT" --header-logo "https://example.com/logo.png"
+`);
+}
+
 // Test script for local PDF/CSV generation
 async function testGeneration() {
   try {
-    // Parse command line arguments
-    let url = process.argv[2];
-    const format = process.argv[3] || 'pdf'; // 'pdf' or 'csv'
-    const password = process.argv[4]; // Only for PDF
-    const mode = process.argv[5]; // 'table' for table mode (PDF only)
-    const pageSize = process.argv[6] || 'A4'; // Only for PDF
-    const delimiter = process.argv[7] || ','; // Only for CSV: ',' or ';' or '\t'
+    const options = parseArgs(process.argv.slice(2));
 
-    // Strip surrounding quotes from URL if present
-    if (url) {
-      // Check for surrounding quotes (single or double)
-      if ((url.startsWith('"') && url.endsWith('"')) ||
-          (url.startsWith("'") && url.endsWith("'"))) {
-        const originalUrl = url;
-        url = url.slice(1, -1);
-        console.log('Stripped surrounding quotes from URL');
-        console.log('  Original:', originalUrl);
-        console.log('  Cleaned:', url);
-      }
+    // Show help if requested or no URL provided
+    if (options.help || !options.url) {
+      printHelp();
+      process.exit(options.help ? 0 : 1);
     }
 
-    // Show usage if no URL provided
-    if (!url) {
-      console.log('📖 Usage:');
-      console.log('  node test-local.js <url> [format] [password] [mode] [pageSize] [delimiter]');
-      console.log('');
-      console.log('Arguments:');
-      console.log('  url       - Required. The URL to convert');
-      console.log('  format    - Optional. "pdf" (default) or "csv"');
-      console.log('  password  - Optional. Password for PDF encryption (PDF only)');
-      console.log('  mode      - Optional. "table" for paginated PDF, "dashboard" for single page (PDF only)');
-      console.log('  pageSize  - Optional. Page size for PDF: A4 (default), Letter, Legal, etc.');
-      console.log('  delimiter - Optional. CSV delimiter: "," (default), ";" or "tab"');
-      console.log('');
-      console.log('Examples:');
-      console.log('  PDF - Dashboard mode:');
-      console.log('    node test-local.js "https://example.com/dashboard"');
-      console.log('');
-      console.log('  PDF - Table mode:');
-      console.log('    node test-local.js "https://example.com/table" pdf "" table Letter');
-      console.log('');
-      console.log('  CSV - Export table:');
-      console.log('    node test-local.js "https://example.com/table" csv');
-      console.log('');
-      console.log('  CSV - With semicolon delimiter:');
-      console.log('    node test-local.js "https://example.com/table" csv "" "" "" ";"');
-      process.exit(0);
+    // Strip surrounding quotes from URL if present
+    if (options.url.startsWith('"') || options.url.startsWith("'")) {
+      options.url = options.url.slice(1, -1);
+    }
+
+    // Append headerLogoUrl to URL as query param (visual-view.tsx reads it from searchParams)
+    if (options.headerLogoUrl) {
+      const urlObj = new URL(options.url);
+      urlObj.searchParams.set('headerLogoUrl', options.headerLogoUrl);
+      options.url = urlObj.toString();
     }
 
     // Ensure output directory exists
@@ -62,11 +162,11 @@ async function testGeneration() {
       console.log('Created output directory:', outputDir);
     }
 
-    if (format === 'csv') {
+    if (options.format === 'csv') {
       // CSV Generation
-      const options = {
+      const csvOptions = {
         isLambda: false,
-        delimiter: delimiter === 'tab' ? '\t' : delimiter,
+        delimiter: options.delimiter,
         includeHeaders: true,
         includeSubtotals: true,
         includeGrandTotal: true,
@@ -76,17 +176,16 @@ async function testGeneration() {
         debug: true,
       };
 
-      console.log('Testing CSV generation for URL:', url);
-      console.log('Delimiter:', delimiter === '\t' ? 'tab' : delimiter);
+      console.log('Testing CSV generation');
+      console.log('  URL:', options.url);
+      console.log('  Delimiter:', options.delimiter === '\t' ? 'tab' : options.delimiter);
 
-      // Generate CSV using the extractor
-      const csvBuffer = await generateCsv(url, options);
+      const csvBuffer = await generateCsv(options.url, csvOptions);
 
       if (!csvBuffer?.length) {
         throw new Error('Empty CSV buffer generated');
       }
 
-      // Save CSV to output folder
       const outputFilename = `test-output-${Date.now()}.csv`;
       const outputPath = path.join(outputDir, outputFilename);
       fs.writeFileSync(outputPath, csvBuffer);
@@ -97,34 +196,42 @@ async function testGeneration() {
 
     } else {
       // PDF Generation
-      const options = {
+      const pdfOptions = {
         isLambda: false,
-        tableMode: mode === 'table',
-        pageSize: pageSize,
-        password: password,
+        tableMode: options.table,
+        pageSize: options.pageSize,
+        password: options.password,
+        orientation: options.orientation,
+        isVisualExport: options.visual,
         reportTitle: 'Test Report',
+        watermarkEnabled: options.watermarkEnabled,
+        watermarkText: options.watermarkText,
+        headerLogoUrl: options.headerLogoUrl,
         debug: true,
         debugScreenshot: true,
       };
 
-      console.log('Testing PDF generation for URL:', url);
-      if (password) {
-        console.log('Password protection will be applied');
+      console.log('Testing PDF generation');
+      console.log('  URL:', options.url);
+      console.log('  Mode:', options.visual ? 'visual' : options.table ? 'table' : 'dashboard');
+      console.log('  Page size:', options.pageSize);
+      console.log('  Orientation:', options.orientation);
+      if (options.password) {
+        console.log('  Password protection: enabled');
       }
-      if (options.tableMode) {
-        console.log('Table mode enabled with page size:', options.pageSize);
-      } else {
-        console.log('Dashboard mode (default) - single page capture');
+      if (options.watermarkEnabled) {
+        console.log('  Watermark:', options.watermarkText);
+      }
+      if (options.headerLogoUrl) {
+        console.log('  Header logo:', options.headerLogoUrl);
       }
 
-      // Generate PDF using the modular generator
-      const pdfBuffer = await generatePdf(url, options);
+      const pdfBuffer = await generatePdf(options.url, pdfOptions);
 
       if (!pdfBuffer?.length) {
         throw new Error('Empty PDF buffer generated');
       }
 
-      // Save PDF to output folder
       const outputFilename = `test-output-${Date.now()}.pdf`;
       const outputPath = path.join(outputDir, outputFilename);
       fs.writeFileSync(outputPath, pdfBuffer);

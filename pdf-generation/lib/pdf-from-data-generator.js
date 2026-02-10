@@ -9,6 +9,10 @@
 
 import { launchBrowser, closeBrowser } from './browser.js';
 import { encryptPdfBuffer } from '../pdf-encrypt.js';
+import {
+  getWatermarkHtml,
+  getHeaderLogoHtml,
+} from './watermark-utils.js';
 
 import { paginateDataTable } from './modes/data-table-paginator.js';
 import {
@@ -124,6 +128,11 @@ function buildGenerationArtifacts(payload, options = {}) {
       ? payload.tableStructure.rows.length
       : 0);
 
+  // Extract watermark and header logo settings
+  const watermarkEnabled = payload.watermarkEnabled === true || payload.watermarkEnabled === 'true';
+  const watermarkText = watermarkEnabled ? (payload.watermarkText || '') : '';
+  const headerLogoUrl = payload.headerLogoUrl || '';
+
   const paginatorInput = {
     headers: payload.tableStructure.headers || [],
     rows: payload.tableStructure.rows || [],
@@ -144,44 +153,104 @@ function buildGenerationArtifacts(payload, options = {}) {
     dataRowCount: rowCount,
   };
 
+  let baseHtml;
+  let pdfOptions;
+
   switch (payload.cardType) {
-    case 'table': {
+    case 'table':
+    case 'detailTable': {
       const pages = paginateDataTable(paginatorInput, paginatorOptions);
-      const html = renderDataTableHtml(pages, renderOptions);
-      const pdfOptions = getDataTablePdfOptions(null, pageSize, {
+      baseHtml = renderDataTableHtml(pages, renderOptions);
+      pdfOptions = getDataTablePdfOptions(null, pageSize, {
         orientation,
         timezone,
         reportTitle,
         filterLine,
       });
-      return { html, pdfOptions };
+      break;
     }
 
     case 'aggregateTable': {
       const pages = paginateAggregateTable(paginatorInput, paginatorOptions);
-      const html = renderAggregateTableHtml(pages, renderOptions);
-      const pdfOptions = getAggregatePdfOptions(null, pageSize, {
+      baseHtml = renderAggregateTableHtml(pages, renderOptions);
+      pdfOptions = getAggregatePdfOptions(null, pageSize, {
         orientation,
         timezone,
         reportTitle,
         filterLine,
       });
-      return { html, pdfOptions };
+      break;
     }
 
     case 'pivotTable': {
       const pages = paginateTableData(paginatorInput, paginatorOptions);
-      const html = renderPivotTableHtml(pages, renderOptions);
-      const pdfOptions = getPivotTablePdfOptions(null, pageSize, {
+      baseHtml = renderPivotTableHtml(pages, renderOptions);
+      pdfOptions = getPivotTablePdfOptions(null, pageSize, {
         orientation,
         timezone,
         reportTitle,
         filterLine,
       });
-      return { html, pdfOptions };
+      break;
     }
 
     default:
       throw new Error(`Unsupported card type for fast-path PDF: ${payload.cardType}`);
   }
+
+  // Inject watermark and header logo into HTML
+  const html = injectWatermarkAndLogo(baseHtml, {
+    watermarkText,
+    headerLogoUrl,
+  });
+
+  return { html, pdfOptions };
+}
+
+/**
+ * Inject watermark and header logo HTML into the base HTML content
+ * @param {string} baseHtml - The original HTML content
+ * @param {Object} options - Watermark and logo options
+ * @param {string} options.watermarkText - Watermark text to display
+ * @param {string} options.headerLogoUrl - URL of the header logo
+ * @returns {string} Modified HTML with watermark and logo
+ */
+function injectWatermarkAndLogo(baseHtml, options = {}) {
+  const { watermarkText, headerLogoUrl } = options;
+
+  if (!watermarkText && !headerLogoUrl) {
+    return baseHtml;
+  }
+
+  // Get watermark HTML (uses fixed watermark for tables - repeats per page)
+  const watermarkHtml = watermarkText ? getWatermarkHtml(watermarkText, { tiled: false }) : '';
+  const logoHtml = headerLogoUrl ? getHeaderLogoHtml(headerLogoUrl) : '';
+
+  if (watermarkText) {
+    console.log('Injecting watermark into fast-path HTML:', watermarkText);
+  }
+  if (headerLogoUrl) {
+    console.log('Injecting header logo into fast-path HTML');
+  }
+
+  // Inject watermark styles right after <head> opening
+  // Inject watermark element and logo right after <body> opening
+  let html = baseHtml;
+
+  // Inject after </head> - add watermark styles
+  if (watermarkHtml) {
+    // Extract just the style portion for head injection
+    const styleMatch = watermarkHtml.match(/<style>([\s\S]*?)<\/style>/);
+    if (styleMatch) {
+      html = html.replace('</head>', `<style>${styleMatch[1]}</style></head>`);
+    }
+  }
+
+  // Inject after <body> - add logo first, then watermark element
+  const bodyInsertContent = logoHtml + (watermarkHtml ? watermarkHtml.replace(/<style>[\s\S]*?<\/style>/, '') : '');
+  if (bodyInsertContent.trim()) {
+    html = html.replace(/<body([^>]*)>/, `<body$1>${bodyInsertContent}`);
+  }
+
+  return html;
 }

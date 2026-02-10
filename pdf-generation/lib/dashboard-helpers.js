@@ -186,6 +186,27 @@ export function shouldGenerateAllSheets(reportParams) {
 }
 
 /**
+ * Extracts dashboard ID from a URL path
+ * URL format: /view/dashboard/{dashboardId}
+ * @param {string} urlString - The full URL
+ * @returns {string|null} - Dashboard ID if found
+ */
+export function extractDashboardIdFromUrl(urlString) {
+  try {
+    const url = new URL(urlString);
+    const pathParts = url.pathname.split('/');
+    const dashboardIndex = pathParts.indexOf('dashboard');
+    if (dashboardIndex !== -1 && pathParts[dashboardIndex + 1]) {
+      return pathParts[dashboardIndex + 1];
+    }
+    return null;
+  } catch (error) {
+    console.error('Error extracting dashboard ID from URL:', error);
+    return null;
+  }
+}
+
+/**
  * Gets the current sheet ID from report params or URL
  * @param {Object} reportParams - Report parameters
  * @param {string} urlString - Current URL

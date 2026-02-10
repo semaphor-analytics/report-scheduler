@@ -1,13 +1,14 @@
 // Aggregate table mode - pre-paginated approach for aggregate tables with subtotals
 
 import { extractAggregateTableData, paginateAggregateTable } from './aggregate-table-paginator.js';
+import { normalizePageSize } from '../page-size-utils.js';
 
 export function getPdfOptions(dimensions, pageSize = 'A4', options = {}) {
   const now = new Date();
   const timezone = options.timezone || 'UTC';
 
   return {
-    format: pageSize,
+    format: normalizePageSize(pageSize),
     landscape: options.orientation === 'landscape',
     printBackground: true,
     margin: {

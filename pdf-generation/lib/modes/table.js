@@ -2,6 +2,8 @@
 // This mode is designed for tables that need to be split across multiple pages
 // Note: For pivot tables, this delegates to pivot-table.js for specialized handling
 
+import { normalizePageSize } from '../page-size-utils.js';
+
 export function getPdfOptions(dimensions, pageSize = 'A4', options = {}) {
   console.log('Table mode - Using paginated format with page size:', pageSize);
   console.log('Using orientation:', options.orientation || 'portrait');
@@ -36,7 +38,7 @@ export function getPdfOptions(dimensions, pageSize = 'A4', options = {}) {
   const filterLine = options.filterLine || '';
   
   return {
-    format: pageSize,              // Standard page sizes: A4, Letter, Legal, etc.
+    format: normalizePageSize(pageSize),  // Normalize to Puppeteer-expected capitalization
     landscape: options.orientation === 'landscape', // Support landscape orientation
     printBackground: true,         // Include background colors/images
     margin: {                      // Add margins for header/footer

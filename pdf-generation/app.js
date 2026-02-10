@@ -157,10 +157,26 @@ export const handler = async (event) => {
       console.log('No reportParams provided in query parameters');
     }
 
+    const tableMode = event?.queryStringParameters?.tableMode === 'true';
+    // Detect if this is a single visual export (URL contains /visual/) unless explicitly in table mode
+    // Visual exports support pageSize and orientation settings
+    const isVisualExport = url ? url.includes('/visual/') && !tableMode : false;
+
+    // Parse watermark settings
+    const watermarkEnabled =
+      event?.queryStringParameters?.watermarkEnabled === 'true';
+    const watermarkText = event?.queryStringParameters?.watermarkText || '';
+
+    // Parse header logo URL (for visual-view.tsx rendering)
+    const headerLogoUrl = event?.queryStringParameters?.headerLogoUrl || '';
+
+    // Parse expanded state for custom components (if provided)
+    const expandedState = event?.queryStringParameters?.expandedState || null;
+
     // Generation options
     const options = {
       isLambda: true,
-      tableMode: event?.queryStringParameters?.tableMode === 'true',
+      tableMode: tableMode,
       pageSize: event?.queryStringParameters?.pageSize || 'A4',
       orientation: event?.queryStringParameters?.orientation || 'portrait',
       password: event?.queryStringParameters?.password,
@@ -175,14 +191,32 @@ export const handler = async (event) => {
       reportParams: reportParams,
       format: format,
       delimiter: event?.queryStringParameters?.delimiter || ',',
+      isVisualExport: isVisualExport,
+      watermarkEnabled: watermarkEnabled,
+      watermarkText: watermarkText,
+      expandedState: expandedState,
     };
 
     console.log(
       'Lambda handler - Format:',
       format,
       'ScheduleId:',
-      scheduleId || 'none'
+      scheduleId || 'none',
+      'IsVisualExport:',
+      isVisualExport
     );
+    if (isVisualExport) {
+      console.log('  Visual export - PageSize:', options.pageSize, 'Orientation:', options.orientation);
+    }
+    if (watermarkEnabled) {
+      console.log('  Watermark enabled:', watermarkText);
+    }
+    if (headerLogoUrl) {
+      console.log('  Header logo URL provided');
+    }
+    if (expandedState) {
+      console.log('  Expanded state provided for custom components');
+    }
     if (attachmentMetadata?.name) {
       console.log(
         'Processing attachment:',
@@ -193,6 +227,19 @@ export const handler = async (event) => {
       );
     }
 
+    // Append headerLogoUrl to view URL if provided (visual-view.tsx reads from searchParams)
+    let targetUrl = url;
+    if (headerLogoUrl) {
+      try {
+        const urlObj = new URL(url);
+        urlObj.searchParams.set('headerLogoUrl', headerLogoUrl);
+        targetUrl = urlObj.toString();
+        console.log('  URL updated with headerLogoUrl');
+      } catch (e) {
+        console.error('Error adding headerLogoUrl to URL:', e);
+      }
+    }
+
     // Generate file based on format
     let fileBuffer;
     let contentType;
@@ -200,12 +247,12 @@ export const handler = async (event) => {
 
     if (format === 'csv') {
       console.log('Generating CSV file');
-      fileBuffer = await generateCsv(url, options);
+      fileBuffer = await generateCsv(targetUrl, options);
       contentType = 'text/csv';
       fileExtension = 'csv';
     } else {
       console.log('Generating PDF file');
-      fileBuffer = await generatePdf(url, options);
+      fileBuffer = await generatePdf(targetUrl, options);
       contentType = 'application/pdf';
       fileExtension = 'pdf';
     }

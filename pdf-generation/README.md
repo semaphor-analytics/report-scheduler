@@ -31,6 +31,13 @@ A serverless file generation service that converts web pages to PDFs or exports 
   - Protects sensitive data with industry-standard encryption
   - Available for direct API calls (not scheduled reports)
   - Pass password as query parameter
+- **Watermark Support**: Add diagonal watermark text across PDF pages
+  - Fixed watermarks for paginated tables (repeats on each page)
+  - Tiled watermarks for dashboard exports (pattern across entire page)
+  - Configurable via project settings or per-export
+- **Header Logo**: Add organization logo at the top of PDFs
+  - Rendered from URL in the view component
+  - Automatically included when enabled in project settings
 - **Multiple Page Sizes**: A4, Letter, Legal, Tabloid, A3, A5
 - **Orientation Support**: Portrait or Landscape
 
@@ -43,101 +50,120 @@ cd pdf-generation
 npm install
 ```
 
-### Test CSV Generation
+### Command Line Interface
+
+The test script uses named flags for clarity:
 
 ```bash
-# Basic CSV export
-node test-local.js "https://example.com/table" csv
-
-# CSV with semicolon delimiter (for Excel in some locales)
-node test-local.js "https://example.com/table" csv "" "" "" ";"
-
-# CSV with tab delimiter
-node test-local.js "https://example.com/table" csv "" "" "" tab
+node test-local.js --url <url> [options]
 ```
 
-### Test PDF Generation
+**Options**:
 
-#### Dashboard PDF (Single Page)
+| Flag                  | Description                                             | Default    |
+| --------------------- | ------------------------------------------------------- | ---------- |
+| `--url <url>`         | URL to convert (required)                               | -          |
+| `--format <type>`     | Output format: `pdf` or `csv`                           | `pdf`      |
+| `--visual`            | Single visual export mode (fits chart to one page)      | -          |
+| `--orientation <dir>` | PDF orientation: `portrait` or `landscape`              | `portrait` |
+| `--page-size <size>`  | PDF page size: `A4`, `Letter`, `Legal`, `A3`, `Tabloid` | `A4`       |
+| `--table`             | Table mode (paginated PDF)                              | -          |
+| `--password <pwd>`    | PDF password protection                                 | -          |
+| `--delimiter <char>`  | CSV delimiter: `comma`, `semicolon`, `tab`              | `comma`    |
+| `--watermark <text>`  | Add diagonal watermark text to PDF                      | -          |
+| `--header-logo <url>` | Add header logo to PDF (image URL)                      | -          |
+| `--help`, `-h`        | Show help                                               | -          |
+
+### Test Visual PDF Export
 
 ```bash
-# Basic dashboard export (default)
-node test-local.js "https://example.com/dashboard"
+# Visual export - landscape Letter (single page, chart fills page)
+node test-local.js --url "http://localhost:5173/?isPdfRender=true" --visual --orientation landscape --page-size letter
+
+# Visual export - portrait A4
+node test-local.js --url "http://localhost:5173/?isPdfRender=true" --visual --page-size a4
+
+# Visual export - landscape A4
+node test-local.js --url "http://localhost:5173/?isPdfRender=true" --visual --orientation landscape
+```
+
+### Test Dashboard PDF Export
+
+```bash
+# Dashboard export (default mode - single continuous page)
+node test-local.js --url "http://localhost:5173/?isPdfRender=true"
 
 # Dashboard with password protection
-node test-local.js "https://example.com/dashboard" pdf "mypassword"
-
-# Explicitly specify dashboard mode
-node test-local.js "https://example.com/dashboard" pdf "" dashboard
-
-# Dashboard with password and explicit mode
-node test-local.js "https://example.com/dashboard" pdf "secret123" dashboard
+node test-local.js --url "https://example.com/dashboard" --password "secret123"
 ```
 
-#### Table PDF (Paginated)
+### Test Table PDF Export (Paginated)
 
 ```bash
 # Table with Letter size pages
-node test-local.js "https://example.com/table" pdf "" table Letter
+node test-local.js --url "https://example.com/table" --table --page-size letter
 
-# Table with A4 pages
-node test-local.js "https://example.com/table" pdf "" table A4
+# Table with A4 pages in landscape
+node test-local.js --url "https://example.com/table" --table --page-size a4 --orientation landscape
 
 # Table with password protection
-node test-local.js "https://example.com/table" pdf "mypassword" table A4
-
-# Table with password and Letter size
-node test-local.js "https://example.com/table" pdf "secret123" table Letter
-
-# Note: Orientation is controlled via query params in Lambda, not test-local
+node test-local.js --url "https://example.com/table" --table --password "mypassword"
 ```
+
+### Test CSV Export
+
+```bash
+# Basic CSV export
+node test-local.js --url "https://example.com/table" --format csv
+
+# CSV with semicolon delimiter (for Excel in some locales)
+node test-local.js --url "https://example.com/table" --format csv --delimiter semicolon
+
+# CSV with tab delimiter
+node test-local.js --url "https://example.com/table" --format csv --delimiter tab
+```
+
+### Test Watermark and Header Logo
+
+```bash
+# PDF with watermark text
+node test-local.js --url "http://localhost:5173" --watermark "CONFIDENTIAL"
+
+# Visual export with watermark
+node test-local.js --url "https://example.com/visual?isPdfRender=true" --visual --watermark "DRAFT"
+
+# Table PDF with watermark (fixed watermark repeats on each page)
+node test-local.js --url "https://example.com/table?isPdfRender=true" --table --watermark "INTERNAL USE ONLY"
+
+# PDF with header logo
+node test-local.js --url "https://example.com/dashboard?isPdfRender=true" --header-logo "https://example.com/logo.png"
+
+# Combined: watermark + header logo
+node test-local.js --url "https://example.com/dashboard?isPdfRender=true" --watermark "CONFIDENTIAL" --header-logo "https://example.com/logo.png"
+
+# Visual export with both features
+node test-local.js --url "https://example.com/visual?isPdfRender=true" --visual --orientation landscape --watermark "DRAFT" --header-logo "https://cdn.example.com/company-logo.png"
+```
+
+**Watermark Notes**:
+
+- Watermark appears as diagonal text across the page
+- For paginated tables (`--table`), watermark uses fixed positioning (repeats on each page)
+- For dashboard/visual exports, watermark uses tiled SVG pattern (covers entire page)
+- Watermark is semi-transparent (15% opacity) to not obscure content
+
+**Header Logo Notes**:
+
+- Logo URL must be publicly accessible (or accessible from the rendering environment)
+- Logo appears at the top of the PDF before the main content
+- Maximum height is constrained to maintain document layout
+- For local testing, you can use any publicly accessible image URL
 
 **Password Protection Notes**:
 
-- Works with both dashboard and table PDFs
-- Password is the 3rd argument for test-local.js
-- Use empty string "" to skip password when specifying later arguments
+- Works with dashboard, visual, and table PDFs
 - Generated PDFs require password to open, print, or copy content
-
-### Command Line Arguments
-
-```
-node test-local.js <url> [format] [password] [mode] [pageSize] [delimiter]
-```
-
-**Argument Positions**:
-
-- **1st argument - url** (required): The webpage URL to convert
-- **2nd argument - format** (optional): `"pdf"` (default) or `"csv"`
-- **3rd argument - password** (optional): Password for PDF encryption (PDF only, use `""` to skip)
-- **4th argument - mode** (optional): `"table"` for paginated PDF, `"dashboard"` (default) for single page (PDF only)
-- **5th argument - pageSize** (optional): Page size for PDF: `A4` (default), `Letter`, `Legal`, `Tabloid`, `A3`, `A5`
-- **6th argument - delimiter** (optional): CSV delimiter: `","` (default), `";"` or `"tab"` (CSV only)
-
-**Important**: Arguments are positional! If you want to specify a later argument, you must provide all earlier arguments (use `""` for ones you want to skip).
-
-**Examples with Positional Arguments**:
-
-```bash
-# 1st arg only - URL (defaults to PDF)
-node test-local.js http://localhost:5173
-
-# 1st & 2nd args - URL and format
-node test-local.js https://example.com/table csv
-
-# 1st, 2nd & 3rd args - URL, format, and password
-node test-local.js https://example.com/dashboard pdf "secret123"
-
-# Skip 3rd arg to specify 4th - URL, format, no password, mode
-node test-local.js http://localhost:5173 pdf "" table
-node test-local.js http://localhost:5173 csv "" table
-
-# All PDF args - URL, format, password, mode, pageSize
-node test-local.js https://example.com/table pdf "secret" table Letter
-
-# Skip password to set delimiter for CSV - URL, format, skip, skip, skip, delimiter
-node test-local.js https://example.com/table csv "" "" "" ";"
-```
+- Uses 128-bit AES encryption
 
 ## SAM Deployment
 
@@ -240,6 +266,23 @@ cat raw.log | jq -r '.body' | tr ',' '\n' | awk '{printf "%c", $1}' | xxd -r -p 
 }
 ```
 
+#### For PDF with Watermark and Header Logo
+
+```json
+{
+  "queryStringParameters": {
+    "url": "https://example.com/dashboard",
+    "format": "pdf",
+    "pageSize": "Letter",
+    "orientation": "landscape",
+    "watermarkEnabled": "true",
+    "watermarkText": "CONFIDENTIAL",
+    "headerLogoUrl": "https://example.com/logo.png",
+    "scheduleId": "sched_123"
+  }
+}
+```
+
 ### SAM Template Configuration
 
 The service is configured in `template.yaml` with:
@@ -326,6 +369,9 @@ GET https://[api-id].execute-api.[region].amazonaws.com/Prod/generate?url=https:
 - `orientation` (optional): `"portrait"` (default) or `"landscape"`
 - `delimiter` (optional): CSV delimiter (`,` default, `;` or `\t`)
 - `password` (optional): Password for PDF encryption
+- `watermarkEnabled` (optional): `"true"` to enable watermark
+- `watermarkText` (optional): Text to display as watermark (e.g., "CONFIDENTIAL")
+- `headerLogoUrl` (optional): URL to logo image for header
 - `scheduleId` (optional): Schedule ID for tracking
 - `attachmentMetadata` (optional): JSON with attachment details
 
@@ -380,6 +426,7 @@ pdf-generation/
 ├── event.json                  # Sample event for SAM local testing
 ├── lib/
 │   ├── pdf-generator.js        # PDF generation orchestrator
+│   ├── pdf-from-data-generator.js  # Fast path PDF from POST data
 │   ├── csv-extractor.js        # CSV extraction using Puppeteer
 │   ├── browser.js              # Browser management
 │   ├── page-setup.js           # Page navigation and setup
@@ -387,6 +434,7 @@ pdf-generation/
 │   ├── content-stability.js    # Wait for content to load
 │   ├── dashboard-helpers.js    # Dashboard utilities
 │   ├── pdf-merger.js          # PDF merging for multi-sheet
+│   ├── watermark-utils.js      # Watermark and header logo utilities
 │   └── modes/
 │       ├── dashboard.js        # Dashboard PDF mode
 │       ├── table.js            # Table PDF mode (paginated)
@@ -419,7 +467,7 @@ vim lib/csv-extractor.js
 
 ```bash
 # Test with test-local.js
-node test-local.js "https://example.com/table" csv
+node test-local.js --url "https://example.com/table" --format csv
 
 # Test with SAM local
 sam local invoke GeneratePdfFunction --event event.json
@@ -496,6 +544,47 @@ The CSV export preserves:
 - Subtotal preservation across pages
 - Professional margins and formatting
 
+### Watermark
+
+Watermarks add semi-transparent diagonal text across PDF pages for document classification or branding.
+
+**Two rendering approaches**:
+
+1. **Fixed Watermark** (for paginated tables):
+
+   - Uses CSS `position: fixed` which repeats on each printed page
+   - Centered diagonal text at 45° angle
+   - Ideal for multi-page table exports
+
+2. **Tiled Watermark** (for dashboards/visuals):
+   - Uses SVG pattern as CSS background-image
+   - Creates a repeating pattern across the entire document
+   - Ideal for single continuous page exports
+
+**Styling**:
+
+- Font size: 80px (fixed) or 60px (tiled)
+- Color: Semi-transparent gray (15% opacity)
+- Rotation: 45 degrees counter-clockwise
+- Does not interfere with content readability
+
+### Header Logo
+
+Adds organization branding to the top of PDF exports.
+
+**How it works**:
+
+- Logo URL is passed as a query parameter (`headerLogoUrl`)
+- The React view component (`visual-view.tsx`, `view-container.tsx`) renders the logo
+- Puppeteer captures the rendered page including the logo
+- Maximum height is constrained to 40px to maintain document layout
+
+**Integration with Project Settings**:
+
+- When PDF export preferences are enabled in project settings, the logo URL is automatically included
+- For scheduled reports, the logo URL is fetched from the project's organization
+- Logo source can be configured to use the organization's uploaded logo
+
 ## Troubleshooting
 
 ### Common Issues
@@ -559,16 +648,19 @@ You can test with any Semaphor dashboard URL that includes a token:
 
 ```bash
 # Test CSV export from a table
-node test-local.js "https://semaphor.cloud/view/dashboard/[dashboard-id]/visual/[visual-id]?token=[token]" csv
+node test-local.js --url "https://semaphor.cloud/view/dashboard/[dashboard-id]/visual/[visual-id]?token=[token]" --format csv
 
 # Test dashboard PDF (single page)
-node test-local.js "https://semaphor.cloud/view/dashboard/[dashboard-id]?token=[token]" pdf
+node test-local.js --url "https://semaphor.cloud/view/dashboard/[dashboard-id]?token=[token]"
+
+# Test visual PDF export (single chart, landscape)
+node test-local.js --url "https://semaphor.cloud/view/dashboard/[dashboard-id]/visual/[visual-id]?token=[token]&isPdfRender=true" --visual --orientation landscape
 
 # Test table PDF with pagination
-node test-local.js "https://semaphor.cloud/view/dashboard/[dashboard-id]/visual/[visual-id]?token=[token]" pdf "" table Letter
+node test-local.js --url "https://semaphor.cloud/view/dashboard/[dashboard-id]/visual/[visual-id]?token=[token]" --table --page-size letter
 
 # Test with password protection
-node test-local.js "https://semaphor.cloud/view/dashboard/[dashboard-id]?token=[token]" pdf "mypassword"
+node test-local.js --url "https://semaphor.cloud/view/dashboard/[dashboard-id]?token=[token]" --password "mypassword"
 ```
 
 ### Test Invocation Examples
@@ -581,15 +673,18 @@ cd /Users/rohit/code/semaphor/semaphor-report-scheduler/pdf-generation
 npm install
 
 # 2. Test CSV generation with a real table URL
-node test-local.js "YOUR_TABLE_URL_WITH_TOKEN" csv
+node test-local.js --url "YOUR_TABLE_URL_WITH_TOKEN" --format csv
 
 # 3. Test PDF generation for a dashboard
-node test-local.js "YOUR_DASHBOARD_URL_WITH_TOKEN" pdf
+node test-local.js --url "YOUR_DASHBOARD_URL_WITH_TOKEN"
 
 # 4. Test paginated table PDF
-node test-local.js "YOUR_TABLE_URL_WITH_TOKEN" pdf "" table A4
+node test-local.js --url "YOUR_TABLE_URL_WITH_TOKEN" --table --page-size a4
 
-# 5. Check the output
+# 5. Test visual export (chart fits to one page)
+node test-local.js --url "YOUR_VISUAL_URL?isPdfRender=true" --visual --orientation landscape
+
+# 6. Check the output
 ls -la output/
 # Files will be named: test-output-{timestamp}.csv or test-output-{timestamp}.pdf
 ```
@@ -618,11 +713,7 @@ sam local invoke GeneratePdfFunction --event event.json > output.log 2>&1
 
 ```bash
 # Run the test script without arguments to see usage
-node test-local.js
-
-# This will display:
-# 📖 Usage:
-#   node test-local.js <url> [format] [password] [mode] [pageSize] [delimiter]
+node test-local.js --help
 ```
 
 ## Advanced SAM Configuration
@@ -685,7 +776,7 @@ Password protection is available for direct PDF generation (not scheduled report
 
 ```bash
 # Local testing with password
-node test-local.js "https://example.com/dashboard" pdf "mySecretPassword"
+node test-local.js --url "https://example.com/dashboard" --format pdf --password "mySecretPassword"
 
 # API call with password
 GET https://api.example.com/generate?url=https://example.com&format=pdf&password=mySecretPassword

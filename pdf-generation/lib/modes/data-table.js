@@ -1,13 +1,14 @@
 // Data table mode - pre-paginated approach for simple data tables
 
 import { extractDataTableData, paginateDataTable } from './data-table-paginator.js';
+import { normalizePageSize } from '../page-size-utils.js';
 
 export function getPdfOptions(dimensions, pageSize = 'A4', options = {}) {
   const now = new Date();
   const timezone = options.timezone || 'UTC';
 
   return {
-    format: pageSize,
+    format: normalizePageSize(pageSize),
     landscape: options.orientation === 'landscape',
     printBackground: true,
     margin: {
@@ -46,7 +47,18 @@ export async function preparePage(page, options = {}) {
     return;
   }
 
-  console.log(`Extracted data table: ${tableData.rows.length} rows`);
+  const rowCount = tableData.rows.length;
+  console.log(`Extracted data table: ${rowCount} rows`);
+
+  // Check for excessively large tables that will cause OOM
+  const MAX_ROWS_FOR_PDF = 5000;
+  if (rowCount > MAX_ROWS_FOR_PDF) {
+    throw new Error(
+      `Table too large for PDF export (${rowCount.toLocaleString()} rows). ` +
+      `Maximum supported: ${MAX_ROWS_FOR_PDF.toLocaleString()} rows. ` +
+      `Please use CSV export for large datasets.`
+    );
+  }
 
   // Paginate the data
   const pageSize = options.pageSize || 'Letter';

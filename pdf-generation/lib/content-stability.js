@@ -398,50 +398,36 @@ export async function waitForSizeStability(page, selector = null, options = {}) 
 }
 
 /**
- * Wait for dashboard ready indicator from useIsDashboardReady hook
- * @param {Page} page - Puppeteer page instance  
- * @param {number} timeout - Maximum time to wait in ms
+ * Wait for dashboard ready indicator from SemaphorReadyIndicator component
+ * Uses window.__SEMAPHOR_READY__ as single source of truth
+ * @param {Page} page - Puppeteer page instance
+ * @param {number} timeout - Maximum time to wait in ms (exits early when ready)
  */
 export async function waitForDashboardReady(page, timeout = 3000) {
-  console.log('Checking for dashboard ready indicator...');
+  console.log('Waiting for Semaphor ready indicator (window.__SEMAPHOR_READY__)...');
 
-  try {
-    // Look for the idle-check element that might be set by the dashboard
-    await page.waitForSelector('#idle-check', { timeout: timeout });
-    console.log('Dashboard idle check element found');
-    
-    // Also check console logs for the ready state
-    const isReady = await page.evaluate(async (maxWait) => {
-      const startTime = Date.now();
-      
-      // Poll for dashboard ready state
-      while (Date.now() - startTime < maxWait) {
-        // Check if there's a global indicator of readiness
-        if (window.__DASHBOARD_READY__ === true) {
-          return true;
-        }
-        
-        // Check for idle-check element content
-        const idleCheck = document.getElementById('idle-check');
-        if (idleCheck && (idleCheck.textContent === 'ready' || idleCheck.innerHTML === 'ready')) {
-          return true;
-        }
+  const isReady = await page.evaluate(async (maxWait) => {
+    const startTime = Date.now();
 
-        await new Promise(r => setTimeout(r, 50));
+    while (Date.now() - startTime < maxWait) {
+      // Only check the window object - single source of truth
+      if (window.__SEMAPHOR_READY__?.ready === true) {
+        console.log('Semaphor ready at', Date.now() - startTime, 'ms');
+        return true;
       }
-
-      return false;
-    }, timeout);
-    
-    if (isReady) {
-      console.log('Dashboard is ready (no active requests)');
+      await new Promise(r => setTimeout(r, 100));
     }
-    
-    return isReady;
-  } catch (e) {
-    console.log('No dashboard ready indicator found');
+
     return false;
+  }, timeout);
+
+  if (isReady) {
+    console.log('Semaphor is ready (all queries complete)');
+  } else {
+    console.log('Semaphor ready timeout - proceeding anyway');
   }
+
+  return isReady;
 }
 
 /**

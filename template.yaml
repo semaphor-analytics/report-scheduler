@@ -1,11 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: SAM Template for Puppeteer PDF Generation and Email Sending with Lambda Function URL and S3 Integration
+Description: SAM Template for Puppeteer PDF Generation, Email Sending, and Large Export Processing with Lambda and Step Functions
 
 Globals:
   Function:
     Runtime: nodejs18.x
-    Timeout: 120
+    Timeout: 300
     Environment:
       Variables:
         SEMAPHOR_APP_URL: !Ref SemaphorAppUrl
@@ -38,8 +38,17 @@ Resources:
       LifecycleConfiguration:
         Rules:
           - Id: DeleteOldPdfs
+            Prefix: pdfs/
             Status: Enabled
             ExpirationInDays: 30
+          - Id: DeleteOldEmails
+            Prefix: emails/
+            Status: Enabled
+            ExpirationInDays: 30
+          - Id: DeleteExportFiles
+            Prefix: exports/
+            Status: Enabled
+            ExpirationInDays: 1
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         IgnorePublicAcls: true
@@ -83,6 +92,24 @@ Resources:
               - s3:GetObjectTagging
             Resource:
               - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/emails/*'
+          - Sid: AllowChunkProcessorAccess
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt ChunkProcessorFunctionRole.Arn
+            Action:
+              - s3:PutObject
+            Resource:
+              - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*'
+          - Sid: AllowCompactionProcessorAccess
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt CompactionProcessorFunctionRole.Arn
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+            Resource:
+              - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*'
 
   # IAM Role for GeneratePdfFunction
   GeneratePdfFunctionRole:
@@ -221,6 +248,147 @@ Resources:
       Principal: events.amazonaws.com
       SourceArn: !GetAtt ScheduleRule.Arn
 
+  # ============================================
+  # EXPORT SYSTEM - Step Functions State Machine
+  # ============================================
+
+  ExportStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub 'semaphor-export-processor-${AWS::StackName}'
+      DefinitionUri: statemachine/export.asl.json
+      DefinitionSubstitutions:
+        ChunkProcessorArn: !GetAtt ChunkProcessorFunction.Arn
+        CompactionProcessorArn: !GetAtt CompactionProcessorFunction.Arn
+        MarkFailedArn: !GetAtt MarkFailedFunction.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ChunkProcessorFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref CompactionProcessorFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref MarkFailedFunction
+
+  # ============================================
+  # EXPORT SYSTEM - IAM Roles
+  # ============================================
+
+  # IAM Role for ChunkProcessorFunction
+  ChunkProcessorFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3ExportsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*'
+
+  # IAM Role for CompactionProcessorFunction
+  CompactionProcessorFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3ExportsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*'
+
+  # ============================================
+  # EXPORT SYSTEM - Lambda Functions
+  # ============================================
+
+  # Lambda Function for processing individual chunks
+  ChunkProcessorFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Target: "es2020"
+        Sourcemap: true
+        EntryPoints:
+          - app.ts
+    Properties:
+      FunctionName: !Sub 'semaphor-chunk-processor-${AWS::StackName}'
+      Handler: app.handler
+      CodeUri: ./chunk-processor
+      MemorySize: 2048
+      Timeout: 300
+      Role: !GetAtt ChunkProcessorFunctionRole.Arn
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref PdfBucket
+
+  # Lambda Function for compacting chunks into final file
+  CompactionProcessorFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Target: "es2020"
+        Sourcemap: true
+        EntryPoints:
+          - app.ts
+    Properties:
+      FunctionName: !Sub 'semaphor-compaction-processor-${AWS::StackName}'
+      Handler: app.handler
+      CodeUri: ./compaction-processor
+      MemorySize: 1024
+      Timeout: 900
+      Role: !GetAtt CompactionProcessorFunctionRole.Arn
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref PdfBucket
+
+  # Lambda Function for marking exports as failed
+  MarkFailedFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Target: "es2020"
+        Sourcemap: true
+        EntryPoints:
+          - app.ts
+    Properties:
+      FunctionName: !Sub 'semaphor-export-mark-failed-${AWS::StackName}'
+      Handler: app.handler
+      CodeUri: ./mark-failed
+      MemorySize: 256
+      Timeout: 30
+
 Outputs:
   GeneratePdfFunctionUrl:
     Description: 'Lambda Function URL for PDF generation'
@@ -253,3 +421,28 @@ Outputs:
     Value: !GetAtt ScheduleProcessorFunction.Arn
     Export:
       Name: ScheduleProcessorFunctionArn
+
+  # Export System Outputs
+  ExportStateMachineArn:
+    Description: 'ARN of the Export State Machine'
+    Value: !Ref ExportStateMachine
+    Export:
+      Name: ExportStateMachineArn
+
+  ChunkProcessorFunctionArn:
+    Description: 'ARN of the Chunk Processor Lambda function'
+    Value: !GetAtt ChunkProcessorFunction.Arn
+    Export:
+      Name: ChunkProcessorFunctionArn
+
+  CompactionProcessorFunctionArn:
+    Description: 'ARN of the Compaction Processor Lambda function'
+    Value: !GetAtt CompactionProcessorFunction.Arn
+    Export:
+      Name: CompactionProcessorFunctionArn
+
+  MarkFailedFunctionArn:
+    Description: 'ARN of the Mark Failed Lambda function'
+    Value: !GetAtt MarkFailedFunction.Arn
+    Export:
+      Name: MarkFailedFunctionArn

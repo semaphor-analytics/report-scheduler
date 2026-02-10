@@ -2,6 +2,7 @@
 // This mode extracts table data and generates pre-paginated HTML for reliable PDF generation
 
 import { extractPivotTableData, paginateTableData, estimateRowsPerPage } from './pivot-table-paginator.js';
+import { normalizePageSize } from '../page-size-utils.js';
 
 export function getPdfOptions(dimensions, pageSize = 'A4', options = {}) {
   const now = new Date();
@@ -29,7 +30,7 @@ export function getPdfOptions(dimensions, pageSize = 'A4', options = {}) {
   const reportTitle = options.reportTitle || 'Pivot Table Report';
 
   return {
-    format: pageSize,
+    format: normalizePageSize(pageSize),
     landscape: options.orientation === 'landscape',
     printBackground: true,
     margin: {

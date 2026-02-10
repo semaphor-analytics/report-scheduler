@@ -52,11 +52,12 @@ exports.handler = async (event) => {
 
     // 2. Process each schedule
     const promises = schedules.map(async (schedule) => {
-      const { scheduleId, attachments, recipients, reportParams } = schedule;
+      const { scheduleId, attachments, recipients, reportParams, pdfExportPreferences } = schedule;
 
       console.log(`Processing schedule ${scheduleId}:`);
       console.log('  reportParams:', JSON.stringify(reportParams, null, 2));
       console.log('  attachments:', JSON.stringify(attachments, null, 2));
+      console.log('  pdfExportPreferences:', JSON.stringify(pdfExportPreferences, null, 2));
 
       // Skip schedules with no attachments
       if (!attachments || attachments.length === 0) {
@@ -130,6 +131,20 @@ exports.handler = async (event) => {
           totalAttachments: attachments.length,
         };
 
+        // Extract watermark settings from pdfExportPreferences
+        const watermarkEnabled = pdfExportPreferences?.watermark?.enabled === true;
+        const watermarkText = watermarkEnabled ? (pdfExportPreferences?.watermark?.text || '') : '';
+        const headerLogoUrl = pdfExportPreferences?.headerLogo?.enabled
+          ? (pdfExportPreferences?.headerLogo?.url || '')
+          : '';
+
+        if (watermarkEnabled) {
+          console.log(`    Watermark enabled: "${watermarkText}"`);
+        }
+        if (headerLogoUrl) {
+          console.log(`    Header logo enabled`);
+        }
+
         const pdfParams = {
           FunctionName: process.env.GENERATE_PDF_FUNCTION_NAME,
           InvocationType: 'Event', // Asynchronous invocation
@@ -147,6 +162,15 @@ exports.handler = async (event) => {
               // Pass reportParams if we have any settings
               ...(Object.keys(lambdaReportParams).length > 0 && {
                 reportParams: JSON.stringify(lambdaReportParams),
+              }),
+              // Pass watermark settings
+              ...(watermarkEnabled && {
+                watermarkEnabled: 'true',
+                watermarkText: watermarkText,
+              }),
+              // Pass header logo URL (for visual-view.tsx rendering)
+              ...(headerLogoUrl && {
+                headerLogoUrl: headerLogoUrl,
               }),
             },
           }),

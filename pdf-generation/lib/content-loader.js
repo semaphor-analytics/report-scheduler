@@ -1,16 +1,26 @@
 import { waitForDOMStability, waitForImages, waitForSizeStability } from './content-stability.js';
 
 export async function loadAllContent(page, options = {}) {
+  const timings = { start: Date.now() };
+  console.log('\n📦 Content Loading Started...');
+
   // Step 1: Scroll main page to load lazy content
+  timings.scrollMainStart = Date.now();
   await scrollMainPage(page);
-  
+  timings.scrollMainDone = Date.now();
+  console.log(`  ⏱️  scrollMainPage: ${timings.scrollMainDone - timings.scrollMainStart}ms`);
+
   // Wait for DOM to stabilize after scrolling instead of fixed wait
+  timings.domStability1Start = Date.now();
   await waitForDOMStability(page, 300, 3000);
-  
+  timings.domStability1Done = Date.now();
+  console.log(`  ⏱️  DOM stability (post-scroll): ${timings.domStability1Done - timings.domStability1Start}ms`);
+
   // Step 2: Find and scroll inside containers
   // For dashboard mode: skip scrolling inside individual cards/tables
   // For table mode: scroll containers to load all content
   let hasScrollableContainers = false;
+  timings.containerScrollStart = Date.now();
   if (options.tableMode) {
     console.log('Table mode: Scrolling containers to load full content');
     hasScrollableContainers = await scrollContainers(page);
@@ -22,10 +32,13 @@ export async function loadAllContent(page, options = {}) {
   } else {
     console.log('Dashboard mode: Skipping container scrolling to preserve card/table appearance');
   }
-  
+  timings.containerScrollDone = Date.now();
+  console.log(`  ⏱️  Container scrolling: ${timings.containerScrollDone - timings.containerScrollStart}ms`);
+
   // Step 3: Expand containers based on mode
   // In dashboard mode: expand only the dashboard-tabs-content container
   // In table mode: expand table containers to show full content for pagination
+  timings.expandStart = Date.now();
   let didExpand = false;
   if (!options.tableMode) {
     didExpand = await expandMainContainer(page);
@@ -33,7 +46,7 @@ export async function loadAllContent(page, options = {}) {
     console.log('Table mode: Expanding table containers for pagination');
     didExpand = await expandTableContainers(page);
   }
-  
+
   // Force browser to recalculate layout after any expansion
   if (didExpand) {
     await page.evaluate(() => {
@@ -42,24 +55,37 @@ export async function loadAllContent(page, options = {}) {
       // Trigger reflow
       window.dispatchEvent(new Event('resize'));
     });
-    
+
     // Wait for DOM to stabilize after expansion
     await waitForDOMStability(page, 500, 3000);
     await waitForSizeStability(page, null, { quietMs: 350, maxWait: 2000 });
   }
-  
+  timings.expandDone = Date.now();
+  console.log(`  ⏱️  Container expansion: ${timings.expandDone - timings.expandStart}ms`);
+
   // Step 4: Final scroll to load all visuals
+  timings.finalScrollStart = Date.now();
   await finalScrollForVisuals(page, options);
+  timings.finalScrollDone = Date.now();
+  console.log(`  ⏱️  Final scroll: ${timings.finalScrollDone - timings.finalScrollStart}ms`);
 
   // Wait for images to load (with short timeout)
+  timings.imagesStart = Date.now();
   await waitForImages(page, 2000);
+  timings.imagesDone = Date.now();
+  console.log(`  ⏱️  Image loading: ${timings.imagesDone - timings.imagesStart}ms`);
+
+  timings.sizeStability1Start = Date.now();
   await waitForSizeStability(page, null, { quietMs: 350, maxWait: 2000 });
+  timings.sizeStability1Done = Date.now();
+  console.log(`  ⏱️  Size stability: ${timings.sizeStability1Done - timings.sizeStability1Start}ms`);
 
   // Additional stabilization wait for dashboard content
   const isDashboard = await page.evaluate(() => {
     return !!document.querySelector('[data-role="dashboard-tabs-content"]');
   });
 
+  timings.dashboardStabilityStart = Date.now();
   if (isDashboard) {
     console.log('Dashboard detected - waiting for content stabilization...');
     await waitForDOMStability(page, 500, 2000);
@@ -69,9 +95,21 @@ export async function loadAllContent(page, options = {}) {
       { quietMs: 400, maxWait: 2000 }
     );
   }
+  timings.dashboardStabilityDone = Date.now();
+  console.log(`  ⏱️  Dashboard stability: ${timings.dashboardStabilityDone - timings.dashboardStabilityStart}ms`);
 
   // Step 5: Calculate and return dimensions
-  return await calculateDimensions(page);
+  // Pass mode so we know whether to include full table heights
+  timings.dimensionsStart = Date.now();
+  const mode = options.tableMode ? 'table' : 'dashboard';
+  const dimensions = await calculateDimensions(page, mode);
+  timings.dimensionsDone = Date.now();
+  console.log(`  ⏱️  Calculate dimensions: ${timings.dimensionsDone - timings.dimensionsStart}ms`);
+
+  const totalTime = Date.now() - timings.start;
+  console.log(`📦 Content Loading Complete: ${totalTime}ms (${(totalTime / 1000).toFixed(1)}s)\n`);
+
+  return dimensions;
 }
 
 async function scrollMainPage(page) {
@@ -247,33 +285,39 @@ async function expandTableContainers(page) {
 async function expandMainContainer(page) {
   console.log('Step 3: Expanding dashboard-tabs-content container...');
   const expanded = await page.evaluate(() => {
+    // Helper to expand an element for PDF
+    const expandForPdf = (el) => {
+      if (!el?.style) return;
+      el.style.setProperty('height', 'auto', 'important');
+      el.style.setProperty('max-height', 'none', 'important');
+      el.style.setProperty('overflow', 'visible', 'important');
+      el.style.setProperty('transform', 'none', 'important');
+      el.style.setProperty('flex-basis', 'auto', 'important');
+    };
+
     // Look for the specific dashboard content container
     const dashboardContent = document.querySelector('[data-role="dashboard-tabs-content"]');
 
     if (dashboardContent) {
       console.log('Found dashboard-tabs-content container');
-      const originalHeight = dashboardContent.clientHeight;
-      const scrollHeight = dashboardContent.scrollHeight;
-      console.log('Original height:', originalHeight, 'Scroll height:', scrollHeight);
 
-      // Simply expand the main container to show all content
-      dashboardContent.style.height = scrollHeight + 'px';
-      dashboardContent.style.maxHeight = 'none';
-      dashboardContent.style.overflow = 'visible';
-      dashboardContent.style.overflowY = 'visible';
+      // Expand dashboard content
+      expandForPdf(dashboardContent);
+
+      // Expand Radix ScrollArea viewport and its inner content
+      const viewport = dashboardContent.querySelector('[data-radix-scroll-area-viewport]');
+      if (viewport) {
+        expandForPdf(viewport);
+        if (viewport.firstElementChild) {
+          expandForPdf(viewport.firstElementChild);
+        }
+      }
 
       // Ensure parent containers can accommodate the expanded height
       let parent = dashboardContent.parentElement;
       while (parent && parent !== document.body) {
-        const parentStyle = window.getComputedStyle(parent);
-        if (parentStyle.overflow === 'hidden' || parentStyle.overflowY === 'hidden') {
-          parent.style.overflow = 'visible';
-          parent.style.overflowY = 'visible';
-        }
-        if (parentStyle.height && parentStyle.height !== 'auto') {
-          parent.style.height = 'auto';
-          parent.style.minHeight = parentStyle.height;
-        }
+        parent.style.setProperty('overflow', 'visible', 'important');
+        parent.style.setProperty('height', 'auto', 'important');
         parent = parent.parentElement;
       }
 
@@ -411,14 +455,15 @@ async function finalScrollForVisuals(page, options = {}) {
   }, isTableMode);
 }
 
-async function calculateDimensions(page) {
-  console.log('Step 5: Calculating content dimensions...');
+async function calculateDimensions(page, mode = 'dashboard') {
+  console.log('Step 5: Calculating content dimensions... (mode:', mode, ')');
 
   // Don't force expansion here - just measure what's already expanded
   // The main dashboard container should already be expanded from expandMainContainer
   
   // Now calculate dimensions with everything expanded
-  const dimensions = await page.evaluate(() => {
+  // Pass mode to browser context so we can conditionally include table heights
+  const dimensions = await page.evaluate((mode) => {
     const body = document.body;
     const html = document.documentElement;
     
@@ -517,15 +562,33 @@ async function calculateDimensions(page) {
     // Small safety buffer - we don't need much since we're measuring the actual expanded container
     const safetyBuffer = 100;
 
-    // Use the maximum of all measurements
-    const finalHeight = Math.max(
-      height,
-      maxBottom,
-      expandedContainerHeight,
-      lastTableBottom,
-      lastRowBottom,
-      dashboardHeight
-    ) + safetyBuffer;
+    // Calculate final height based on mode:
+    // - Dashboard mode: use dashboard container height (tables stay constrained in cards)
+    // - Table mode: include all measurements (we want full table expansion)
+    let finalHeight;
+    if (mode === 'table') {
+      // Table mode: include all measurements including full table content
+      finalHeight = Math.max(
+        height,
+        maxBottom,
+        expandedContainerHeight,
+        lastTableBottom,
+        lastRowBottom,
+        dashboardHeight
+      ) + safetyBuffer;
+    } else {
+      // Dashboard mode: use dashboard container height as the primary measure
+      // Don't use maxBottom/expandedContainerHeight as they include hidden table content
+      if (dashboardHeight > 0) {
+        // We have a dashboard container - use its height
+        finalHeight = dashboardHeight + safetyBuffer;
+        console.log('Dashboard mode: Using dashboard container height:', dashboardHeight);
+      } else {
+        // Fallback: no dashboard container found, use document height
+        finalHeight = height + safetyBuffer;
+        console.log('Dashboard mode: No dashboard container, using document height:', height);
+      }
+    }
     
     return {
       documentHeight: height,
@@ -540,7 +603,7 @@ async function calculateDimensions(page) {
       hasContent: bodyContent.trim().length > 0,
       bodyContentLength: bodyContent.length
     };
-  });
+  }, mode);
   
   console.log('Content dimensions:', dimensions);
   
