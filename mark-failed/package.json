@@ -1,0 +1,15 @@
+{
+  "name": "mark-failed",
+  "version": "1.0.0",
+  "description": "Lambda function to mark failed export jobs and create notifications",
+  "main": "app.js",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0"
+  }
+}

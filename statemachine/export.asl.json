@@ -1,0 +1,68 @@
+{
+  "Comment": "Semaphor Export Processor - Parallel chunk processing with compaction v2",
+  "StartAt": "ProcessChunks",
+  "States": {
+    "ProcessChunks": {
+      "Type": "Map",
+      "ItemsPath": "$.chunks",
+      "MaxConcurrency": 40,
+      "Parameters": {
+        "chunkId.$": "$$.Map.Item.Value.chunkId",
+        "chunkNumber.$": "$$.Map.Item.Value.chunkNumber",
+        "chunkSize.$": "$$.Map.Item.Value.chunkSize",
+        "isFirstChunk.$": "$$.Map.Item.Value.isFirstChunk",
+        "jobId.$": "$.jobId",
+        "exportToken.$": "$.exportToken",
+        "cardConfig.$": "$.cardConfig",
+        "formatting.$": "$.formatting"
+      },
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "ProcessSingleChunk",
+        "States": {
+          "ProcessSingleChunk": {
+            "Type": "Task",
+            "Resource": "${ChunkProcessorArn}",
+            "Retry": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "MaxAttempts": 3,
+                "BackoffRate": 2,
+                "IntervalSeconds": 5
+              }
+            ],
+            "End": true
+          }
+        }
+      },
+      "ResultPath": "$.chunkResults",
+      "Next": "CompactAndNotify",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "MarkExportFailed",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "CompactAndNotify": {
+      "Type": "Task",
+      "Resource": "${CompactionProcessorArn}",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "MarkExportFailed",
+          "ResultPath": "$.error"
+        }
+      ],
+      "End": true
+    },
+    "MarkExportFailed": {
+      "Type": "Task",
+      "Resource": "${MarkFailedArn}",
+      "End": true
+    }
+  }
+}
