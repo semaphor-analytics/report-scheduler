@@ -8,6 +8,9 @@ else
     exit 1
 fi
 
+# Ensure esbuild is available on PATH (installed as project devDependency)
+export PATH="$(pwd)/node_modules/.bin:$PATH"
+
 # Build the SAM application
 echo "Building SAM application..."
 sam build

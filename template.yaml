@@ -27,6 +27,14 @@ Parameters:
     Description: SES verified email address for sending reports (e.g., noreply@yourdomain.com)
     Default: noreply@semaphor.cloud
 
+  AutomationDispatchRuleState:
+    Type: String
+    Description: Enable or disable the Automation V2 dispatcher EventBridge rule
+    Default: DISABLED
+    AllowedValues:
+      - ENABLED
+      - DISABLED
+
 Resources:
   # S3 Bucket Resource
   PdfBucket:
@@ -248,6 +256,84 @@ Resources:
       Principal: events.amazonaws.com
       SourceArn: !GetAtt ScheduleRule.Arn
 
+  # Lambda Function to dispatch Automation V2 runs
+  AutomationDispatcherFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.handler
+      Runtime: nodejs18.x
+      Timeout: 120
+      MemorySize: 256
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Statement:
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+              Resource: !Ref AutomationStateMachine
+      Environment:
+        Variables:
+          AUTOMATION_DISPATCH_ENABLED: 'false'
+          AUTOMATION_BATCH_SIZE: '60'
+          AUTOMATION_LEASE_MINUTES: '5'
+          AUTOMATION_DISPATCH_KINDS: 'REPORT,ALERT,CACHE_REFRESH'
+          AUTOMATION_EXECUTOR_MODE: 'http'
+          AUTOMATION_STATE_MACHINE_ARN: !Ref AutomationStateMachine
+          AUTOMATION_EXECUTOR_PATH: '/api/v1/automations/internal/execute'
+      PackageType: Zip
+      CodeUri: ./automation-dispatcher
+
+  # Lambda function used by automation Step Functions execution states
+  AutomationExecutorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.handler
+      Runtime: nodejs18.x
+      Timeout: 120
+      MemorySize: 256
+      Policies:
+        - AWSLambdaBasicExecutionRole
+      Environment:
+        Variables:
+          AUTOMATION_EXECUTOR_PATH: '/api/v1/automations/internal/execute'
+      PackageType: Zip
+      CodeUri: ./automation-executor
+
+  # EventBridge Rule to trigger Automation V2 dispatcher every 5 minutes
+  AutomationDispatchRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Trigger Automation V2 dispatcher every 5 minutes
+      ScheduleExpression: rate(5 minutes)
+      State: !Ref AutomationDispatchRuleState
+      Targets:
+        - Arn: !GetAtt AutomationDispatcherFunction.Arn
+          Id: AutomationDispatcherTarget
+
+  # Permission for EventBridge to invoke Automation V2 dispatcher
+  AutomationDispatcherPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AutomationDispatcherFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AutomationDispatchRule.Arn
+
+  # ============================================
+  # AUTOMATION V2 - Step Functions State Machine
+  # ============================================
+
+  AutomationStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub 'semaphor-automation-executor-${AWS::StackName}'
+      DefinitionUri: statemachine/automation.asl.json
+      DefinitionSubstitutions:
+        AutomationExecutorArn: !GetAtt AutomationExecutorFunction.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref AutomationExecutorFunction
+
   # ============================================
   # EXPORT SYSTEM - Step Functions State Machine
   # ============================================
@@ -421,6 +507,24 @@ Outputs:
     Value: !GetAtt ScheduleProcessorFunction.Arn
     Export:
       Name: ScheduleProcessorFunctionArn
+
+  AutomationDispatcherFunctionArn:
+    Description: 'ARN of the Automation V2 Dispatcher Lambda function'
+    Value: !GetAtt AutomationDispatcherFunction.Arn
+    Export:
+      Name: AutomationDispatcherFunctionArn
+
+  AutomationExecutorFunctionArn:
+    Description: 'ARN of the Automation V2 Executor Lambda function'
+    Value: !GetAtt AutomationExecutorFunction.Arn
+    Export:
+      Name: AutomationExecutorFunctionArn
+
+  AutomationStateMachineArn:
+    Description: 'ARN of the Automation V2 State Machine'
+    Value: !Ref AutomationStateMachine
+    Export:
+      Name: AutomationStateMachineArn
 
   # Export System Outputs
   ExportStateMachineArn:

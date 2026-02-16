@@ -120,6 +120,7 @@ export const handler = async (event) => {
     const email = event?.queryStringParameters?.email;
     const subject = event?.queryStringParameters?.subject;
     const scheduleId = event?.queryStringParameters?.scheduleId;
+    const leaseOwner = event?.queryStringParameters?.leaseOwner;
     const format = event?.queryStringParameters?.format || 'pdf';
 
     // Parse attachment metadata if provided
@@ -272,6 +273,7 @@ export const handler = async (event) => {
       prefix = 'emails';
       tags = {
         scheduleId: scheduleId || 'unknown',
+        leaseOwner: leaseOwner || '',
         recipients: email || 'none',
         format: format || 'pdf',
         attachmentName: attachmentMetadata?.name || 'Report',

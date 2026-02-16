@@ -9,6 +9,7 @@ exports.handler = async (event) => {
   );
 
   let scheduleId;
+  let leaseOwner;
 
   try {
     const tagParams = { Bucket: bucket, Key: key };
@@ -20,6 +21,7 @@ exports.handler = async (event) => {
 
     // Check if this is a scheduled report or direct email
     scheduleId = tags.scheduleId;
+    leaseOwner = tags.leaseOwner || null;
     let recipientEmail,
       emailSubject,
       emailMessage,
@@ -134,13 +136,13 @@ exports.handler = async (event) => {
       `Email sent to ${recipientEmail} with subject: ${emailSubject}`
     );
     if (scheduleId) {
-      await updateSubscriptionStatus(scheduleId, 'success');
+      await updateSubscriptionStatus(scheduleId, 'success', leaseOwner);
     }
     return { statusCode: 200, body: 'Email sent successfully' };
   } catch (error) {
     console.error('Error:', error);
     if (scheduleId) {
-      await updateSubscriptionStatus(scheduleId, 'error');
+      await updateSubscriptionStatus(scheduleId, 'error', leaseOwner);
     }
     throw error;
   }
@@ -254,7 +256,7 @@ function createRawEmail(
   return Buffer.from(rawEmail);
 }
 
-async function updateSubscriptionStatus(scheduleId, status) {
+async function updateSubscriptionStatus(scheduleId, status, leaseOwner = null) {
   const semaphorAppUrl = process.env.SEMAPHOR_APP_URL;
   if (!semaphorAppUrl) {
     throw new Error('SEMAPHOR_APP_URL environment variable is not set');
@@ -276,6 +278,7 @@ async function updateSubscriptionStatus(scheduleId, status) {
       body: JSON.stringify({
         scheduleId,
         status,
+        ...(leaseOwner ? { leaseOwner } : {}),
       }),
     }
   );

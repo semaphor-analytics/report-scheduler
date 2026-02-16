@@ -52,7 +52,14 @@ exports.handler = async (event) => {
 
     // 2. Process each schedule
     const promises = schedules.map(async (schedule) => {
-      const { scheduleId, attachments, recipients, reportParams, pdfExportPreferences } = schedule;
+      const {
+        scheduleId,
+        leaseOwner,
+        attachments,
+        recipients,
+        reportParams,
+        pdfExportPreferences,
+      } = schedule;
 
       console.log(`Processing schedule ${scheduleId}:`);
       console.log('  reportParams:', JSON.stringify(reportParams, null, 2));
@@ -152,6 +159,7 @@ exports.handler = async (event) => {
             queryStringParameters: {
               url: attachment.viewUrl,
               scheduleId: scheduleId,
+              leaseOwner: leaseOwner || '',
               email: recipientList.join(','), // Only for S3 tagging as 'recipients'
               pageSize: pageSize,
               orientation: orientation,

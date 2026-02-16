@@ -1,0 +1,52 @@
+{
+  "Comment": "Automation V2 execution state machine",
+  "StartAt": "ExecuteAutomationRun",
+  "States": {
+    "ExecuteAutomationRun": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "OutputPath": "$.Payload",
+      "Parameters": {
+        "FunctionName": "${AutomationExecutorArn}",
+        "Payload.$": "$"
+      },
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.executionError",
+          "Next": "MarkRunFailed"
+        }
+      ],
+      "Next": "ExecutionSucceeded"
+    },
+    "MarkRunFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "OutputPath": "$.Payload",
+      "Parameters": {
+        "FunctionName": "${AutomationExecutorArn}",
+        "Payload": {
+          "action": "mark_failed",
+          "runId.$": "$.runId",
+          "error.$": "States.Format('STEP_FUNCTIONS_EXECUTION_FAILED: {}', $.executionError.Cause)"
+        }
+      },
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.markFailedError",
+          "Next": "ExecutionFailed"
+        }
+      ],
+      "Next": "ExecutionFailed"
+    },
+    "ExecutionSucceeded": {
+      "Type": "Succeed"
+    },
+    "ExecutionFailed": {
+      "Type": "Fail",
+      "Error": "AutomationExecutionFailed",
+      "Cause": "Automation execution failed in state machine"
+    }
+  }
+}
