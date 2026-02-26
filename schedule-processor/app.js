@@ -110,6 +110,11 @@ exports.handler = async (event) => {
           attachment.pdfOptions?.orientation ||
           reportParams?.pdfOptions?.orientation ||
           'portrait';
+        const wideTableStrategy =
+          settings.wideTableStrategy ||
+          attachment.pdfOptions?.wideTableStrategy ||
+          reportParams?.pdfOptions?.wideTableStrategy ||
+          'auto';
         const format = attachment.format || 'pdf';
 
         // Build reportParams from attachment settings for Lambda
@@ -163,6 +168,7 @@ exports.handler = async (event) => {
               email: recipientList.join(','), // Only for S3 tagging as 'recipients'
               pageSize: pageSize,
               orientation: orientation,
+              wideTableStrategy: wideTableStrategy,
               format: format,
               timezone: timezone, // Pass timezone for PDF timestamp formatting
               // Pass attachment metadata for email sender

@@ -6,6 +6,22 @@ import { generatePdfFromData } from './lib/pdf-from-data-generator.js';
 // Initialize S3 client
 const s3 = new AWS.S3();
 
+function sanitizeFilenameBase(name, fallback = 'Report') {
+  const safe = String(name || fallback)
+    .trim()
+    .replace(/[^a-zA-Z0-9 _-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-_]+|[-_]+$/g, '');
+  return (safe || fallback).slice(0, 120);
+}
+
+function buildExportFilename(name, extension) {
+  const base = sanitizeFilenameBase(name, 'Report');
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `${base}-${stamp}.${extension}`;
+}
+
 /**
  * Handle data-direct POST requests (fast path)
  * Receives pre-organized table structure and generates PDF without URL rendering
@@ -30,17 +46,22 @@ async function handleDataDirectRequest(event) {
     payload.orientation = payload.orientation || 'portrait';
     payload.timezone = payload.timezone || 'UTC';
     payload.filterLine = payload.filterLine || '';
+    payload.wideTableStrategy = payload.wideTableStrategy || 'auto';
     payload.rowCount =
       typeof payload.rowCount === 'number'
         ? payload.rowCount
         : payload.tableStructure?.rows?.length || 0;
 
-    const options = { isLambda: true };
+    const options = {
+      isLambda: true,
+      wideTableStrategy: payload.wideTableStrategy,
+    };
 
     console.log('Generating PDF from data with options:', options);
 
     // Generate PDF from data
     let pdfBuffer = await generatePdfFromData(payload, options);
+    const layoutApplied = pdfBuffer?.layoutApplied || null;
 
     if (!pdfBuffer || pdfBuffer.length === 0) {
       throw new Error('Empty PDF buffer generated');
@@ -54,7 +75,8 @@ async function handleDataDirectRequest(event) {
       throw new Error('S3_BUCKET_NAME environment variable is not set');
     }
 
-    const fileKey = `pdfs/document-${Date.now()}.pdf`;
+    const outputFilename = buildExportFilename(payload.reportTitle, 'pdf');
+    const fileKey = `pdfs/${outputFilename}`;
     console.log('Uploading to S3:', fileKey);
 
     const uploadParams = {
@@ -73,7 +95,7 @@ async function handleDataDirectRequest(event) {
       Bucket: bucketName,
       Key: fileKey,
       Expires: 60 * 60, // 1 hour expiry
-      ResponseContentDisposition: `attachment; filename="${fileKey.split('/').pop()}"`,
+      ResponseContentDisposition: `attachment; filename="${outputFilename}"`,
     });
 
     console.log('Returning presigned URL');
@@ -84,7 +106,7 @@ async function handleDataDirectRequest(event) {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
       },
-      body: JSON.stringify({ url: presignedUrl }),
+      body: JSON.stringify({ url: presignedUrl, layoutApplied }),
     };
   } catch (error) {
     console.error('Data-direct PDF generation error:', error);
@@ -180,6 +202,7 @@ export const handler = async (event) => {
       tableMode: tableMode,
       pageSize: event?.queryStringParameters?.pageSize || 'A4',
       orientation: event?.queryStringParameters?.orientation || 'portrait',
+      wideTableStrategy: event?.queryStringParameters?.wideTableStrategy || 'auto',
       password: event?.queryStringParameters?.password,
       reportTitle:
         attachmentMetadata?.name ||
@@ -290,7 +313,11 @@ export const handler = async (event) => {
       };
     }
 
-    const fileKey = `${prefix}/document-${Date.now()}.${fileExtension}`;
+    const outputFilename = buildExportFilename(
+      attachmentMetadata?.name || options.reportTitle || 'Report',
+      fileExtension,
+    );
+    const fileKey = `${prefix}/${outputFilename}`;
     console.log('S3 upload:', fileKey, '- Format:', format);
 
     // Function to sanitize tag values for S3 requirements
@@ -350,9 +377,10 @@ export const handler = async (event) => {
       Bucket: bucketName,
       Key: fileKey,
       Expires: 60 * 60, // 1 hour expiry
-      ResponseContentDisposition:
-        'attachment; filename="' + fileKey.split('/').pop() + '"',
+      ResponseContentDisposition: `attachment; filename="${outputFilename}"`,
     });
+
+    const layoutApplied = format === 'pdf' ? fileBuffer?.layoutApplied || null : null;
 
     console.log('Returning presigned URL.');
     return {
@@ -362,7 +390,10 @@ export const handler = async (event) => {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
       },
-      body: JSON.stringify({ url: presignedUrl }),
+      body: JSON.stringify({
+        url: presignedUrl,
+        ...(layoutApplied ? { layoutApplied } : {}),
+      }),
     };
   } catch (error) {
     console.error('Lambda Handler Error:', error);

@@ -1,4 +1,4 @@
-import { generatePdf } from './lib/pdf-generator.js';
+import { generatePdf } from '../../lib/pdf-generator.js';
 import fs from 'fs';
 import path from 'path';
 

@@ -1,8 +1,10 @@
 // Pivot table mode - simplified pre-pagination approach
 // This mode extracts table data and generates pre-paginated HTML for reliable PDF generation
 
-import { extractPivotTableData, paginateTableData, estimateRowsPerPage } from './pivot-table-paginator.js';
+import { extractPivotTableData, paginateTableData } from './pivot-table-paginator.js';
 import { normalizePageSize } from '../page-size-utils.js';
+import { buildWideTableLayout } from './wide-table-layout.js';
+import { groupRowsBySubtotal } from './subtotal-groups.js';
 
 export function getPdfOptions(dimensions, pageSize = 'A4', options = {}) {
   const now = new Date();
@@ -84,7 +86,15 @@ export async function preparePage(page, options = {}) {
   console.log(`Created ${pages.length} pages using dynamic height-based pagination`);
 
   // Generate the new HTML with pre-paginated tables
-  const html = renderPivotTableHtml(pages, options);
+  const renderResult = renderPivotTableHtml(pages, options);
+  const html = renderResult.html;
+  options.layoutApplied = renderResult.layoutApplied;
+  if (renderResult.layoutApplied?.effectivePageSize) {
+    options.pageSize = renderResult.layoutApplied.effectivePageSize;
+  }
+  if (renderResult.layoutApplied?.effectiveOrientation) {
+    options.orientation = renderResult.layoutApplied.effectiveOrientation;
+  }
 
   // Replace the page content with our pre-paginated version
   await page.setContent(html, {
@@ -125,6 +135,20 @@ export function renderPivotTableHtml(pages, options = {}) {
     timeZoneName: 'short'
   }).split(' ').pop();
 
+  const tableData = {
+    headers: pages[0]?.headers || [],
+    rows: pages.flatMap((page) => page.rows || []),
+    grandTotal: [...pages].reverse().find((page) => page.grandTotal)?.grandTotal || null,
+    metadata: pages[0]?.metadata || {},
+  };
+
+  const wideLayout = buildWideTableLayout(tableData, {
+    pageSize: options.pageSize || 'Letter',
+    orientation: options.orientation || 'portrait',
+    wideTableStrategy: options.wideTableStrategy || 'auto',
+  });
+  const layoutApplied = wideLayout.layoutApplied;
+
   const headerLineParts = [];
   if (filterLine) {
     headerLineParts.push(`Filters: ${escapeHtml(filterLine)}`);
@@ -132,57 +156,185 @@ export function renderPivotTableHtml(pages, options = {}) {
   if (dataRowCount) {
     headerLineParts.push(`Rows: ${Number(dataRowCount).toLocaleString('en-US')}`);
   }
+  if (layoutApplied?.usedBanding) {
+    headerLineParts.push(
+      `Wide layout: ${layoutApplied.bandCount} column bands (${escapeHtml(
+        layoutApplied.effectivePageSize,
+      )} ${escapeHtml(layoutApplied.effectiveOrientation)})`,
+    );
+  } else if (layoutApplied?.autoAdjustedLayout) {
+    headerLineParts.push(
+      `Wide layout: auto-fit (${escapeHtml(layoutApplied.effectivePageSize)} ${escapeHtml(
+        layoutApplied.effectiveOrientation,
+      )})`,
+    );
+  }
+  if (layoutApplied?.hiddenEmptyColumnCount > 0) {
+    const hiddenLabels = Array.isArray(layoutApplied.hiddenEmptyColumns)
+      ? layoutApplied.hiddenEmptyColumns
+          .map((label) => String(label || '').trim())
+          .filter((label) => label.length > 0)
+      : [];
+    const hiddenCount = Number(layoutApplied.hiddenEmptyColumnCount) || hiddenLabels.length;
+
+    if (hiddenLabels.length > 0 && hiddenLabels.length <= 5) {
+      headerLineParts.push(
+        `Hidden empty columns (${hiddenCount.toLocaleString('en-US')}): ${hiddenLabels
+          .map((label) => escapeHtml(label))
+          .join(', ')}`,
+      );
+    } else if (hiddenLabels.length > 5) {
+      headerLineParts.push(`Hidden empty columns: ${hiddenCount.toLocaleString('en-US')}`);
+      headerLineParts.push(
+        `Examples: ${hiddenLabels
+          .slice(0, 5)
+          .map((label) => escapeHtml(label))
+          .join(', ')}`,
+      );
+    } else {
+      headerLineParts.push(`Hidden empty columns: ${hiddenCount.toLocaleString('en-US')}`);
+    }
+  }
   const headerMetaLine = headerLineParts.length
     ? `<div class="metadata-line">${headerLineParts.join(' &bull; ')}</div>`
     : '';
 
-  const firstPage = pages[0] || { headers: [] };
-
-  const headerRowsHtml = (firstPage.headers || []).map((headerRow, rowIndex) => {
-    if (headerRow.headerType !== undefined) {
-      return `
-        <tr data-header-type="${headerRow.headerType || ''}" data-header-row-index="${headerRow.headerRowIndex || rowIndex}" data-repeat-header="${headerRow.repeatHeader || 'false'}">
-          ${headerRow.cells.map((cell) => `
-            <th colspan="${cell.colspan}" rowspan="${cell.rowspan}" ${cell.columnId ? `data-column-id="${cell.columnId}"` : ''} class="${cell.className || ''}">${escapeHtml(cell.text)}</th>
-          `).join('')}
-        </tr>`;
-    }
-
-    if (Array.isArray(headerRow)) {
-      return `
+  const sectionsHtml = wideLayout.sections
+    .map((section, sectionIndex) => {
+      const headerRowsHtml = (section.headers || [])
+        .map((headerRow, rowIndex) => {
+          if (Array.isArray(headerRow)) {
+            return `
         <tr data-header-index="${rowIndex}">
-          ${headerRow.map((cell) => `
-            <th colspan="${cell.colspan}" rowspan="${cell.rowspan}">
+          ${headerRow
+            .map(
+              (cell) => `
+            <th colspan="${cell.colspan || 1}" rowspan="${cell.rowspan || 1}" ${cell.columnId ? `data-column-id="${cell.columnId}"` : ''} class="${cell.className || ''}">
               ${escapeHtml(cell.text)}
             </th>
-          `).join('')}
+          `,
+            )
+            .join('')}
         </tr>`;
-    }
+          }
 
-    return '';
-  }).join('');
+          if (headerRow.headerType !== undefined) {
+            return `
+        <tr data-header-type="${headerRow.headerType || ''}" data-header-row-index="${headerRow.headerRowIndex || rowIndex}" data-repeat-header="${headerRow.repeatHeader || 'false'}">
+          ${(headerRow.cells || [])
+            .map(
+              (cell) => `
+            <th colspan="${cell.colspan || 1}" rowspan="${cell.rowspan || 1}" ${cell.columnId ? `data-column-id="${cell.columnId}"` : ''} class="${cell.className || ''}">${escapeHtml(cell.text)}</th>
+          `,
+            )
+            .join('')}
+        </tr>`;
+          }
 
-  let bodyRowsHtml = pages.flatMap((page) => page.rows || []).map((row) => `
-    <tr class="${row.type === 'subtotal' ? 'subtotal' : ''}">
-      ${row.cells.map((cell) => `
-        <${cell.isHeader ? 'th' : 'td'} colspan="${cell.colspan}" rowspan="${cell.rowspan || 1}" class="${cell.className || ''} ${cell.isNumeric ? 'numeric' : ''}">
-          ${escapeHtml(cell.text)}
-        </${cell.isHeader ? 'th' : 'td'}>
-      `).join('')}
-    </tr>
-  `).join('');
+          return `
+        <tr data-header-index="${rowIndex}">
+          ${(headerRow.cells || [])
+            .map(
+              (cell) => `
+            <th colspan="${cell.colspan || 1}" rowspan="${cell.rowspan || 1}">
+              ${escapeHtml(cell.text)}
+            </th>
+          `,
+            )
+            .join('')}
+        </tr>`;
+        })
+        .join('');
 
-  const grandTotal = [...pages].reverse().find((page) => page.grandTotal)?.grandTotal || null;
+      const rowGroups = groupRowsBySubtotal(section.rows || []);
+      let dataRowIndex = 0;
+      const groupedBodyHtml = rowGroups
+        .map((group) => {
+          const groupRowsHtml = group
+            .map((row) => {
+              const isSubtotal = row.type === 'subtotal';
+              const rowClassNames = [
+                isSubtotal ? 'subtotal' : '',
+                !isSubtotal && dataRowIndex % 2 === 1 ? 'row-even' : '',
+              ]
+                .filter(Boolean)
+                .join(' ');
 
-  if (grandTotal) {
-    bodyRowsHtml += `
-      <tr class="grand-total">
-        ${grandTotal.cells.map((cell) => `
-          <td colspan="${cell.colspan || 1}" class="${cell.className || ''}">${escapeHtml(cell.text)}</td>
-        `).join('')}
+              if (!isSubtotal) {
+                dataRowIndex += 1;
+              }
+
+              return `
+      <tr class="${rowClassNames}">
+        ${(row.cells || [])
+          .map(
+            (cell) => `
+          <${cell.isHeader ? 'th' : 'td'} colspan="${cell.colspan || 1}" rowspan="${cell.rowspan || 1}" class="${cell.className || ''} ${cell.isNumeric ? 'numeric' : ''}">
+            ${escapeHtml(cell.text)}
+          </${cell.isHeader ? 'th' : 'td'}>
+        `,
+          )
+          .join('')}
       </tr>
     `;
-  }
+            })
+            .join('');
+
+          return `<tbody class="group">${groupRowsHtml}</tbody>`;
+        })
+        .join('');
+
+      const grandTotalHtml = section.grandTotal
+        ? `
+      <tbody class="group grand-total-group">
+      <tr class="grand-total">
+        ${(section.grandTotal.cells || [])
+          .map(
+            (cell) => `
+          <td colspan="${cell.colspan || 1}" class="${cell.className || ''}">${escapeHtml(cell.text)}</td>
+        `,
+          )
+          .join('')}
+      </tr>
+      </tbody>
+    `
+        : '';
+
+      const colgroupHtml = Array.isArray(section.columns)
+        ? `
+      <colgroup>
+        ${section.columns
+          .map(
+            (column) =>
+              `<col style="width:${Math.round(column.widthPx || 120)}px;min-width:${Math.round(
+                column.widthPx || 120,
+              )}px;">`,
+          )
+          .join('')}
+      </colgroup>
+    `
+        : '';
+
+      const bandLabelHtml =
+        layoutApplied?.usedBanding && section.bandLabel
+          ? `<div class="band-label">${escapeHtml(section.bandLabel)}</div>`
+          : '';
+
+      return `
+      <section class="band-section ${sectionIndex === 0 ? 'first-band' : ''}">
+        ${bandLabelHtml}
+        <table>
+          ${colgroupHtml}
+          <thead>
+            ${headerRowsHtml}
+          </thead>
+          ${groupedBodyHtml}
+          ${grandTotalHtml}
+        </table>
+      </section>
+    `;
+    })
+    .join('');
 
   const html = `
     <!DOCTYPE html>
@@ -251,7 +403,9 @@ export function renderPivotTableHtml(pages, options = {}) {
             text-align: left;
             line-height: 1.35;
             vertical-align: top;
-            word-break: break-word;
+            word-break: normal;
+            overflow-wrap: anywhere;
+            hyphens: auto;
           }
 
           thead th {
@@ -261,11 +415,29 @@ export function renderPivotTableHtml(pages, options = {}) {
           }
 
           tbody td.numeric,
-          tbody th.numeric {
+          tbody th.numeric,
+          tbody td.row-number,
+          tbody th.row-number {
             text-align: right;
+            white-space: nowrap;
+            overflow-wrap: normal;
+            word-break: normal;
+            hyphens: none;
+            font-variant-numeric: tabular-nums;
           }
 
-          tbody tr:nth-child(even):not(.subtotal) {
+          .band-section + .band-section {
+            margin-top: 18px;
+          }
+
+          .band-label {
+            font-size: 9pt;
+            color: #444;
+            margin-bottom: 6px;
+            font-weight: 600;
+          }
+
+          tbody tr.row-even:not(.subtotal) {
             background: #f7f7f7;
           }
 
@@ -286,9 +458,18 @@ export function renderPivotTableHtml(pages, options = {}) {
 
             thead { display: table-header-group; }
 
-            tr,
-            .group {
+            tbody.group,
+            tr {
+              break-inside: avoid-page;
               page-break-inside: avoid;
+            }
+            .band-section {
+              break-before: page;
+              page-break-before: always;
+            }
+            .band-section.first-band {
+              break-before: auto;
+              page-break-before: auto;
             }
           }
         </style>
@@ -301,19 +482,12 @@ export function renderPivotTableHtml(pages, options = {}) {
           </div>
           ${headerMetaLine}
         </div>
-        <table>
-          <thead>
-            ${headerRowsHtml}
-          </thead>
-          <tbody>
-            ${bodyRowsHtml}
-          </tbody>
-        </table>
+        ${sectionsHtml}
       </body>
     </html>
   `;
 
-  return html;
+  return { html, layoutApplied };
 }
 function escapeHtml(text) {
   const div = typeof document !== 'undefined' ? document.createElement('div') : null;

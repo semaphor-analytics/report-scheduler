@@ -5,7 +5,17 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:wide-layout": "vitest run __tests__/wide-table-layout.test.js",
+    "test:subtotal-grouping": "vitest run __tests__/subtotal-grouping-render.test.js",
+    "test:path-safety": "vitest run __tests__/local-function-url-path.test.js",
+    "manual:test-validation": "node scripts/manual/test-validation.js",
+    "manual:test-performance": "node scripts/manual/test-performance.js",
+    "local:function-url": "node local-function-url.js",
+    "local:function-url:watch": "node --watch local-function-url.js",
+    "local:function-url:repo-output": "LOCAL_PDF_OUTPUT_DIR=./output/local-function-url node local-function-url.js",
+    "local:function-url:watch:repo-output": "LOCAL_PDF_OUTPUT_DIR=./output/local-function-url node --watch local-function-url.js"
   },
   "keywords": [],
   "author": "",
@@ -17,5 +27,8 @@
     "pdf-lib": "^1.17.1",
     "pdf-lib-with-encrypt": "^1.2.1",
     "puppeteer-core": "^24.1.1"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.18"
   }
 }

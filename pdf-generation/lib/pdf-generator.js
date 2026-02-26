@@ -195,6 +195,7 @@ export async function generatePdf(url, options = {}) {
       options.pageSize,
       options
     );
+    const layoutApplied = options.layoutApplied || null;
     timings.preparePageDone = Date.now();
     console.log(`⏱️  Page preparation: ${timings.preparePageDone - timings.preparePageStart}ms`);
 
@@ -304,6 +305,10 @@ export async function generatePdf(url, options = {}) {
       console.log('Adding password protection to PDF...');
       pdfBuffer = await encryptPdfBuffer(pdfBuffer, options.password);
       console.log('PDF encrypted successfully');
+    }
+
+    if (layoutApplied) {
+      pdfBuffer.layoutApplied = layoutApplied;
     }
 
     timings.end = Date.now();

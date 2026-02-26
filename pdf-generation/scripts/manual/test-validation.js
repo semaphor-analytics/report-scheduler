@@ -1,4 +1,4 @@
-import { generatePdf } from './lib/pdf-generator.js';
+import { generatePdf } from '../../lib/pdf-generator.js';
 
 /**
  * PDF Generation Validation Tests
@@ -10,7 +10,7 @@ import { generatePdf } from './lib/pdf-generator.js';
  *   - react-semaphor demo running: cd react-semaphor && npm run dev
  *
  * Usage:
- *   node test-validation.js
+ *   node scripts/manual/test-validation.js
  */
 
 const TESTS = [

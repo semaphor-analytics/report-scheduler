@@ -80,6 +80,10 @@ export async function generatePdfFromData(payload, options = {}) {
       pdfBuffer = await encryptPdfBuffer(pdfBuffer, payload.password);
     }
 
+    if (generation.layoutApplied) {
+      pdfBuffer.layoutApplied = generation.layoutApplied;
+    }
+
     return pdfBuffer;
   } catch (error) {
     console.error('Fast-path PDF generation error:', error);
@@ -155,42 +159,79 @@ function buildGenerationArtifacts(payload, options = {}) {
 
   let baseHtml;
   let pdfOptions;
+  let layoutApplied = null;
 
   switch (payload.cardType) {
     case 'table':
     case 'detailTable': {
       const pages = paginateDataTable(paginatorInput, paginatorOptions);
-      baseHtml = renderDataTableHtml(pages, renderOptions);
-      pdfOptions = getDataTablePdfOptions(null, pageSize, {
+      const renderResult = renderDataTableHtml(pages, {
+        ...renderOptions,
+        pageSize,
         orientation,
+        wideTableStrategy: payload.wideTableStrategy || options.wideTableStrategy || 'auto',
+      });
+      baseHtml = renderResult.html;
+      layoutApplied = renderResult.layoutApplied;
+      const effectivePageSize = renderResult.layoutApplied?.effectivePageSize || pageSize;
+      const effectiveOrientation =
+        renderResult.layoutApplied?.effectiveOrientation || orientation;
+      pdfOptions = getDataTablePdfOptions(null, pageSize, {
+        orientation: effectiveOrientation,
         timezone,
         reportTitle,
         filterLine,
+        wideTableStrategy: payload.wideTableStrategy || options.wideTableStrategy || 'auto',
       });
+      pdfOptions.format = effectivePageSize;
       break;
     }
 
     case 'aggregateTable': {
       const pages = paginateAggregateTable(paginatorInput, paginatorOptions);
-      baseHtml = renderAggregateTableHtml(pages, renderOptions);
-      pdfOptions = getAggregatePdfOptions(null, pageSize, {
+      const renderResult = renderAggregateTableHtml(pages, {
+        ...renderOptions,
+        pageSize,
         orientation,
+        wideTableStrategy: payload.wideTableStrategy || options.wideTableStrategy || 'auto',
+      });
+      baseHtml = renderResult.html;
+      layoutApplied = renderResult.layoutApplied;
+      const effectivePageSize = renderResult.layoutApplied?.effectivePageSize || pageSize;
+      const effectiveOrientation =
+        renderResult.layoutApplied?.effectiveOrientation || orientation;
+      pdfOptions = getAggregatePdfOptions(null, pageSize, {
+        orientation: effectiveOrientation,
         timezone,
         reportTitle,
         filterLine,
+        wideTableStrategy: payload.wideTableStrategy || options.wideTableStrategy || 'auto',
       });
+      pdfOptions.format = effectivePageSize;
       break;
     }
 
     case 'pivotTable': {
       const pages = paginateTableData(paginatorInput, paginatorOptions);
-      baseHtml = renderPivotTableHtml(pages, renderOptions);
-      pdfOptions = getPivotTablePdfOptions(null, pageSize, {
+      const renderResult = renderPivotTableHtml(pages, {
+        ...renderOptions,
+        pageSize,
         orientation,
+        wideTableStrategy: payload.wideTableStrategy || options.wideTableStrategy || 'auto',
+      });
+      baseHtml = renderResult.html;
+      layoutApplied = renderResult.layoutApplied;
+      const effectivePageSize = renderResult.layoutApplied?.effectivePageSize || pageSize;
+      const effectiveOrientation =
+        renderResult.layoutApplied?.effectiveOrientation || orientation;
+      pdfOptions = getPivotTablePdfOptions(null, pageSize, {
+        orientation: effectiveOrientation,
         timezone,
         reportTitle,
         filterLine,
+        wideTableStrategy: payload.wideTableStrategy || options.wideTableStrategy || 'auto',
       });
+      pdfOptions.format = effectivePageSize;
       break;
     }
 
@@ -204,7 +245,7 @@ function buildGenerationArtifacts(payload, options = {}) {
     headerLogoUrl,
   });
 
-  return { html, pdfOptions };
+  return { html, pdfOptions, layoutApplied };
 }
 
 /**

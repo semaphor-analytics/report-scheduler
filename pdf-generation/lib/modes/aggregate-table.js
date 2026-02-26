@@ -2,6 +2,8 @@
 
 import { extractAggregateTableData, paginateAggregateTable } from './aggregate-table-paginator.js';
 import { normalizePageSize } from '../page-size-utils.js';
+import { buildWideTableLayout } from './wide-table-layout.js';
+import { groupRowsBySubtotal } from './subtotal-groups.js';
 
 export function getPdfOptions(dimensions, pageSize = 'A4', options = {}) {
   const now = new Date();
@@ -62,7 +64,15 @@ export async function preparePage(page, options = {}) {
   console.log(`Created ${pages.length} pages for aggregate table`);
 
   // Generate the new HTML with pre-paginated tables
-  const html = renderAggregateTableHtml(pages, options);
+  const renderResult = renderAggregateTableHtml(pages, options);
+  const html = renderResult.html;
+  options.layoutApplied = renderResult.layoutApplied;
+  if (renderResult.layoutApplied?.effectivePageSize) {
+    options.pageSize = renderResult.layoutApplied.effectivePageSize;
+  }
+  if (renderResult.layoutApplied?.effectiveOrientation) {
+    options.orientation = renderResult.layoutApplied.effectiveOrientation;
+  }
 
   // Replace the page content
   await page.setContent(html, {
@@ -102,6 +112,20 @@ export function renderAggregateTableHtml(pages, options = {}) {
     timeZoneName: 'short'
   }).split(' ').pop();
 
+  const tableData = {
+    headers: pages[0]?.headers || [],
+    rows: pages.flatMap((page) => page.rows || []),
+    grandTotal: [...pages].reverse().find((page) => page.grandTotal)?.grandTotal || null,
+    metadata: pages[0]?.metadata || {},
+  };
+
+  const wideLayout = buildWideTableLayout(tableData, {
+    pageSize: options.pageSize || 'Letter',
+    orientation: options.orientation || 'portrait',
+    wideTableStrategy: options.wideTableStrategy || 'auto',
+  });
+  const layoutApplied = wideLayout.layoutApplied;
+
   const headerLineParts = [];
   if (filterLine) {
     headerLineParts.push(`Filters: ${escapeHtml(filterLine)}`);
@@ -109,42 +133,160 @@ export function renderAggregateTableHtml(pages, options = {}) {
   if (dataRowCount) {
     headerLineParts.push(`Rows: ${Number(dataRowCount).toLocaleString('en-US')}`);
   }
+  if (layoutApplied?.usedBanding) {
+    headerLineParts.push(
+      `Wide layout: ${layoutApplied.bandCount} column bands (${escapeHtml(
+        layoutApplied.effectivePageSize,
+      )} ${escapeHtml(layoutApplied.effectiveOrientation)})`,
+    );
+  } else if (layoutApplied?.autoAdjustedLayout) {
+    headerLineParts.push(
+      `Wide layout: auto-fit (${escapeHtml(layoutApplied.effectivePageSize)} ${escapeHtml(
+        layoutApplied.effectiveOrientation,
+      )})`,
+    );
+  }
+  if (layoutApplied?.hiddenEmptyColumnCount > 0) {
+    const hiddenLabels = Array.isArray(layoutApplied.hiddenEmptyColumns)
+      ? layoutApplied.hiddenEmptyColumns
+          .map((label) => String(label || '').trim())
+          .filter((label) => label.length > 0)
+      : [];
+    const hiddenCount = Number(layoutApplied.hiddenEmptyColumnCount) || hiddenLabels.length;
+
+    if (hiddenLabels.length > 0 && hiddenLabels.length <= 5) {
+      headerLineParts.push(
+        `Hidden empty columns (${hiddenCount.toLocaleString('en-US')}): ${hiddenLabels
+          .map((label) => escapeHtml(label))
+          .join(', ')}`,
+      );
+    } else if (hiddenLabels.length > 5) {
+      headerLineParts.push(`Hidden empty columns: ${hiddenCount.toLocaleString('en-US')}`);
+      headerLineParts.push(
+        `Examples: ${hiddenLabels
+          .slice(0, 5)
+          .map((label) => escapeHtml(label))
+          .join(', ')}`,
+      );
+    } else {
+      headerLineParts.push(`Hidden empty columns: ${hiddenCount.toLocaleString('en-US')}`);
+    }
+  }
   const headerMetaLine = headerLineParts.length
     ? `<div class="metadata-line">${headerLineParts.join(' &bull; ')}</div>`
     : '';
 
-  const tableHeaders = (pages[0]?.headers || []).map((headerRow) => `
-    <tr>
-      ${headerRow.cells.map((cell) => `
-        <th colspan="${cell.colspan}" rowspan="${cell.rowspan}" class="${cell.className || ''}">
-          ${escapeHtml(cell.text)}
-        </th>
-      `).join('')}
-    </tr>
-  `).join('');
+  const sectionsHtml = wideLayout.sections
+    .map((section, sectionIndex) => {
+      const tableHeaders = (section.headers || [])
+        .map(
+          (headerRow) => `
+      <tr>
+        ${(headerRow.cells || [])
+          .map(
+            (cell) => `
+          <th colspan="${cell.colspan || 1}" rowspan="${cell.rowspan || 1}" class="${cell.className || ''}">
+            ${escapeHtml(cell.text)}
+          </th>
+        `,
+          )
+          .join('')}
+      </tr>
+    `,
+        )
+        .join('');
 
-  let bodyRowsHtml = pages.flatMap((page) => page.rows || []).map((row) => `
-    <tr class="${row.type === 'subtotal' ? 'subtotal' : ''}">
-      ${row.cells.map((cell) => `
-        <${cell.isHeader ? 'th' : 'td'} colspan="${cell.colspan}" rowspan="${cell.rowspan || 1}" class="${cell.className || ''}">
-          ${escapeHtml(cell.text)}
-        </${cell.isHeader ? 'th' : 'td'}>
-      `).join('')}
-    </tr>
-  `).join('');
+      const rowGroups = groupRowsBySubtotal(section.rows || []);
+      let dataRowIndex = 0;
+      const groupedBodyHtml = rowGroups
+        .map((group) => {
+          const groupRowsHtml = group
+            .map((row) => {
+              const isSubtotal = row.type === 'subtotal';
+              const rowClassNames = [
+                isSubtotal ? 'subtotal' : '',
+                !isSubtotal && dataRowIndex % 2 === 1 ? 'row-even' : '',
+              ]
+                .filter(Boolean)
+                .join(' ');
 
-  const grandTotal = [...pages].reverse().find((page) => page.grandTotal)?.grandTotal || null;
-  if (grandTotal) {
-    bodyRowsHtml += `
+              if (!isSubtotal) {
+                dataRowIndex += 1;
+              }
+
+              return `
+      <tr class="${rowClassNames}">
+        ${(row.cells || [])
+          .map(
+            (cell) => `
+          <${cell.isHeader ? 'th' : 'td'} colspan="${cell.colspan || 1}" rowspan="${cell.rowspan || 1}" class="${[cell.className || '', cell.isNumeric ? 'numeric' : ''].filter(Boolean).join(' ')}">
+            ${escapeHtml(cell.text)}
+          </${cell.isHeader ? 'th' : 'td'}>
+        `,
+          )
+          .join('')}
+      </tr>
+    `;
+            })
+            .join('');
+
+          return `<tbody class="group">${groupRowsHtml}</tbody>`;
+        })
+        .join('');
+
+      const grandTotalHtml = section.grandTotal
+        ? `
+      <tbody class="group grand-total-group">
       <tr class="grand-total">
-        ${grandTotal.cells.map((cell) => `
+        ${(section.grandTotal.cells || [])
+          .map(
+            (cell) => `
           <td colspan="${cell.colspan || 1}" class="${cell.className || ''}">
             ${escapeHtml(cell.text)}
           </td>
-        `).join('')}
+        `,
+          )
+          .join('')}
       </tr>
+      </tbody>
+    `
+        : '';
+
+      const colgroupHtml = Array.isArray(section.columns)
+        ? `
+      <colgroup>
+        ${section.columns
+          .map(
+            (column) =>
+              `<col style="width:${Math.round(column.widthPx || 120)}px;min-width:${Math.round(
+                column.widthPx || 120,
+              )}px;">`,
+          )
+          .join('')}
+      </colgroup>
+    `
+        : '';
+
+      const bandLabelHtml =
+        layoutApplied?.usedBanding && section.bandLabel
+          ? `<div class="band-label">${escapeHtml(section.bandLabel)}</div>`
+          : '';
+
+      return `
+      <section class="band-section ${sectionIndex === 0 ? 'first-band' : ''}">
+        ${bandLabelHtml}
+        <table>
+          ${colgroupHtml}
+          <thead>
+            ${tableHeaders}
+          </thead>
+          ${groupedBodyHtml}
+          ${grandTotalHtml}
+        </table>
+      </section>
     `;
-  }
+    })
+    .join('');
 
   const html = `
     <!DOCTYPE html>
@@ -213,7 +355,9 @@ export function renderAggregateTableHtml(pages, options = {}) {
             text-align: left;
             line-height: 1.35;
             vertical-align: top;
-            word-break: break-word;
+            word-break: normal;
+            overflow-wrap: anywhere;
+            hyphens: auto;
           }
 
           thead th {
@@ -228,8 +372,31 @@ export function renderAggregateTableHtml(pages, options = {}) {
             font-weight: 600;
           }
 
-          tbody tr:nth-child(even):not(.subtotal) {
+          tbody tr.row-even:not(.subtotal) {
             background: #f7f7f7;
+          }
+
+          tbody td.numeric,
+          tbody th.numeric,
+          tbody td.row-number,
+          tbody th.row-number {
+            text-align: right;
+            white-space: nowrap;
+            overflow-wrap: normal;
+            word-break: normal;
+            hyphens: none;
+            font-variant-numeric: tabular-nums;
+          }
+
+          .band-section + .band-section {
+            margin-top: 18px;
+          }
+
+          .band-label {
+            font-size: 9pt;
+            color: #444;
+            margin-bottom: 6px;
+            font-weight: 600;
           }
 
           tr.subtotal {
@@ -248,7 +415,19 @@ export function renderAggregateTableHtml(pages, options = {}) {
             }
 
             thead { display: table-header-group; }
-            tr, .group { page-break-inside: avoid; }
+            tbody.group,
+            tr {
+              break-inside: avoid-page;
+              page-break-inside: avoid;
+            }
+            .band-section {
+              break-before: page;
+              page-break-before: always;
+            }
+            .band-section.first-band {
+              break-before: auto;
+              page-break-before: auto;
+            }
           }
         </style>
       </head>
@@ -260,19 +439,12 @@ export function renderAggregateTableHtml(pages, options = {}) {
             ${headerMetaLine}
           </div>
         </div>
-        <table>
-          <thead>
-            ${tableHeaders}
-          </thead>
-          <tbody>
-            ${bodyRowsHtml}
-          </tbody>
-        </table>
+        ${sectionsHtml}
       </body>
     </html>
   `;
 
-  return html;
+  return { html, layoutApplied };
 }
 
 function escapeHtml(text) {

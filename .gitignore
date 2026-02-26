@@ -12,3 +12,5 @@ dist/
 
 # Local test output
 local-test/output/
+output/
+pdf-generation/output/

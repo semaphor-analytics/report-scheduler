@@ -50,6 +50,78 @@ cd pdf-generation
 npm install
 ```
 
+### Automated Tests
+
+```bash
+# run all automated tests
+npm test
+
+# watch mode
+npm run test:watch
+
+# targeted suites
+npm run test:wide-layout
+npm run test:subtotal-grouping
+npm run test:path-safety
+```
+
+Manual smoke/performance scripts are kept under `scripts/manual/`:
+
+```bash
+npm run manual:test-validation
+npm run manual:test-performance -- <url> <iterations>
+```
+
+### End-to-End Local (Frontend -> semaphor-app -> Local PDF Function)
+
+Use this mode when you want to test the real export flow without deploying Lambda.
+
+1. Start the local PDF Function URL emulator:
+
+```bash
+cd /Users/rohit/code/semaphor/semaphor-report-scheduler/pdf-generation
+npm run local:function-url
+```
+
+For auto-restart on code changes:
+
+```bash
+npm run local:function-url:watch
+```
+
+To keep artifacts under the repo output folder, use:
+
+```bash
+npm run local:function-url:repo-output
+```
+
+With auto-restart + repo output:
+
+```bash
+npm run local:function-url:watch:repo-output
+```
+
+2. Point `semaphor-app` at the emulator and restart app server:
+
+```bash
+# in /Users/rohit/code/semaphor/semaphor-app/.env.development
+PDF_FUNCTION_URL=http://127.0.0.1:3002
+```
+
+3. Run your frontend and semaphor-app as usual:
+   - frontend: `http://localhost:5173`
+   - backend: `http://localhost:3000`
+
+4. Trigger export from the UI. Generated files are written to:
+
+```bash
+$TMPDIR/semaphor-pdf-local-function
+```
+
+Override this location by setting `LOCAL_PDF_OUTPUT_DIR=/your/path`.
+
+The emulator returns a downloadable URL (`/files/...`) with the same response shape as Lambda (`{ url, layoutApplied? }`), including fast-path `POST` and URL-based `GET`.
+
 ### Command Line Interface
 
 The test script uses named flags for clarity:
