@@ -27,6 +27,44 @@ Parameters:
     Description: SES verified email address for sending reports (e.g., noreply@yourdomain.com)
     Default: noreply@semaphor.cloud
 
+  EmailProviderMode:
+    Type: String
+    Description: Email provider mode for report delivery
+    Default: SES
+    AllowedValues:
+      - SES
+      - EXTERNAL
+
+  EmailEnableMultiRecipients:
+    Type: String
+    Description: Send to all resolved recipients when true, otherwise legacy first-recipient behavior
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  SesRegion:
+    Type: String
+    Description: AWS region for SES client calls
+    Default: us-east-1
+
+  EmailExternalAuthSecret:
+    Type: String
+    Description: Shared secret used for signing EmailSender -> external provider requests
+    Default: ''
+    NoEcho: true
+
+  ResendApiKey:
+    Type: String
+    Description: API key for same-stack Resend provider Lambda
+    Default: ''
+    NoEcho: true
+
+  ResendSenderEmail:
+    Type: String
+    Description: Sender email used by same-stack Resend provider Lambda
+    Default: reports@yourdomain.com
+
   AutomationDispatchRuleState:
     Type: String
     Description: Enable or disable the Automation V2 dispatcher EventBridge rule
@@ -202,6 +240,11 @@ Resources:
       Environment:
         Variables:
           SES_SENDER_EMAIL: !Ref SesSenderEmail
+          EMAIL_PROVIDER_MODE: !Ref EmailProviderMode
+          EMAIL_ENABLE_MULTI_RECIPIENTS: !Ref EmailEnableMultiRecipients
+          SES_REGION: !Ref SesRegion
+          EMAIL_EXTERNAL_WEBHOOK_URL: !GetAtt ResendProviderFunctionUrl.FunctionUrl
+          EMAIL_EXTERNAL_AUTH_SECRET: !Ref EmailExternalAuthSecret
       Events:
         S3UploadTrigger:
           Type: S3
@@ -213,6 +256,24 @@ Resources:
                 Rules:
                   - Name: prefix
                     Value: emails/
+
+  ResendProviderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.handler
+      Runtime: nodejs18.x
+      CodeUri: ./resend-provider
+      MemorySize: 256
+      Timeout: 60
+      Policies:
+        - AWSLambdaBasicExecutionRole
+      Environment:
+        Variables:
+          RESEND_API_KEY: !Ref ResendApiKey
+          RESEND_SENDER_EMAIL: !Ref ResendSenderEmail
+          EMAIL_EXTERNAL_AUTH_SECRET: !Ref EmailExternalAuthSecret
+      FunctionUrlConfig:
+        AuthType: NONE
 
   # Lambda Function to process schedules
   ScheduleProcessorFunction:
@@ -501,6 +562,18 @@ Outputs:
     Value: !GetAtt EmailSenderFunction.Arn
     Export:
       Name: EmailSenderFunctionArn
+
+  ResendProviderFunctionUrl:
+    Description: 'Function URL for same-stack Resend provider Lambda'
+    Value: !GetAtt ResendProviderFunctionUrl.FunctionUrl
+    Export:
+      Name: ResendProviderFunctionUrl
+
+  ResendProviderFunctionArn:
+    Description: 'ARN of the same-stack Resend provider Lambda function'
+    Value: !GetAtt ResendProviderFunction.Arn
+    Export:
+      Name: ResendProviderFunctionArn
 
   ScheduleProcessorFunctionArn:
     Description: 'ARN of the Schedule Processor Lambda function'

@@ -12,7 +12,7 @@ AWS SAM application that powers two core capabilities for Semaphor:
 Pipeline 1: Scheduled Reports
   EventBridge (every 60 min)
        |
-  ScheduleProcessor --> GeneratePdf --> S3 (emails/) --> EmailSender --> AWS SES
+  ScheduleProcessor --> GeneratePdf --> S3 (emails/) --> EmailSender --> (SES or External Provider)
        |                    |
        |  GET /schedules/ready   Uses Puppeteer for PDF/CSV
        |                    |
@@ -47,7 +47,9 @@ Pipeline 3: Automation V2 Dispatch (disabled by default)
 - [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html) installed
 - Node.js 18.x or later
 - Docker (for building Lambda functions)
-- AWS SES configured for email sending (see [SES-SETUP.md](SES-SETUP.md))
+- Either:
+  - AWS SES configured for email sending (see [SES-SETUP.md](SES-SETUP.md)), or
+  - External provider webhook configured (for `EMAIL_PROVIDER_MODE=EXTERNAL`)
 
 ## Quick Start
 
@@ -73,6 +75,13 @@ LAMBDA_API_KEY=your-api-key-here
 
 # SES verified sender email address
 SES_SENDER_EMAIL=noreply@yourdomain.com
+
+# Optional: external provider mode
+EMAIL_PROVIDER_MODE=SES
+# EMAIL_PROVIDER_MODE=EXTERNAL
+# EMAIL_EXTERNAL_AUTH_SECRET=replace-with-secret
+# RESEND_API_KEY=re_xxx
+# RESEND_SENDER_EMAIL=reports@yourdomain.com
 ```
 
 ### 3. Deploy to AWS
@@ -115,7 +124,13 @@ Then configure the following environment variables in your **semaphor-app** `.en
 |----------|-------------|---------|
 | `SEMAPHOR_APP_URL` | Base URL of your Semaphor application | `https://app.semaphor.com` |
 | `LAMBDA_API_KEY` | API key for Lambda function authentication | `sk_lambda_abc123...` |
-| `SES_SENDER_EMAIL` | Verified sender email address for reports | `noreply@yourdomain.com` |
+| `SES_SENDER_EMAIL` | Verified sender email address for reports (SES mode) | `noreply@yourdomain.com` |
+| `EMAIL_PROVIDER_MODE` | Email provider mode (`SES` or `EXTERNAL`) | `SES` |
+| `EMAIL_ENABLE_MULTI_RECIPIENTS` | Send to all recipients when `true`; first recipient only when `false` | `false` |
+| `SES_REGION` | AWS region used by SES client | `us-east-1` |
+| `EMAIL_EXTERNAL_AUTH_SECRET` | Shared secret for signed external provider requests (required when `EMAIL_PROVIDER_MODE=EXTERNAL`) | _(empty)_ |
+| `RESEND_API_KEY` | API key for same-stack `ResendProviderFunction` | _(empty)_ |
+| `RESEND_SENDER_EMAIL` | Sender email for same-stack Resend provider | `reports@yourdomain.com` |
 
 ### Optional Automation V2 Dispatcher Variables
 
@@ -175,7 +190,8 @@ The deployment creates:
 |----------|---------|
 | **ScheduleProcessorFunction** | Fetches ready schedules every 60 minutes |
 | **GeneratePdfFunction** | Generates PDFs/CSVs using Puppeteer (has public Function URL) |
-| **EmailSenderFunction** | Sends emails via SES when files arrive in S3 |
+| **EmailSenderFunction** | Sends emails when files arrive in S3 (`SES` or `EXTERNAL` mode) |
+| **ResendProviderFunction** | External provider endpoint (Function URL) that sends email via Resend |
 | **ChunkProcessorFunction** | Processes individual data chunks for large exports |
 | **CompactionProcessorFunction** | Merges chunks into final gzip-compressed CSV |
 | **MarkFailedFunction** | Marks failed export jobs with error details |
@@ -188,9 +204,18 @@ The deployment creates:
 | **AutomationDispatchRule** | Triggers Automation V2 dispatcher every 5 minutes (state parameterized; default disabled) |
 | **IAM Roles** | Least-privilege roles for each function |
 
-### Email Configuration (AWS SES)
+### Email Delivery Modes
 
-AWS Simple Email Service (SES) must be configured before deployment:
+Semaphor Report Scheduler supports two delivery modes:
+
+1. **SES mode (default)**: `EMAIL_PROVIDER_MODE=SES`
+2. **External mode**: `EMAIL_PROVIDER_MODE=EXTERNAL` (uses same-stack `ResendProviderFunctionUrl`)
+
+In external mode, `EmailSenderFunction` posts signed payloads to your provider endpoint and includes a presigned attachment URL. `EmailSenderFunction` does not download attachment bytes in this mode.
+
+### SES Mode Setup
+
+AWS Simple Email Service (SES) must be configured when using SES mode:
 
 1. **Verify sender email address** in AWS SES console
 2. **Configure sender email** in `.env` file:
@@ -200,6 +225,33 @@ AWS Simple Email Service (SES) must be configured before deployment:
 3. **For production**: Request production access to remove sandbox restrictions
 
 For detailed SES setup instructions, see [SES-SETUP.md](SES-SETUP.md)
+
+### Quick Test: Same-Stack Resend Provider (External Mode)
+
+1. Set `.env` values:
+   ```bash
+   EMAIL_PROVIDER_MODE=EXTERNAL
+   EMAIL_EXTERNAL_AUTH_SECRET=replace-with-shared-secret
+   RESEND_API_KEY=re_xxx
+   RESEND_SENDER_EMAIL=reports@yourdomain.com
+   ```
+2. Deploy:
+   ```bash
+   ./deploy.sh
+   ```
+3. Smoke test by uploading an object to `emails/` with tags:
+   ```bash
+   aws s3api put-object \
+     --bucket <S3BucketName> \
+     --key emails/manual-test.pdf \
+     --body /path/to/test.pdf \
+     --tagging 'email=test@example.com&subject=Manual+Smoke+Test&attachmentName=Manual+Test&format=pdf'
+   ```
+4. Watch logs:
+   ```bash
+   sam logs -n EmailSenderFunction --stack-name semaphor-report-scheduler --tail
+   sam logs -n ResendProviderFunction --stack-name semaphor-report-scheduler --tail
+   ```
 
 ## Deployment Options
 
@@ -234,6 +286,12 @@ sam deploy \
     SemaphorAppUrl=$SEMAPHOR_APP_URL \
     LambdaApiKey=$LAMBDA_API_KEY \
     SesSenderEmail=$SES_SENDER_EMAIL \
+    EmailProviderMode=$EMAIL_PROVIDER_MODE \
+    EmailEnableMultiRecipients=$EMAIL_ENABLE_MULTI_RECIPIENTS \
+    SesRegion=$SES_REGION \
+    EmailExternalAuthSecret=$EMAIL_EXTERNAL_AUTH_SECRET \
+    ResendApiKey=$RESEND_API_KEY \
+    ResendSenderEmail=$RESEND_SENDER_EMAIL \
     --no-confirm-changeset
 ```
 
@@ -256,6 +314,8 @@ After deployment, these outputs are available:
 | `S3BucketName` | Name of the S3 bucket |
 | `S3BucketArn` | ARN of the S3 bucket |
 | `EmailSenderFunctionArn` | ARN of Email Sender function |
+| `ResendProviderFunctionUrl` | Function URL for same-stack Resend provider |
+| `ResendProviderFunctionArn` | ARN of same-stack Resend provider |
 | `ScheduleProcessorFunctionArn` | ARN of Schedule Processor function |
 | `AutomationDispatcherFunctionArn` | ARN of Automation V2 Dispatcher function |
 | `AutomationExecutorFunctionArn` | ARN of Automation V2 Executor function |
@@ -278,6 +338,8 @@ sam list stack-outputs --stack-name semaphor-report-scheduler
 **Build Fails**
 - Ensure Docker is running: `docker ps`
 - Check Node.js version: `node --version` (should be 18.x or later)
+- If you see `Cannot find esbuild`, run:
+  - `PATH="$(pwd)/node_modules/.bin:$PATH" sam build`
 
 **Deployment Fails**
 - Verify AWS credentials: `aws sts get-caller-identity`
@@ -294,9 +356,13 @@ sam list stack-outputs --stack-name semaphor-report-scheduler
 - Ensure `AUTOMATION_DISPATCH_ORG_IDS` or event payload org IDs are provided
 
 **Email Not Sending**
-- Verify SES configuration in your AWS region
-- Check sender email is verified in SES
-- Review SES sending limits
+- If `EMAIL_PROVIDER_MODE=SES`:
+  - Verify SES configuration in your AWS region
+  - Check sender email is verified in SES
+  - Review SES sending limits
+- If `EMAIL_PROVIDER_MODE=EXTERNAL`:
+  - Verify `EMAIL_EXTERNAL_AUTH_SECRET` is set in both sender and provider environments
+  - Check `ResendProviderFunction` logs
 - Check logs: `sam logs -n EmailSenderFunction --stack-name semaphor-report-scheduler --tail`
 
 **Exports Not Processing**
@@ -324,6 +390,7 @@ View Lambda logs in CloudWatch:
 sam logs -n ScheduleProcessorFunction --stack-name semaphor-report-scheduler --tail
 sam logs -n GeneratePdfFunction --stack-name semaphor-report-scheduler --tail
 sam logs -n EmailSenderFunction --stack-name semaphor-report-scheduler --tail
+sam logs -n ResendProviderFunction --stack-name semaphor-report-scheduler --tail
 
 # Async exports
 sam logs -n ChunkProcessorFunction --stack-name semaphor-report-scheduler --tail

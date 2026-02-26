@@ -1,0 +1,19 @@
+{
+  "Records": [
+    {
+      "eventVersion": "2.1",
+      "eventSource": "aws:s3",
+      "awsRegion": "us-east-1",
+      "eventTime": "2026-02-26T12:00:00.000Z",
+      "eventName": "ObjectCreated:Put",
+      "s3": {
+        "bucket": {
+          "name": "semaphor-reports-123456789012-semaphor-report-scheduler"
+        },
+        "object": {
+          "key": "emails/Weekly-KPI-Report.pdf"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "resend-provider",
+  "version": "1.0.0",
+  "description": "External email provider Lambda for semaphor report scheduler",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"No tests configured\"",
+    "generate:signed-event": "node scripts/generate-signed-event.js"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "resend": "^4.7.0"
+  }
+}

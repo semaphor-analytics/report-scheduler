@@ -2,6 +2,9 @@
 
 This guide provides comprehensive instructions for setting up AWS SES to enable email sending capabilities for the Semaphor Report Scheduler.
 
+> Note: SES is required only when `EMAIL_PROVIDER_MODE=SES` (default).  
+> If you use `EMAIL_PROVIDER_MODE=EXTERNAL`, configure your external webhook provider instead.
+
 ## Prerequisites
 
 - AWS Account with appropriate IAM permissions

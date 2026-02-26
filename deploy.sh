@@ -22,6 +22,12 @@ sam deploy \
     SemaphorAppUrl="${SEMAPHOR_APP_URL}" \
     LambdaApiKey="${LAMBDA_API_KEY}" \
     SesSenderEmail="${SES_SENDER_EMAIL}" \
+    EmailProviderMode="${EMAIL_PROVIDER_MODE:-SES}" \
+    EmailEnableMultiRecipients="${EMAIL_ENABLE_MULTI_RECIPIENTS:-false}" \
+    SesRegion="${SES_REGION:-us-east-1}" \
+    EmailExternalAuthSecret="${EMAIL_EXTERNAL_AUTH_SECRET}" \
+    ResendApiKey="${RESEND_API_KEY}" \
+    ResendSenderEmail="${RESEND_SENDER_EMAIL:-reports@yourdomain.com}" \
     --no-confirm-changeset
 
 echo "Deployment complete!"

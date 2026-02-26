@@ -1,260 +1,214 @@
 const AWS = require('aws-sdk');
 const s3 = new AWS.S3();
-const ses = new AWS.SES({ region: 'us-east-1' }); // Match your region
 
-exports.handler = async (event) => {
-  const bucket = event.Records[0].s3.bucket.name;
-  const key = decodeURIComponent(
-    event.Records[0].s3.object.key.replace(/\+/g, ' ')
+const { getEmailSenderConfig } = require('./lib/config');
+const {
+  buildEmailBodies,
+  getAttachmentContentType,
+  getAttachmentFilename,
+} = require('./lib/email-content');
+const { createSesProvider } = require('./providers/ses-provider');
+const { createExternalProvider } = require('./providers/external-provider');
+
+function getObjectKeyFromEvent(event) {
+  const record = event?.Records?.[0];
+  if (!record?.s3?.bucket?.name || !record?.s3?.object?.key) {
+    throw new Error('Invalid S3 event payload for email sender');
+  }
+
+  const bucket = record.s3.bucket.name;
+  const key = decodeURIComponent(record.s3.object.key.replace(/\+/g, ' '));
+  return { bucket, key };
+}
+
+function parseRecipientEmails(rawRecipients) {
+  return String(rawRecipients || '')
+    .split(',')
+    .map((email) => email.trim())
+    .filter((email) => email && email.includes('@'));
+}
+
+function detectFileFormat(tags, key) {
+  if (tags.format) {
+    return tags.format;
+  }
+
+  if (key.endsWith('.csv')) {
+    return 'csv';
+  }
+
+  return 'pdf';
+}
+
+function getTagMap(tagData) {
+  return tagData.TagSet.reduce((acc, tag) => {
+    acc[tag.Key] = tag.Value;
+    return acc;
+  }, {});
+}
+
+function selectRecipients(recipientEmails, enableMultiRecipients) {
+  if (enableMultiRecipients) {
+    return recipientEmails;
+  }
+
+  return recipientEmails.length > 0 ? [recipientEmails[0]] : [];
+}
+
+function buildProvider(config) {
+  if (config.emailProviderMode === 'EXTERNAL') {
+    return createExternalProvider({
+      webhookUrl: config.emailExternalWebhookUrl,
+      authSecret: config.emailExternalAuthSecret,
+      s3,
+      presignedUrlExpirySeconds: 900,
+    });
+  }
+
+  return createSesProvider({ sesRegion: config.sesRegion });
+}
+
+function buildDirectEmailContext(tags, config) {
+  const recipientEmails = parseRecipientEmails(tags.email || '');
+  if (recipientEmails.length === 0) {
+    throw new Error('No valid recipient emails found for direct email');
+  }
+
+  return {
+    recipientEmails,
+    emailSubject: tags.subject || 'Report',
+    emailMessage: null,
+    dashboardLink: 'https://semaphor.cloud',
+    companyName: 'Semaphor',
+    supportEmail: 'support@semaphor.cloud',
+    senderEmail: config.sesSenderEmail,
+  };
+}
+
+async function buildScheduledEmailContext(scheduleId, tags, config) {
+  const scheduleData = await getScheduleDetails(scheduleId);
+  const recipientEmails = parseRecipientEmails(
+    tags.recipients || scheduleData.recipients || ''
   );
 
-  let scheduleId;
-  let leaseOwner;
+  if (recipientEmails.length === 0) {
+    throw new Error('No valid recipient emails found in schedule');
+  }
+
+  return {
+    recipientEmails,
+    emailSubject: scheduleData.subject || 'Scheduled Report',
+    emailMessage: scheduleData.message || null,
+    dashboardLink: scheduleData.dashboardLink || 'https://semaphor.cloud',
+    companyName: scheduleData.companyName || 'Semaphor',
+    supportEmail: scheduleData.supportEmail || 'support@semaphor.cloud',
+    senderEmail: scheduleData.senderEmail || config.sesSenderEmail,
+  };
+}
+
+exports.handler = async (event) => {
+  const { bucket, key } = getObjectKeyFromEvent(event);
+  const config = getEmailSenderConfig();
+
+  let scheduleId = null;
+  let leaseOwner = null;
 
   try {
-    const tagParams = { Bucket: bucket, Key: key };
-    const tagData = await s3.getObjectTagging(tagParams).promise();
-    const tags = tagData.TagSet.reduce((acc, tag) => {
-      acc[tag.Key] = tag.Value;
-      return acc;
-    }, {});
+    const tagData = await s3
+      .getObjectTagging({ Bucket: bucket, Key: key })
+      .promise();
+    const tags = getTagMap(tagData);
 
-    // Check if this is a scheduled report or direct email
-    scheduleId = tags.scheduleId;
+    scheduleId = tags.scheduleId || null;
     leaseOwner = tags.leaseOwner || null;
-    let recipientEmail,
-      emailSubject,
-      emailMessage,
-      dashboardLink,
-      companyName,
-      supportEmail,
-      senderEmail;
-    let attachmentName = tags.attachmentName || 'Report';
-    let fileFormat = tags.format || 'pdf'; // Get format from tags
 
-    // Detect format from S3 key if not in tags
-    if (!tags.format) {
-      if (key.endsWith('.csv')) {
-        fileFormat = 'csv';
-      } else if (key.endsWith('.pdf')) {
-        fileFormat = 'pdf';
-      }
+    const fileFormat = detectFileFormat(tags, key);
+    const attachmentName = tags.attachmentName || 'Report';
+
+    const emailContext = scheduleId
+      ? await buildScheduledEmailContext(scheduleId, tags, config)
+      : buildDirectEmailContext(tags, config);
+
+    const recipientsToSend = selectRecipients(
+      emailContext.recipientEmails,
+      config.emailEnableMultiRecipients
+    );
+
+    if (recipientsToSend.length === 0) {
+      throw new Error('No recipients selected for sending');
     }
 
-    if (scheduleId) {
-      // Scheduled report - fetch details from internal endpoint
-      console.log('Processing scheduled report:', scheduleId);
-      console.log('Attachment name from tags:', attachmentName);
-      console.log('File format:', fileFormat);
+    const { textBody, htmlBody } = buildEmailBodies({
+      emailMessage: emailContext.emailMessage,
+      dashboardLink: emailContext.dashboardLink,
+      companyName: emailContext.companyName,
+      supportEmail: emailContext.supportEmail,
+    });
 
-      try {
-        const scheduleData = await getScheduleDetails(scheduleId);
+    const attachmentFilename = getAttachmentFilename(attachmentName, fileFormat);
 
-        // Extract email details from schedule
-        const recipients = tags.recipients || scheduleData.recipients || '';
-        const recipientEmails = recipients
-          .split(',')
-          .map((email) => email.trim())
-          .filter((email) => email && email.includes('@'));
-
-        if (recipientEmails.length === 0) {
-          throw new Error('No valid recipient emails found in schedule');
-        }
-
-        recipientEmail = recipientEmails[0]; // TODO: handle multiple recipients
-        emailSubject = scheduleData.subject || 'Scheduled Report';
-        emailMessage = scheduleData.message || null; // Get message from API
-        dashboardLink = scheduleData.dashboardLink || 'https://semaphor.cloud';
-        companyName = scheduleData.companyName || 'Semaphor';
-        supportEmail = scheduleData.supportEmail || 'support@semaphor.cloud';
-        senderEmail =
-          scheduleData.senderEmail ||
-          process.env.SES_SENDER_EMAIL ||
-          'Semaphor <noreply@example.com>';
-      } catch (error) {
-        console.error('Failed to fetch schedule details:', error);
-        throw new Error(
-          'Failed to fetch schedule details for scheduled report'
-        );
-      }
-    } else {
-      // Direct email (non-scheduled) - use tag values
-      console.log('Processing direct email request');
-
-      const recipientEmailString = tags.email || '';
-      emailSubject = tags.subject || 'Report';
-      emailMessage = null; // No custom message for direct emails
-
-      if (!recipientEmailString || !emailSubject) {
-        throw new Error('Missing email or subject tags for direct email');
-      }
-
-      // Parse and validate recipient emails
-      const recipientEmails = recipientEmailString
-        .split(',')
-        .map((email) => email.trim())
-        .filter((email) => email && email.includes('@'));
-
-      if (recipientEmails.length === 0) {
-        throw new Error('No valid recipient emails found');
-      }
-
-      recipientEmail = recipientEmails[0];
-
-      // Use defaults for direct emails
-      dashboardLink = 'https://semaphor.cloud';
-      companyName = 'Semaphor';
-      supportEmail = 'support@semaphor.cloud';
-      senderEmail =
-        process.env.SES_SENDER_EMAIL || 'Semaphor <noreply@example.com>';
-    }
-
-    const objectParams = { Bucket: bucket, Key: key };
-    const objectData = await s3.getObject(objectParams).promise();
-    const fileBuffer = objectData.Body;
-
-    const emailParams = {
-      //   Source: formattedSenderEmail, // Replace with your SES-verified email
-      RawMessage: {
-        Data: createRawEmail(
-          recipientEmail,
-          emailSubject,
-          fileBuffer,
-          fileFormat,
-          attachmentName,
-          emailMessage,
-          senderEmail,
-          dashboardLink,
-          companyName,
-          supportEmail
-        ),
+    const message = {
+      from: emailContext.senderEmail,
+      to: recipientsToSend,
+      subject: emailContext.emailSubject,
+      textBody,
+      htmlBody,
+      attachment: {
+        name: attachmentFilename,
+        contentType: getAttachmentContentType(fileFormat),
+        format: fileFormat,
+        s3Bucket: bucket,
+        s3Key: key,
+      },
+      metadata: {
+        scheduleId,
+        leaseOwner,
+        format: fileFormat,
       },
     };
 
-    await ses.sendRawEmail(emailParams).promise();
-    console.log(
-      `Email sent to ${recipientEmail} with subject: ${emailSubject}`
-    );
+    const provider = buildProvider(config);
+
+    if (provider.requiresFileBuffer) {
+      const objectData = await s3.getObject({ Bucket: bucket, Key: key }).promise();
+      message.attachment.fileBuffer = Buffer.isBuffer(objectData.Body)
+        ? objectData.Body
+        : Buffer.from(objectData.Body || '');
+    }
+
+    const result = await provider.send(message);
+
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to send email');
+    }
+
+    console.log('Email sent successfully', {
+      provider: provider.name,
+      recipients: recipientsToSend,
+      subject: emailContext.emailSubject,
+      providerMessageId: result.providerMessageId || null,
+      scheduleId,
+    });
+
     if (scheduleId) {
       await updateSubscriptionStatus(scheduleId, 'success', leaseOwner);
     }
+
     return { statusCode: 200, body: 'Email sent successfully' };
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Error in email sender:', error);
+
     if (scheduleId) {
-      await updateSubscriptionStatus(scheduleId, 'error', leaseOwner);
+      try {
+        await updateSubscriptionStatus(scheduleId, 'error', leaseOwner);
+      } catch (updateError) {
+        console.error('Failed to update schedule error status:', updateError);
+      }
     }
+
     throw error;
   }
 };
-
-function createRawEmail(
-  to,
-  subject,
-  fileBuffer,
-  fileFormat = 'pdf',
-  attachmentName = 'Report',
-  emailMessage = null,
-  senderEmail,
-  dashboardLink,
-  companyName = 'Semaphor',
-  supportEmail = 'support@semaphor.cloud'
-) {
-  const mixedBoundary =
-    'MixedBoundary_' + Math.random().toString(36).substring(2);
-  const altBoundary = 'AltBoundary_' + Math.random().toString(36).substring(2);
-  const base64File = fileBuffer
-    .toString('base64')
-    .match(/.{1,76}/g)
-    .join('\r\n');
-
-  const currentDate = new Date().toLocaleDateString('en-US', {
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  });
-
-  const rawEmail = [
-    `From: ${senderEmail}`,
-    `To: ${to}`,
-    `Subject: ${subject}`,
-    'MIME-Version: 1.0',
-    `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`,
-    '',
-
-    // Message Body (Plain Text + HTML)
-    `--${mixedBoundary}`,
-    `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
-    '',
-
-    // Plain Text Version (comes first, as fallback)
-    `--${altBoundary}`,
-    'Content-Type: text/plain; charset=UTF-8',
-    'Content-Transfer-Encoding: 7bit',
-    '',
-    // Use custom message if provided, otherwise use default
-    ...(emailMessage
-      ? [
-          ...emailMessage.split('\n'), // Use the custom message
-        ]
-      : [
-          `Hello,`,
-          '',
-          `Attached is your scheduled report from ${companyName}.`,
-          '',
-          `View your dashboard online: ${dashboardLink}`,
-          '',
-          `This is an automated email from a no-reply address. If you have any questions, please contact ${supportEmail}.`,
-          '',
-          `Cheers,`,
-          `${companyName} Team`,
-          '',
-        ]),
-
-    // HTML Version (comes second, preferred by Gmail)
-    `--${altBoundary}`,
-    'Content-Type: text/html; charset=UTF-8',
-    'Content-Transfer-Encoding: 7bit',
-    '',
-    '<html>',
-    '<head><meta charset="UTF-8"></head>',
-    '<body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6; padding-left: 25px; padding-right: 25px; padding-top: 15px; padding-bottom: 15px;">',
-    ...(emailMessage
-      ? [
-          // Convert plain text message to HTML, preserving line breaks
-          `<div style="font-size: 14px; white-space: pre-wrap;">${emailMessage.replace(
-            /\n/g,
-            '<br>'
-          )}</div>`,
-        ]
-      : [
-          '<p style="font-size: 14px;">Hello,</p>',
-          `<p style="font-size: 14px;">Attached is your scheduled report from ${companyName}.</p>`,
-          `<p style="font-size: 14px;"><a href="${dashboardLink}" style="color: #007bff; text-decoration: none;">View your dashboard online</a></p>`,
-          `<p style="font-size: 14px;">This is an automated email from a no-reply address. If you have any questions, please contact <a href="mailto:${supportEmail}" style="color: #007bff; text-decoration: none;">${supportEmail}</a>.</p>`,
-          `<p style="font-size: 14px;">Cheers,<br>${companyName} Team</p>`,
-        ]),
-    '</body>',
-    '</html>',
-    '',
-    `--${altBoundary}--`,
-    '',
-
-    // File Attachment
-    `--${mixedBoundary}`,
-    `Content-Type: ${
-      fileFormat === 'csv' ? 'text/csv' : 'application/pdf'
-    }; name="${attachmentName}_${currentDate}.${fileFormat}"`,
-    `Content-Disposition: attachment; filename="${attachmentName}_${currentDate}.${fileFormat}"`,
-    'Content-Transfer-Encoding: base64',
-    '',
-    base64File,
-    '',
-    `--${mixedBoundary}--`,
-  ].join('\r\n');
-
-  return Buffer.from(rawEmail);
-}
 
 async function updateSubscriptionStatus(scheduleId, status, leaseOwner = null) {
   const semaphorAppUrl = process.env.SEMAPHOR_APP_URL;
@@ -286,6 +240,7 @@ async function updateSubscriptionStatus(scheduleId, status, leaseOwner = null) {
   if (!response.ok) {
     throw new Error('Failed to update subscription status');
   }
+
   const data = await response.json();
   console.log('Subscription status updated:', data);
 }
@@ -315,6 +270,6 @@ async function getScheduleDetails(scheduleId) {
   if (!response.ok) {
     throw new Error(`Failed to get schedule details: ${response.status}`);
   }
-  const data = await response.json();
-  return data;
+
+  return response.json();
 }
