@@ -94,6 +94,10 @@ function verifySignature({ secret, timestamp, signature, rawBody }) {
   return { ok: true };
 }
 
+function normalizePayloadAttachments(payload) {
+  return Array.isArray(payload?.attachments) ? payload.attachments : [];
+}
+
 function validatePayload(payload) {
   if (!payload || typeof payload !== 'object') {
     return 'Payload must be an object';
@@ -107,13 +111,20 @@ function validatePayload(payload) {
     return 'to[] is required';
   }
 
-  if (
-    !payload.attachment ||
-    typeof payload.attachment !== 'object' ||
-    !payload.attachment.presignedUrl ||
-    !payload.attachment.name
-  ) {
-    return 'attachment with presignedUrl and name is required';
+  const attachments = normalizePayloadAttachments(payload);
+  if (attachments.length === 0) {
+    return 'attachments[] with presignedUrl and name is required';
+  }
+
+  const invalidAttachment = attachments.find(
+    (attachment) =>
+      !attachment ||
+      typeof attachment !== 'object' ||
+      !attachment.presignedUrl ||
+      !attachment.name
+  );
+  if (invalidAttachment) {
+    return 'each attachment requires presignedUrl and name';
   }
 
   if (!payload.html && !payload.text) {
@@ -175,14 +186,24 @@ exports.handler = async (event) => {
   const resend = new Resend(process.env.RESEND_API_KEY);
 
   try {
-    const attachmentResponse = await fetch(payload.attachment.presignedUrl);
-    if (!attachmentResponse.ok) {
-      throw new Error(
-        `Failed to download attachment: HTTP ${attachmentResponse.status}`
-      );
-    }
+    const payloadAttachments = normalizePayloadAttachments(payload);
+    const resendAttachments = [];
 
-    const attachmentBuffer = Buffer.from(await attachmentResponse.arrayBuffer());
+    for (const attachment of payloadAttachments) {
+      const attachmentResponse = await fetch(attachment.presignedUrl);
+      if (!attachmentResponse.ok) {
+        throw new Error(
+          `Failed to download attachment: HTTP ${attachmentResponse.status}`
+        );
+      }
+
+      const attachmentBuffer = Buffer.from(await attachmentResponse.arrayBuffer());
+      resendAttachments.push({
+        filename: attachment.name,
+        content: attachmentBuffer,
+        ...(attachment.contentType ? { contentType: attachment.contentType } : {}),
+      });
+    }
 
     const sendResponse = await resend.emails.send({
       from: process.env.RESEND_SENDER_EMAIL || payload.from,
@@ -190,12 +211,7 @@ exports.handler = async (event) => {
       subject: payload.subject,
       ...(payload.text ? { text: payload.text } : {}),
       ...(payload.html ? { html: payload.html } : {}),
-      attachments: [
-        {
-          filename: payload.attachment.name,
-          content: attachmentBuffer,
-        },
-      ],
+      attachments: resendAttachments,
     });
 
     if (sendResponse.error) {

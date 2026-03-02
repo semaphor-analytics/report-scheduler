@@ -12,11 +12,14 @@ AWS SAM application that powers two core capabilities for Semaphor:
 Pipeline 1: Scheduled Reports
   EventBridge (every 60 min)
        |
-  ScheduleProcessor --> GeneratePdf --> S3 (emails/) --> EmailSender --> (SES or External Provider)
+  ScheduleProcessor --> ScheduleDeliveryStateMachine
+       |                    |
+       |                    |-- Map: GeneratePdf (one per attachment)
+       |                    |-- Task: EmailSender (single consolidated send)
+       |                    |-- Task: update-status (success/error)
        |                    |
        |  GET /schedules/ready   Uses Puppeteer for PDF/CSV
-       |                    |
-       |                    Uploads to S3 with recipient tags
+       |                    Stores artifacts in S3 (emails/) as private objects
 
 Pipeline 2: Async Exports (Step Functions)
   semaphor-app (POST /api/v1/exports)
@@ -47,6 +50,7 @@ Pipeline 3: Automation V2 Dispatch (disabled by default)
 - [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html) installed
 - Node.js 18.x or later
 - Docker (for building Lambda functions)
+- Access to npm registry (public npmjs.org or your configured private mirror)
 - Either:
   - AWS SES configured for email sending (see [SES-SETUP.md](SES-SETUP.md)), or
   - External provider webhook configured (for `EMAIL_PROVIDER_MODE=EXTERNAL`)
@@ -88,10 +92,18 @@ EMAIL_PROVIDER_MODE=SES
 
 ```bash
 # Deploy using the included script
+# (installs dependencies, runs containerized no-cache SAM build, verifies aws-sdk packaging)
 ./deploy.sh
 
 # Or deploy manually
-sam build --use-container
+npm ci --include=dev
+cd pdf-generation && npm ci && cd ..
+cd schedule-processor && npm ci && cd ..
+cd email-sender && npm ci && cd ..
+cd chunk-processor && npm ci && cd ..
+cd compaction-processor && npm ci && cd ..
+cd mark-failed && npm ci && cd ..
+sam build --use-container --no-cached
 sam deploy --guided  # First time only
 ```
 
@@ -189,8 +201,9 @@ The deployment creates:
 | Resource | Purpose |
 |----------|---------|
 | **ScheduleProcessorFunction** | Fetches ready schedules every 60 minutes |
+| **ScheduleDeliveryStateMachine** | Orchestrates per-schedule attachment generation and single consolidated email |
 | **GeneratePdfFunction** | Generates PDFs/CSVs using Puppeteer (has public Function URL) |
-| **EmailSenderFunction** | Sends emails when files arrive in S3 (`SES` or `EXTERNAL` mode) |
+| **EmailSenderFunction** | Sends consolidated report emails (`SES` or `EXTERNAL` mode) and updates schedule status |
 | **ResendProviderFunction** | External provider endpoint (Function URL) that sends email via Resend |
 | **ChunkProcessorFunction** | Processes individual data chunks for large exports |
 | **CompactionProcessorFunction** | Merges chunks into final gzip-compressed CSV |
@@ -211,7 +224,7 @@ Semaphor Report Scheduler supports two delivery modes:
 1. **SES mode (default)**: `EMAIL_PROVIDER_MODE=SES`
 2. **External mode**: `EMAIL_PROVIDER_MODE=EXTERNAL` (uses same-stack `ResendProviderFunctionUrl`)
 
-In external mode, `EmailSenderFunction` posts signed payloads to your provider endpoint and includes a presigned attachment URL. `EmailSenderFunction` does not download attachment bytes in this mode.
+In external mode, `EmailSenderFunction` posts signed payloads to your provider endpoint and includes presigned attachment URLs. `EmailSenderFunction` does not download attachment bytes in this mode.
 
 ### SES Mode Setup
 
@@ -239,13 +252,12 @@ For detailed SES setup instructions, see [SES-SETUP.md](SES-SETUP.md)
    ```bash
    ./deploy.sh
    ```
-3. Smoke test by uploading an object to `emails/` with tags:
+3. Smoke test by invoking the sender directly with a consolidated payload (no S3 trigger path):
    ```bash
-   aws s3api put-object \
-     --bucket <S3BucketName> \
-     --key emails/manual-test.pdf \
-     --body /path/to/test.pdf \
-     --tagging 'email=test@example.com&subject=Manual+Smoke+Test&attachmentName=Manual+Test&format=pdf'
+   aws lambda invoke \
+    --function-name <EmailSenderFunctionName> \
+    --payload fileb://email-sender/events/direct-consolidated.sample.json \
+    /tmp/email-sender-response.json
    ```
 4. Watch logs:
    ```bash
@@ -258,7 +270,14 @@ For detailed SES setup instructions, see [SES-SETUP.md](SES-SETUP.md)
 ### First-Time Deployment
 
 ```bash
-sam build --use-container
+npm ci --include=dev
+cd pdf-generation && npm ci && cd ..
+cd schedule-processor && npm ci && cd ..
+cd email-sender && npm ci && cd ..
+cd chunk-processor && npm ci && cd ..
+cd compaction-processor && npm ci && cd ..
+cd mark-failed && npm ci && cd ..
+sam build --use-container --no-cached
 sam deploy --guided
 ```
 
@@ -317,6 +336,7 @@ After deployment, these outputs are available:
 | `ResendProviderFunctionUrl` | Function URL for same-stack Resend provider |
 | `ResendProviderFunctionArn` | ARN of same-stack Resend provider |
 | `ScheduleProcessorFunctionArn` | ARN of Schedule Processor function |
+| `ScheduleDeliveryStateMachineArn` | ARN of Scheduled Report Delivery state machine |
 | `AutomationDispatcherFunctionArn` | ARN of Automation V2 Dispatcher function |
 | `AutomationExecutorFunctionArn` | ARN of Automation V2 Executor function |
 | `AutomationStateMachineArn` | ARN of Automation V2 State Machine |
@@ -339,7 +359,30 @@ sam list stack-outputs --stack-name semaphor-report-scheduler
 - Ensure Docker is running: `docker ps`
 - Check Node.js version: `node --version` (should be 18.x or later)
 - If you see `Cannot find esbuild`, run:
-  - `PATH="$(pwd)/node_modules/.bin:$PATH" sam build`
+  - `NPM_CONFIG_OMIT= npm ci --include=dev`
+  - `export PATH="$(pwd)/node_modules/.bin:$PATH"`
+  - `esbuild --version`
+  - `sam build --use-container --no-cached`
+- If `npm config get omit` prints `dev`, clear it for the build shell or use `NPM_CONFIG_OMIT=` inline as above.
+- If `./deploy.sh` fails with missing `.aws-sam/build/GeneratePdfFunction/node_modules/aws-sdk/package.json`, verify npm registry access and rerun.
+
+**GeneratePdfFunction Error: `Cannot find package 'aws-sdk' imported from /var/task/app.js`**
+- This means the deployed Lambda artifact is missing function dependencies.
+- Run this recovery sequence from repo root:
+  ```bash
+  rm -rf .aws-sam
+  npm ci --include=dev
+  cd pdf-generation && npm ci && cd ..
+  cd schedule-processor && npm ci && cd ..
+  cd email-sender && npm ci && cd ..
+  cd chunk-processor && npm ci && cd ..
+  cd compaction-processor && npm ci && cd ..
+  cd mark-failed && npm ci && cd ..
+  sam build --use-container --no-cached --debug
+  test -f .aws-sam/build/GeneratePdfFunction/node_modules/aws-sdk/package.json && echo "aws-sdk present" || echo "aws-sdk missing"
+  sam deploy --no-confirm-changeset
+  ```
+- If the check prints `aws-sdk missing`, treat it as a build environment issue (registry access/network/private mirror config).
 
 **Deployment Fails**
 - Verify AWS credentials: `aws sts get-caller-identity`

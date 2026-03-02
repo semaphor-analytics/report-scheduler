@@ -22,6 +22,263 @@ function buildExportFilename(name, extension) {
   return `${base}-${stamp}.${extension}`;
 }
 
+function asRecord(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  return value;
+}
+
+function sanitizeTagValue(value) {
+  if (!value) return '';
+  return String(value).replace(/[^a-zA-Z0-9\s+\-=._:/@]/g, '_');
+}
+
+function buildTaggingString(tags) {
+  const sanitizedTags = {};
+  for (const [key, value] of Object.entries(tags || {})) {
+    if (value !== undefined && value !== null && value !== '') {
+      if (key === 'recipients') {
+        continue;
+      }
+      sanitizedTags[key] = sanitizeTagValue(value);
+    }
+  }
+  return Object.entries(sanitizedTags)
+    .map(
+      ([key, value]) =>
+        `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+    )
+    .join('&');
+}
+
+function appendHeaderLogoUrl(baseUrl, headerLogoUrl) {
+  if (!headerLogoUrl) {
+    return baseUrl;
+  }
+  try {
+    const urlObj = new URL(baseUrl);
+    urlObj.searchParams.set('headerLogoUrl', headerLogoUrl);
+    return urlObj.toString();
+  } catch {
+    return baseUrl;
+  }
+}
+
+async function generateArtifactBuffer({ format, targetUrl, options }) {
+  if (format === 'csv') {
+    const csvBuffer = await generateCsv(targetUrl, options);
+    return {
+      fileBuffer: csvBuffer,
+      contentType: 'text/csv',
+      fileExtension: 'csv',
+      layoutApplied: null,
+    };
+  }
+
+  const pdfBuffer = await generatePdf(targetUrl, options);
+  return {
+    fileBuffer: pdfBuffer,
+    contentType: 'application/pdf',
+    fileExtension: 'pdf',
+    layoutApplied: pdfBuffer?.layoutApplied || null,
+  };
+}
+
+async function uploadArtifactToS3({
+  fileBuffer,
+  contentType,
+  fileExtension,
+  reportTitle,
+  scheduleId = null,
+  leaseOwner = null,
+  format = 'pdf',
+  extraTags = {},
+}) {
+  const bucketName = process.env.S3_BUCKET_NAME;
+  if (!bucketName) {
+    throw new Error('S3_BUCKET_NAME environment variable is not set');
+  }
+
+  const prefix = scheduleId ? 'emails' : 'pdfs';
+  const outputFilename = buildExportFilename(reportTitle, fileExtension);
+  const fileKey = `${prefix}/${outputFilename}`;
+
+  const tags = scheduleId
+    ? {
+        scheduleId: scheduleId || 'unknown',
+        leaseOwner: leaseOwner || '',
+        format: format || fileExtension,
+        ...extraTags,
+      }
+    : extraTags;
+  const tagging = buildTaggingString(tags);
+
+  const uploadParams = {
+    Bucket: bucketName,
+    Key: fileKey,
+    Body: fileBuffer,
+    ContentType: contentType,
+    ACL: 'private',
+  };
+
+  if (tagging) {
+    uploadParams.Tagging = tagging;
+  }
+
+  await s3.putObject(uploadParams).promise();
+
+  const presignedUrl = s3.getSignedUrl('getObject', {
+    Bucket: bucketName,
+    Key: fileKey,
+    Expires: 60 * 60,
+    ResponseContentDisposition: `attachment; filename="${outputFilename}"`,
+  });
+
+  return {
+    bucketName,
+    fileKey,
+    outputFilename,
+    presignedUrl,
+    sizeBytes: Buffer.isBuffer(fileBuffer)
+      ? fileBuffer.length
+      : Buffer.byteLength(fileBuffer || ''),
+  };
+}
+
+async function handleScheduledStepFunctionRequest(event) {
+  const schedule = asRecord(event?.schedule);
+  const attachment = asRecord(event?.attachment);
+  const settings = asRecord(attachment.settings);
+  const attachmentPdfOptions = asRecord(attachment.pdfOptions);
+  const directReportParams = asRecord(event?.reportParams);
+  const reportParams =
+    Object.keys(directReportParams).length > 0
+      ? directReportParams
+      : asRecord(schedule?.reportParams);
+  const directPdfExportPreferences = asRecord(event?.pdfExportPreferences);
+  const pdfExportPreferences =
+    Object.keys(directPdfExportPreferences).length > 0
+      ? directPdfExportPreferences
+      : asRecord(schedule?.pdfExportPreferences);
+  const watermark = asRecord(pdfExportPreferences.watermark);
+  const headerLogo = asRecord(pdfExportPreferences.headerLogo);
+
+  const scheduleId =
+    typeof event?.scheduleId === 'string'
+      ? event.scheduleId
+      : typeof schedule?.scheduleId === 'string'
+        ? schedule.scheduleId
+        : '';
+  const leaseOwner =
+    typeof event?.leaseOwner === 'string'
+      ? event.leaseOwner
+      : typeof schedule?.leaseOwner === 'string'
+        ? schedule.leaseOwner
+        : '';
+  const baseUrl = typeof attachment.viewUrl === 'string' ? attachment.viewUrl : '';
+  if (!scheduleId || !baseUrl) {
+    throw new Error('scheduleId and attachment.viewUrl are required');
+  }
+
+  const format =
+    typeof attachment.format === 'string' && attachment.format.trim().length > 0
+      ? attachment.format.toLowerCase()
+      : 'pdf';
+  const reportTitle =
+    typeof attachment.title === 'string' && attachment.title.trim().length > 0
+      ? attachment.title
+      : 'Report';
+  const headerLogoUrl =
+    headerLogo.enabled === true && typeof headerLogo.url === 'string'
+      ? headerLogo.url
+      : '';
+
+  const lambdaReportParams = {};
+  if (settings.sheetSelection) {
+    lambdaReportParams.sheetSelection = settings.sheetSelection;
+  }
+  if (settings.includeFilters !== undefined) {
+    lambdaReportParams.includeFilters = settings.includeFilters;
+  }
+  if (settings.includeTimestamp !== undefined) {
+    lambdaReportParams.includeTimestamp = settings.includeTimestamp;
+  }
+
+  const targetUrl = appendHeaderLogoUrl(baseUrl, headerLogoUrl);
+  const options = {
+    isLambda: true,
+    tableMode: false,
+    pageSize:
+      settings.pageSize ||
+      attachmentPdfOptions?.pageSize ||
+      reportParams?.pdfOptions?.pageSize ||
+      'letter',
+    orientation:
+      settings.orientation ||
+      attachmentPdfOptions?.orientation ||
+      reportParams?.pdfOptions?.orientation ||
+      'portrait',
+    wideTableStrategy:
+      settings.wideTableStrategy ||
+      attachmentPdfOptions?.wideTableStrategy ||
+      reportParams?.pdfOptions?.wideTableStrategy ||
+      'auto',
+    reportTitle,
+    filterLine: '',
+    timezone: event?.timezone || schedule?.timezone || 'UTC',
+    debug: false,
+    scheduleId,
+    reportParams: lambdaReportParams,
+    format,
+    delimiter:
+      settings.delimiter ||
+      reportParams?.csvOptions?.delimiter ||
+      ',',
+    isVisualExport: targetUrl.includes('/visual/'),
+    watermarkEnabled: watermark.enabled === true,
+    watermarkText:
+      watermark.enabled === true && typeof watermark.text === 'string'
+        ? watermark.text
+        : '',
+    expandedState: null,
+  };
+
+  const { fileBuffer, contentType, fileExtension, layoutApplied } =
+    await generateArtifactBuffer({
+      format,
+      targetUrl,
+      options,
+    });
+
+  const uploaded = await uploadArtifactToS3({
+    fileBuffer,
+    contentType,
+    fileExtension,
+    reportTitle,
+    scheduleId,
+    leaseOwner,
+    format,
+    extraTags: {
+      attachmentName: reportTitle,
+    },
+  });
+
+  return {
+    success: true,
+    scheduleId,
+    leaseOwner,
+    s3Bucket: uploaded.bucketName,
+    s3Key: uploaded.fileKey,
+    attachmentName: reportTitle,
+    format: fileExtension,
+    contentType,
+    sizeBytes: uploaded.sizeBytes,
+    url: uploaded.presignedUrl,
+    ...(layoutApplied ? { layoutApplied } : {}),
+  };
+}
+
 /**
  * Handle data-direct POST requests (fast path)
  * Receives pre-organized table structure and generates PDF without URL rendering
@@ -122,7 +379,16 @@ async function handleDataDirectRequest(event) {
 }
 
 export const handler = async (event) => {
+  const isScheduleStepFnEvent =
+    event?.source === 'schedule_stepfn' ||
+    (typeof event?.scheduleId === 'string' &&
+      event?.attachment &&
+      !event?.queryStringParameters);
   try {
+    if (isScheduleStepFnEvent) {
+      return await handleScheduledStepFunctionRequest(event);
+    }
+
     // Check if this is a data-direct POST request (fast path)
     // Lambda Function URLs use requestContext.http.method, not httpMethod
     const method = event.requestContext?.http?.method || event.httpMethod;
@@ -140,10 +406,22 @@ export const handler = async (event) => {
     // Extract parameters from query string
     const url = event?.queryStringParameters?.url;
     const email = event?.queryStringParameters?.email;
-    const subject = event?.queryStringParameters?.subject;
     const scheduleId = event?.queryStringParameters?.scheduleId;
     const leaseOwner = event?.queryStringParameters?.leaseOwner;
     const format = event?.queryStringParameters?.format || 'pdf';
+
+    if (email && !scheduleId) {
+      return {
+        statusCode: 400,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message:
+            'Direct email query params are no longer supported by GeneratePdfFunction',
+          error:
+            'Use EmailSenderFunction direct action payload (send_consolidated) or semaphor-app /api/v1/pdf/email flow.',
+        }),
+      };
+    }
 
     // Parse attachment metadata if provided
     let attachmentMetadata = {};
@@ -303,14 +581,6 @@ export const handler = async (event) => {
         attachmentIndex: String(attachmentMetadata?.attachmentIndex ?? 0),
         totalAttachments: String(attachmentMetadata?.totalAttachments ?? 1),
       };
-    } else if (email) {
-      // For direct email requests (non-scheduled), keep existing behavior
-      prefix = 'emails';
-      tags = {
-        email: email || '',
-        subject: subject || '',
-        scheduleId: '', // Empty for non-scheduled
-      };
     }
 
     const outputFilename = buildExportFilename(
@@ -320,38 +590,7 @@ export const handler = async (event) => {
     const fileKey = `${prefix}/${outputFilename}`;
     console.log('S3 upload:', fileKey, '- Format:', format);
 
-    // Function to sanitize tag values for S3 requirements
-    // S3 tags can only contain: Unicode letters, whitespace, numbers, +, -, =, ., _, :, /, @
-    const sanitizeTagValue = (value) => {
-      if (!value) return '';
-      // Replace invalid characters with underscores
-      // Keep: letters, numbers, spaces, +, -, =, ., _, :, /, @
-      return String(value).replace(/[^a-zA-Z0-9\s+\-=._:/@]/g, '_');
-    };
-
-    // Validate and sanitize tags - S3 doesn't accept empty or undefined values
-    const sanitizedTags = {};
-    for (const [key, value] of Object.entries(tags)) {
-      if (value !== undefined && value !== null && value !== '') {
-        const stringValue = String(value);
-        // Don't sanitize recipients field - we need commas for email list
-        // Instead, we'll skip it entirely from tags since Email Sender fetches from API
-        if (key === 'recipients') {
-          // Skip recipients tag - Email Sender will get from API
-          continue;
-        }
-        const sanitizedValue = sanitizeTagValue(stringValue);
-        sanitizedTags[key] = sanitizedValue;
-      }
-    }
-
-    // Convert tags to URL-encoded string format
-    const tagging = Object.entries(sanitizedTags)
-      .map(
-        ([key, value]) =>
-          `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
-      )
-      .join('&');
+    const tagging = buildTaggingString(tags);
 
     const uploadParams = {
       Bucket: bucketName,
@@ -392,10 +631,20 @@ export const handler = async (event) => {
       },
       body: JSON.stringify({
         url: presignedUrl,
+        s3Bucket: bucketName,
+        s3Key: fileKey,
+        attachmentName: attachmentMetadata?.name || options.reportTitle || 'Report',
+        format: fileExtension,
+        sizeBytes: Buffer.isBuffer(fileBuffer)
+          ? fileBuffer.length
+          : Buffer.byteLength(fileBuffer || ''),
         ...(layoutApplied ? { layoutApplied } : {}),
       }),
     };
   } catch (error) {
+    if (isScheduleStepFnEvent) {
+      throw error;
+    }
     console.error('Lambda Handler Error:', error);
     return {
       statusCode: error.message?.includes('invalid') ? 400 : 500,

@@ -1,0 +1,19 @@
+{
+  "action": "send_consolidated",
+  "scheduleId": "rule_sample_123",
+  "leaseOwner": "ready-lease-12345",
+  "recipients": [
+    "user@example.com"
+  ],
+  "subject": "Weekly KPI Report",
+  "message": "Hello,\n\nPlease find this week's report attached.",
+  "attachments": [
+    {
+      "attachmentName": "KPI Dashboard",
+      "format": "pdf",
+      "s3Bucket": "replace-me",
+      "s3Key": "emails/kpi-dashboard-sample.pdf",
+      "sizeBytes": 12345
+    }
+  ]
+}

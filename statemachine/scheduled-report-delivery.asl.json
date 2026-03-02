@@ -1,0 +1,144 @@
+{
+  "Comment": "Scheduled report delivery orchestration (one email per schedule run)",
+  "StartAt": "GenerateAttachments",
+  "States": {
+    "GenerateAttachments": {
+      "Type": "Map",
+      "ItemsPath": "$.attachments",
+      "MaxConcurrency": 10,
+      "Parameters": {
+        "source": "schedule_stepfn",
+        "schedule.$": "$$.Execution.Input",
+        "attachment.$": "$$.Map.Item.Value"
+      },
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "GenerateSingleAttachment",
+        "States": {
+          "GenerateSingleAttachment": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "OutputPath": "$.Payload",
+            "Parameters": {
+              "FunctionName": "${GeneratePdfFunctionArn}",
+              "Payload.$": "$"
+            },
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "IntervalSeconds": 3,
+                "BackoffRate": 2,
+                "MaxAttempts": 2
+              }
+            ],
+            "End": true
+          }
+        }
+      },
+      "ResultPath": "$.artifacts",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.deliveryError",
+          "Next": "UpdateStatusFailed"
+        }
+      ],
+      "Next": "SendConsolidatedEmail"
+    },
+    "SendConsolidatedEmail": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "OutputPath": "$.Payload",
+      "Parameters": {
+        "FunctionName": "${EmailSenderFunctionArn}",
+        "Payload": {
+          "action": "send_consolidated",
+          "scheduleId.$": "$.scheduleId",
+          "leaseOwner.$": "$.leaseOwner",
+          "attachments.$": "$.artifacts"
+        }
+      },
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.deliveryError",
+          "Next": "UpdateStatusFailed"
+        }
+      ],
+      "Next": "UpdateStatusSuccess"
+    },
+    "UpdateStatusSuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "OutputPath": "$.Payload",
+      "Parameters": {
+        "FunctionName": "${EmailSenderFunctionArn}",
+        "Payload": {
+          "action": "update_status",
+          "scheduleId.$": "$.scheduleId",
+          "leaseOwner.$": "$.leaseOwner",
+          "status": "success"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "IntervalSeconds": 2,
+          "BackoffRate": 2,
+          "MaxAttempts": 3
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.deliveryError",
+          "Next": "UpdateStatusFailed"
+        }
+      ],
+      "Next": "DeliverySucceeded"
+    },
+    "UpdateStatusFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "OutputPath": "$.Payload",
+      "Parameters": {
+        "FunctionName": "${EmailSenderFunctionArn}",
+        "Payload": {
+          "action": "update_status",
+          "scheduleId.$": "$.scheduleId",
+          "leaseOwner.$": "$.leaseOwner",
+          "status": "error"
+        }
+      },
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "DeliveryFailed"
+        }
+      ],
+      "Next": "DeliveryFailed"
+    },
+    "DeliverySucceeded": {
+      "Type": "Succeed"
+    },
+    "DeliveryFailed": {
+      "Type": "Fail",
+      "Error": "ScheduleDeliveryFailed",
+      "Cause": "Scheduled report delivery failed"
+    }
+  }
+}

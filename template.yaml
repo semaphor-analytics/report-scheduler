@@ -100,15 +100,6 @@ Resources:
         IgnorePublicAcls: true
         BlockPublicPolicy: true
         RestrictPublicBuckets: true
-      NotificationConfiguration:
-        LambdaConfigurations:
-          - Event: s3:ObjectCreated:Put
-            Function: !GetAtt EmailSenderFunction.Arn
-            Filter:
-              S3Key:
-                Rules:
-                  - Name: prefix
-                    Value: emails/
 
   # S3 Bucket Policy to Control Access
   PdfBucketPolicy:
@@ -135,7 +126,6 @@ Resources:
               AWS: !GetAtt EmailSenderFunctionRole.Arn
             Action:
               - s3:GetObject
-              - s3:GetObjectTagging
             Resource:
               - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/emails/*'
           - Sid: AllowChunkProcessorAccess
@@ -222,7 +212,6 @@ Resources:
               - Effect: Allow
                 Action:
                   - s3:GetObject
-                  - s3:GetObjectTagging
                 Resource: !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/emails/*'
               - Effect: Allow
                 Action:
@@ -245,17 +234,6 @@ Resources:
           SES_REGION: !Ref SesRegion
           EMAIL_EXTERNAL_WEBHOOK_URL: !GetAtt ResendProviderFunctionUrl.FunctionUrl
           EMAIL_EXTERNAL_AUTH_SECRET: !Ref EmailExternalAuthSecret
-      Events:
-        S3UploadTrigger:
-          Type: S3
-          Properties:
-            Bucket: !Ref PdfBucket
-            Events: s3:ObjectCreated:Put
-            Filter:
-              S3Key:
-                Rules:
-                  - Name: prefix
-                    Value: emails/
 
   ResendProviderFunction:
     Type: AWS::Serverless::Function
@@ -287,13 +265,12 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
-                - lambda:InvokeFunction
-                - lambda:InvokeAsync
-              Resource: !GetAtt GeneratePdfFunction.Arn
+                - states:StartExecution
+              Resource: !Ref ScheduleDeliveryStateMachine
         - AWSLambdaBasicExecutionRole # For CloudWatch Logs
       Environment:
         Variables:
-          GENERATE_PDF_FUNCTION_NAME: !Ref GeneratePdfFunction
+          SCHEDULE_DELIVERY_STATE_MACHINE_ARN: !Ref ScheduleDeliveryStateMachine
       PackageType: Zip
       CodeUri: ./schedule-processor # Directory containing your Lambda code
 
@@ -379,6 +356,24 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt AutomationDispatchRule.Arn
+
+  # ============================================
+  # SCHEDULE DELIVERY - Step Functions State Machine
+  # ============================================
+
+  ScheduleDeliveryStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub 'semaphor-schedule-delivery-${AWS::StackName}'
+      DefinitionUri: statemachine/scheduled-report-delivery.asl.json
+      DefinitionSubstitutions:
+        GeneratePdfFunctionArn: !GetAtt GeneratePdfFunction.Arn
+        EmailSenderFunctionArn: !GetAtt EmailSenderFunction.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref GeneratePdfFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref EmailSenderFunction
 
   # ============================================
   # AUTOMATION V2 - Step Functions State Machine
@@ -580,6 +575,12 @@ Outputs:
     Value: !GetAtt ScheduleProcessorFunction.Arn
     Export:
       Name: ScheduleProcessorFunctionArn
+
+  ScheduleDeliveryStateMachineArn:
+    Description: 'ARN of the scheduled report delivery state machine'
+    Value: !Ref ScheduleDeliveryStateMachine
+    Export:
+      Name: ScheduleDeliveryStateMachineArn
 
   AutomationDispatcherFunctionArn:
     Description: 'ARN of the Automation V2 Dispatcher Lambda function'

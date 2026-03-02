@@ -9,8 +9,16 @@ function createSesProvider({ sesRegion = 'us-east-1' } = {}) {
     requiresFileBuffer: true,
     async send(message) {
       try {
-        if (!message?.attachment?.fileBuffer) {
-          throw new Error('Attachment fileBuffer is required for SES provider');
+        const attachments = Array.isArray(message?.attachments)
+          ? message.attachments
+          : [];
+        const missingBuffers = attachments.some(
+          (attachment) => !attachment?.fileBuffer
+        );
+        if (attachments.length > 0 && missingBuffers) {
+          throw new Error(
+            'Each attachment requires a fileBuffer for SES provider'
+          );
         }
 
         const rawEmail = createRawEmail({
@@ -19,9 +27,7 @@ function createSesProvider({ sesRegion = 'us-east-1' } = {}) {
           subject: message.subject,
           textBody: message.textBody,
           htmlBody: message.htmlBody,
-          attachmentFilename: message.attachment.name,
-          attachmentContentType: message.attachment.contentType,
-          fileBuffer: message.attachment.fileBuffer,
+          attachments,
         });
 
         const response = await ses

@@ -1,18 +1,17 @@
 # Email Sender Lambda
 
-`email-sender` is the S3-triggered Lambda that sends scheduled report emails when files land under the `emails/` prefix.
+`email-sender` is the report-delivery Lambda used by Step Functions to send consolidated scheduled report emails.
 
 ## What it does
 
-1. Receives S3 `ObjectCreated:Put` event.
-2. Reads S3 object tags (`scheduleId`, `leaseOwner`, `attachmentName`, `format`, etc.).
-3. Resolves recipients + message content:
-   - Scheduled reports: fetches from `GET /api/v1/schedules/{id}/internal`
-   - Direct emails: uses S3 tags (`email`, `subject`)
-4. Chooses delivery provider based on `EMAIL_PROVIDER_MODE`:
+1. Receives direct invocation payloads (`action: send_consolidated` or `action: update_status`) from Step Functions / scheduler.
+2. Resolves recipients + sender context (for scheduled reports via `GET /api/v1/schedules/{id}/internal`).
+3. Sends one email with N attachments in a single message.
+4. Applies SES size guardrail; if size is too large, sends one email with secure download links.
+5. Chooses delivery provider based on `EMAIL_PROVIDER_MODE`:
    - `SES` (default)
    - `EXTERNAL` (signed webhook call)
-5. Updates status via `POST /api/v1/schedules/update-status` for scheduled reports.
+6. Updates status via `POST /api/v1/schedules/update-status` when invoked with `action: update_status`.
 
 ## Provider modes
 
@@ -30,12 +29,12 @@
   - `EMAIL_PROVIDER_MODE=EXTERNAL`
   - `EMAIL_EXTERNAL_AUTH_SECRET=<shared secret>` (required)
 - Sends signed JSON payload to external provider webhook.
-- Includes attachment metadata and a presigned S3 URL in payload.
-- Does not download the attachment bytes in `EmailSenderFunction`; provider handles attachment fetch via `presignedUrl`.
+- Includes attachment metadata and presigned S3 URLs in payload.
+- Does not download attachment bytes in `EmailSenderFunction`; provider handles fetch via `presignedUrl`.
 
 ## Recipient behavior
 
-- `EMAIL_ENABLE_MULTI_RECIPIENTS=false` (default): sends only to first valid recipient (legacy-compatible behavior).
+- `EMAIL_ENABLE_MULTI_RECIPIENTS=false` (default): sends only to first valid recipient.
 - `EMAIL_ENABLE_MULTI_RECIPIENTS=true`: sends to all valid recipients.
 
 ## External webhook contract
@@ -49,18 +48,20 @@
   "subject": "Weekly KPI Report",
   "text": "...",
   "html": "...",
-  "attachment": {
-    "name": "Weekly-KPI-Report.pdf",
-    "contentType": "application/pdf",
-    "s3Bucket": "semaphor-reports-...",
-    "s3Key": "emails/Weekly-KPI-Report.pdf",
-    "presignedUrl": "https://...",
-    "expiresInSeconds": 900
-  },
+  "attachments": [
+    {
+      "name": "Weekly-KPI-Report.pdf",
+      "contentType": "application/pdf",
+      "s3Bucket": "semaphor-reports-...",
+      "s3Key": "emails/Weekly-KPI-Report.pdf",
+      "presignedUrl": "https://...",
+      "expiresInSeconds": 900
+    }
+  ],
   "metadata": {
     "scheduleId": "rule_123",
-    "leaseOwner": "legacy-ready-123",
-    "format": "pdf"
+    "leaseOwner": "ready-lease-123",
+    "formats": ["pdf"]
   }
 }
 ```
@@ -79,11 +80,11 @@ External mode always signs requests:
 
 ## Local testing
 
-### Invoke EmailSenderFunction locally
+### Invoke EmailSenderFunction locally (direct action payload)
 
 ```bash
 sam local invoke EmailSenderFunction \
-  -e email-sender/events/s3-event.sample.json \
+  -e email-sender/events/direct-consolidated.sample.json \
   --env-vars email-sender/events/env.sample.json
 ```
 

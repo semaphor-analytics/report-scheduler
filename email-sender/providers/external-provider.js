@@ -42,7 +42,15 @@ function createExternalProvider({
           };
         }
 
-        if (!message?.attachment?.s3Bucket || !message?.attachment?.s3Key) {
+        const attachments = Array.isArray(message?.attachments)
+          ? message.attachments
+          : [];
+
+        if (
+          attachments.some(
+            (attachment) => !attachment?.s3Bucket || !attachment?.s3Key
+          )
+        ) {
           return {
             success: false,
             error:
@@ -50,10 +58,20 @@ function createExternalProvider({
           };
         }
 
-        const presignedUrl = s3.getSignedUrl('getObject', {
-          Bucket: message.attachment.s3Bucket,
-          Key: message.attachment.s3Key,
-          Expires: presignedUrlExpirySeconds,
+        const payloadAttachments = attachments.map((attachment) => {
+          const presignedUrl = s3.getSignedUrl('getObject', {
+            Bucket: attachment.s3Bucket,
+            Key: attachment.s3Key,
+            Expires: presignedUrlExpirySeconds,
+          });
+          return {
+            name: attachment.name,
+            contentType: attachment.contentType,
+            s3Bucket: attachment.s3Bucket,
+            s3Key: attachment.s3Key,
+            presignedUrl,
+            expiresInSeconds: presignedUrlExpirySeconds,
+          };
         });
 
         const payload = {
@@ -62,14 +80,7 @@ function createExternalProvider({
           subject: message.subject,
           text: message.textBody,
           html: message.htmlBody,
-          attachment: {
-            name: message.attachment.name,
-            contentType: message.attachment.contentType,
-            s3Bucket: message.attachment.s3Bucket,
-            s3Key: message.attachment.s3Key,
-            presignedUrl,
-            expiresInSeconds: presignedUrlExpirySeconds,
-          },
+          attachments: payloadAttachments,
           metadata: message.metadata || {},
         };
 

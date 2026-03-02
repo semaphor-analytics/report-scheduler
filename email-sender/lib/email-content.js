@@ -17,14 +17,43 @@ function buildEmailBodies({
   dashboardLink,
   companyName = 'Semaphor',
   supportEmail = 'support@semaphor.cloud',
+  downloadLinks = [],
 }) {
+  const hasLinks = Array.isArray(downloadLinks) && downloadLinks.length > 0;
+
+  const linksText = hasLinks
+    ? [
+        '',
+        'Download links:',
+        ...downloadLinks.map(
+          (item) =>
+            `- ${item.name || 'Report'}${item.url ? `: ${item.url}` : ''}`
+        ),
+      ].join('\n')
+    : '';
+
+  const linksHtml = hasLinks
+    ? [
+        '<div style="margin-top: 16px;">',
+        '<p style="font-size: 14px; margin-bottom: 8px;"><strong>Download links</strong></p>',
+        '<ul style="padding-left: 18px; margin: 0;">',
+        ...downloadLinks.map((item) => {
+          const label = item.name || 'Report';
+          const href = item.url || '#';
+          return `<li style="margin: 6px 0; font-size: 14px;"><a href="${href}" style="color: #007bff; text-decoration: none;">${label}</a></li>`;
+        }),
+        '</ul>',
+        '</div>',
+      ].join('')
+    : '';
+
   if (emailMessage) {
     return {
-      textBody: emailMessage,
+      textBody: `${emailMessage}${linksText}`,
       htmlBody: `<div style="font-size: 14px; white-space: pre-wrap;">${emailMessage.replace(
         /\n/g,
         '<br>'
-      )}</div>`,
+      )}</div>${linksHtml}`,
     };
   }
 
@@ -37,6 +66,7 @@ function buildEmailBodies({
       `View your dashboard online: ${dashboardLink}`,
       '',
       `This is an automated email from a no-reply address. If you have any questions, please contact ${supportEmail}.`,
+      ...(hasLinks ? [linksText] : []),
       '',
       'Cheers,',
       `${companyName} Team`,
@@ -47,6 +77,7 @@ function buildEmailBodies({
       `<p style="font-size: 14px;">Attached is your scheduled report from ${companyName}.</p>`,
       `<p style="font-size: 14px;"><a href="${dashboardLink}" style="color: #007bff; text-decoration: none;">View your dashboard online</a></p>`,
       `<p style="font-size: 14px;">This is an automated email from a no-reply address. If you have any questions, please contact <a href="mailto:${supportEmail}" style="color: #007bff; text-decoration: none;">${supportEmail}</a>.</p>`,
+      linksHtml,
       `<p style="font-size: 14px;">Cheers,<br>${companyName} Team</p>`,
     ].join(''),
   };
@@ -58,21 +89,17 @@ function createRawEmail({
   subject,
   textBody,
   htmlBody,
-  attachmentFilename,
-  attachmentContentType,
-  fileBuffer,
+  attachments = [],
 }) {
+  const normalizedAttachments = Array.isArray(attachments) ? attachments : [];
+
   const mixedBoundary =
     'MixedBoundary_' + Math.random().toString(36).substring(2);
   const altBoundary = 'AltBoundary_' + Math.random().toString(36).substring(2);
-  const base64File = fileBuffer
-    .toString('base64')
-    .match(/.{1,76}/g)
-    .join('\r\n');
 
   const toHeader = Array.isArray(to) ? to.join(', ') : String(to);
 
-  const rawEmail = [
+  const rawParts = [
     `From: ${from}`,
     `To: ${toHeader}`,
     `Subject: ${subject}`,
@@ -101,15 +128,32 @@ function createRawEmail({
     '',
     `--${altBoundary}--`,
     '',
-    `--${mixedBoundary}`,
-    `Content-Type: ${attachmentContentType}; name="${attachmentFilename}"`,
-    `Content-Disposition: attachment; filename="${attachmentFilename}"`,
-    'Content-Transfer-Encoding: base64',
-    '',
-    base64File,
-    '',
-    `--${mixedBoundary}--`,
-  ].join('\r\n');
+  ];
+
+  for (const attachment of normalizedAttachments) {
+    if (!attachment?.fileBuffer) {
+      continue;
+    }
+    const base64File = Buffer.from(attachment.fileBuffer)
+      .toString('base64')
+      .match(/.{1,76}/g) || [];
+    const base64Lines = Array.isArray(base64File)
+      ? base64File.join('\r\n')
+      : '';
+    rawParts.push(
+      `--${mixedBoundary}`,
+      `Content-Type: ${attachment.contentType}; name="${attachment.name}"`,
+      `Content-Disposition: attachment; filename="${attachment.name}"`,
+      'Content-Transfer-Encoding: base64',
+      '',
+      base64Lines,
+      ''
+    );
+  }
+
+  rawParts.push(`--${mixedBoundary}--`);
+
+  const rawEmail = rawParts.join('\r\n');
 
   return Buffer.from(rawEmail);
 }

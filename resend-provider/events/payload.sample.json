@@ -4,17 +4,19 @@
   "subject": "Weekly KPI Report",
   "text": "Hello,\n\nYour weekly KPI report is attached.",
   "html": "<p>Hello,</p><p>Your weekly KPI report is attached.</p>",
-  "attachment": {
-    "name": "Weekly-KPI-Report.pdf",
-    "contentType": "application/pdf",
-    "s3Bucket": "semaphor-reports-123456789012-semaphor-report-scheduler",
-    "s3Key": "emails/Weekly-KPI-Report.pdf",
-    "presignedUrl": "https://example-bucket.s3.amazonaws.com/emails/Weekly-KPI-Report.pdf?X-Amz-...",
-    "expiresInSeconds": 900
-  },
+  "attachments": [
+    {
+      "name": "Weekly-KPI-Report.pdf",
+      "contentType": "application/pdf",
+      "s3Bucket": "semaphor-reports-123456789012-semaphor-report-scheduler",
+      "s3Key": "emails/Weekly-KPI-Report.pdf",
+      "presignedUrl": "https://example-bucket.s3.amazonaws.com/emails/Weekly-KPI-Report.pdf?X-Amz-...",
+      "expiresInSeconds": 900
+    }
+  ],
   "metadata": {
     "scheduleId": "rule_123",
-    "leaseOwner": "legacy-ready-123",
-    "format": "pdf"
+    "leaseOwner": "ready-lease-123",
+    "formats": ["pdf"]
   }
 }
