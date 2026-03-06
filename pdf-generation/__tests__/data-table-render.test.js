@@ -89,4 +89,51 @@ describe('data table render', () => {
     expect(html).toContain('Hidden empty columns: 6');
     expect(html).toContain('Examples: Empty 1, Empty 2, Empty 3, Empty 4, Empty 5');
   });
+
+  it('repeats band labels at the top and bottom of each wide section', () => {
+    const pages = [
+      {
+        headers: [
+          {
+            cells: Array.from({ length: 8 }).map((_, index) => ({
+              text: `Column ${index + 1}`,
+              columnId: `c${index + 1}`,
+              colspan: 1,
+              rowspan: 1,
+              isNumeric: index > 0,
+              measuredWidthPx: 220,
+            })),
+          },
+        ],
+        rows: [
+          {
+            index: 0,
+            type: 'data',
+            cells: Array.from({ length: 8 }).map((_, index) => ({
+              text: index === 0 ? 'Acme' : String(index * 10),
+              columnId: `c${index + 1}`,
+              className: index > 0 ? 'numeric' : '',
+              isNumeric: index > 0,
+            })),
+          },
+        ],
+        metadata: { tableType: 'data', totalColumns: 8 },
+      },
+    ];
+
+    const { html, layoutApplied } = renderDataTableHtml(pages, {
+      pageSize: 'A5',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+      timezone: 'UTC',
+    });
+
+    expect(layoutApplied.usedBanding).toBe(true);
+    const bandLabelCount = (html.match(/class="band-label"/g) || []).length;
+    const bandFooterCount = (html.match(/<tfoot class="band-footer">/g) || []).length;
+    expect(bandFooterCount).toBe(layoutApplied.bandCount);
+    expect(bandLabelCount).toBe(layoutApplied.bandCount);
+    expect(html).toContain('tfoot.band-footer { display: table-footer-group; }');
+    expect(html).toContain('td colspan="');
+  });
 });

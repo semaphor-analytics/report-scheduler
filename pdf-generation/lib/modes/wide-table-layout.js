@@ -510,13 +510,18 @@ function extractLeafHeaderCells(headers = []) {
   const leafRowIndex = rowCount - 1;
   const leafCount = matrix.reduce((max, row) => Math.max(max, row.length), 0);
   const leafCells = [];
+  const isPlaceholderCell = (cell) =>
+    cell &&
+    !cell.columnId &&
+    !normalizeCellText(cell.text).trim() &&
+    !cell.measuredWidthPx;
 
   for (let colIndex = 0; colIndex < leafCount; colIndex += 1) {
     let resolved = matrix[leafRowIndex][colIndex];
 
-    if (!resolved) {
+    if (!resolved || isPlaceholderCell(resolved)) {
       for (let rowIndex = leafRowIndex - 1; rowIndex >= 0; rowIndex -= 1) {
-        if (matrix[rowIndex][colIndex]) {
+        if (matrix[rowIndex][colIndex] && !isPlaceholderCell(matrix[rowIndex][colIndex])) {
           resolved = matrix[rowIndex][colIndex];
           break;
         }
@@ -676,6 +681,94 @@ function isPivotTableData(tableData) {
   return metadata.pivotLevels !== undefined || metadata.rowLevels !== undefined;
 }
 
+function parsePositiveInt(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.trunc(parsed));
+}
+
+function getPivotRowHeaderCountFromBody(tableData, columns = []) {
+  const rows = Array.isArray(tableData?.rows) ? tableData.rows : [];
+  const firstDataRow = rows.find(
+    (row) => String(row?.type || 'data').toLowerCase() === 'data' && Array.isArray(row?.cells),
+  );
+
+  if (!firstDataRow) {
+    return null;
+  }
+
+  const sawAnyHeaderCells = (firstDataRow.cells || []).some((cell) => Boolean(cell?.isHeader));
+  let leadingCount = 0;
+  for (const cell of firstDataRow.cells || []) {
+    if (!cell?.isHeader) {
+      break;
+    }
+    leadingCount += Math.max(1, Number(cell?.colspan || 1));
+  }
+
+  if (leadingCount === 0 && !sawAnyHeaderCells) {
+    return null;
+  }
+
+  return Math.min(leadingCount, columns.length);
+}
+
+function getPivotRowHeaderCount(tableData, columns = []) {
+  const metadata = tableData?.metadata || {};
+  const configured = parsePositiveInt(metadata.rowLevels);
+  if (configured > 0) {
+    return Math.min(configured, columns.length);
+  }
+
+  const bodyDerived = getPivotRowHeaderCountFromBody(tableData, columns);
+  if (bodyDerived !== null) {
+    if (bodyDerived > 0) {
+      return bodyDerived;
+    }
+    return 0;
+  }
+
+  const firstHeaderRow = Array.isArray(tableData?.headers) ? tableData.headers[0] : null;
+  const headerCells = Array.isArray(firstHeaderRow?.cells) ? firstHeaderRow.cells : [];
+  const headerRowCount = Array.isArray(tableData?.headers) ? tableData.headers.length : 0;
+  const leafHeaders = extractLeafHeaderCells(tableData?.headers || []);
+
+  let leadingCount = 0;
+  for (const cell of headerCells) {
+    const columnId = String(cell?.columnId || '');
+    const isRowLevel = /^rowLevel\d+$/i.test(columnId);
+    const spanWidth = Math.max(1, Number(cell?.colspan || 1));
+    const spansFullHeader =
+      headerRowCount > 1 &&
+      Math.max(1, Number(cell?.rowspan || 1)) >= headerRowCount;
+    const isNonNumericFullHeightCell = spansFullHeader && cell?.isNumeric !== true;
+
+    if (!isRowLevel && !isNonNumericFullHeightCell) {
+      break;
+    }
+
+    leadingCount += spanWidth;
+  }
+
+  if (leadingCount === 0 && headerCells.length > 0) {
+    const firstCell = headerCells[0];
+    const firstCellColspan = Math.max(1, Number(firstCell?.colspan || 1));
+    const firstCellRowspan = Math.max(1, Number(firstCell?.rowspan || 1));
+    const firstCellLooksGroupedDimension =
+      firstCellColspan > 1 &&
+      firstCellRowspan < Math.max(1, headerRowCount) &&
+      leafHeaders
+        .slice(0, firstCellColspan)
+        .every((cell) => cell && cell.isNumeric !== true);
+
+    if (firstCellLooksGroupedDimension) {
+      return Math.min(firstCellColspan, columns.length);
+    }
+  }
+
+  return Math.min(leadingCount, columns.length);
+}
+
 function buildCandidateLayouts(pageSize, orientation) {
   const requestedSize = normalizePageSize(pageSize || 'Letter');
   const requestedOrientation = normalizeOrientation(orientation);
@@ -735,27 +828,64 @@ function selectAnchorColumns(columns, printableWidthPx) {
   return anchors;
 }
 
-function buildBands(columns, printableWidthPx) {
+function buildBands(columns, printableWidthPx, tableData = null) {
   const rowNumberWidth = MIN_WIDTHS_PX.rowNumber;
   const minDynamicWidth = MIN_WIDTHS_PX.text;
-  let anchorIndices = selectAnchorColumns(columns, printableWidthPx);
+  let preservePivotAnchors = false;
+  let configuredPivotAnchorIndices = [];
+  let anchorIndices;
+  if (isPivotTableData(tableData)) {
+    const pivotAnchorCount = getPivotRowHeaderCount(tableData, columns);
+    preservePivotAnchors = pivotAnchorCount > 0;
+    configuredPivotAnchorIndices =
+      pivotAnchorCount > 0
+        ? columns.slice(0, pivotAnchorCount).map((column) => column.index)
+        : [];
+    anchorIndices =
+      pivotAnchorCount > 0
+        ? [...configuredPivotAnchorIndices]
+        : selectAnchorColumns(columns, printableWidthPx);
+  } else {
+    anchorIndices = selectAnchorColumns(columns, printableWidthPx);
+  }
   const getAnchorWidth = (indices) =>
     indices.reduce((sum, index) => sum + (columns[index]?.widthPx || 0), rowNumberWidth);
-  let dynamicIndices = columns
-    .map((column) => column.index)
-    .filter((index) => !anchorIndices.includes(index));
+  const buildDynamicIndices = () =>
+    columns
+      .map((column) => column.index)
+      .filter((index) => {
+        if (anchorIndices.includes(index)) {
+          return false;
+        }
+        if (preservePivotAnchors && configuredPivotAnchorIndices.includes(index)) {
+          return false;
+        }
+        return true;
+      });
+  let dynamicIndices = buildDynamicIndices();
 
   if (dynamicIndices.length > 0) {
     let anchorWidth = getAnchorWidth(anchorIndices);
+    if (preservePivotAnchors) {
+      while (
+        anchorIndices.length > 1 &&
+        printableWidthPx - anchorWidth < minDynamicWidth
+      ) {
+        anchorIndices = anchorIndices.slice(0, -1);
+        anchorWidth = getAnchorWidth(anchorIndices);
+      }
+    }
     // If anchors consume too much horizontal budget, trim trailing anchors to keep
     // at least one reasonably readable dynamic column in each band.
-    while (anchorIndices.length > 0 && printableWidthPx - anchorWidth < minDynamicWidth) {
+    while (
+      !preservePivotAnchors &&
+      anchorIndices.length > 0 &&
+      printableWidthPx - anchorWidth < minDynamicWidth
+    ) {
       anchorIndices = anchorIndices.slice(0, -1);
       anchorWidth = getAnchorWidth(anchorIndices);
     }
-    dynamicIndices = columns
-      .map((column) => column.index)
-      .filter((index) => !anchorIndices.includes(index));
+    dynamicIndices = buildDynamicIndices();
   }
 
   const anchorWidth = getAnchorWidth(anchorIndices);
@@ -794,6 +924,37 @@ function buildBands(columns, printableWidthPx) {
     bands,
     dynamicWidthByIndex,
   };
+}
+
+function formatSelectedColumnRanges(selectedIndices = [], totalColumns = 0) {
+  const sorted = [...new Set(selectedIndices)]
+    .filter((index) => Number.isInteger(index) && index >= 0)
+    .sort((a, b) => a - b);
+
+  if (sorted.length === 0) {
+    const fallbackTotal = Math.max(1, Number(totalColumns) || 1);
+    return `Columns 1-${fallbackTotal} of ${fallbackTotal}`;
+  }
+
+  const ranges = [];
+  let rangeStart = sorted[0];
+  let previous = sorted[0];
+
+  for (let index = 1; index < sorted.length; index += 1) {
+    const current = sorted[index];
+    if (current === previous + 1) {
+      previous = current;
+      continue;
+    }
+
+    ranges.push(rangeStart === previous ? `${rangeStart + 1}` : `${rangeStart + 1}-${previous + 1}`);
+    rangeStart = current;
+    previous = current;
+  }
+
+  ranges.push(rangeStart === previous ? `${rangeStart + 1}` : `${rangeStart + 1}-${previous + 1}`);
+
+  return `Columns ${ranges.join(', ')} of ${Math.max(1, Number(totalColumns) || 1)}`;
 }
 
 function cloneCell(cell = {}) {
@@ -1304,7 +1465,7 @@ export function buildWideTableLayout(tableData, options = {}) {
   }
 
   const fallback = chosen || getWidestCandidate(candidates);
-  const bandingPlan = buildBands(columns, fallback.printableWidthPx);
+  const bandingPlan = buildBands(columns, fallback.printableWidthPx, tableData);
   const anchorLabels = bandingPlan.anchorIndices.map((index) => columns[index]?.label).filter(Boolean);
   const sections = bandingPlan.bands.map((dynamicIndices, bandIndex) => {
     const selectedIndices = [...bandingPlan.anchorIndices, ...dynamicIndices];
@@ -1330,12 +1491,7 @@ export function buildWideTableLayout(tableData, options = {}) {
       true,
     );
 
-    const dynamicSorted = [...dynamicIndices].sort((a, b) => a - b);
-    const start = dynamicSorted.length ? dynamicSorted[0] + 1 : 1;
-    const end = dynamicSorted.length
-      ? dynamicSorted[dynamicSorted.length - 1] + 1
-      : columns.length;
-    const bandLabel = `Columns ${start}-${end} of ${columns.length}`;
+    const bandLabel = formatSelectedColumnRanges(selectedIndices, columns.length);
     const headers =
       isPivotTable &&
       canBuildPivotBandHeaders(

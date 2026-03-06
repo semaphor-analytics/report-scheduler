@@ -10,7 +10,8 @@ import * as dataTableMode from './modes/data-table.js';
 import * as aggregateTableMode from './modes/aggregate-table.js';
 import { encryptPdfBuffer } from '../pdf-encrypt.js';
 import { waitForDashboardReady } from './content-stability.js';
-import { mergePDFs, mergePDFsWithMetadata } from './pdf-merger.js';
+import { mergePDFsWithMetadata } from './pdf-merger.js';
+import { applyPdfMetadata } from './pdf-metadata.js';
 import {
   getScheduleDetails,
   getDashboardData,
@@ -305,6 +306,10 @@ export async function generatePdf(url, options = {}) {
       console.log('Adding password protection to PDF...');
       pdfBuffer = await encryptPdfBuffer(pdfBuffer, options.password);
       console.log('PDF encrypted successfully');
+    } else {
+      pdfBuffer = await applyPdfMetadata(pdfBuffer, {
+        title: options.reportTitle,
+      });
     }
 
     if (layoutApplied) {
@@ -532,6 +537,9 @@ async function generateAllSheetsPdf(url, options = {}) {
       );
       console.log('  ✓ PDF encrypted');
     } else {
+      mergedPdfBuffer = await applyPdfMetadata(mergedPdfBuffer, {
+        title: options.reportTitle,
+      });
       console.log('\n[Step 6/6] Skipping encryption (no password provided)');
     }
 

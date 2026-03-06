@@ -338,6 +338,565 @@ describe('wide-table-layout', () => {
     ).toBe(true);
   });
 
+  it('anchors only left row-header columns for pivot banding even when sparse value columns look non-numeric', () => {
+    const tableData = {
+      headers: [
+        {
+          headerType: 'pivot-hierarchy',
+          headerRowIndex: 0,
+          repeatHeader: true,
+          cells: [
+            { text: 'Counterparty Name', columnId: 'rowLevel0', rowspan: 3, colspan: 1, isHeader: true },
+            { text: 'Aging Bucket', colspan: 6, rowspan: 1, isHeader: true },
+          ],
+        },
+        {
+          headerType: 'pivot-values',
+          headerRowIndex: 1,
+          repeatHeader: true,
+          cells: [
+            { text: 'No Due Date', colspan: 3, rowspan: 1, isHeader: true },
+            { text: '91+ Days', colspan: 3, rowspan: 1, isHeader: true },
+          ],
+        },
+        {
+          headerType: 'metrics',
+          headerRowIndex: 2,
+          repeatHeader: true,
+          cells: [
+            { text: 'Net Balance', columnId: 'no_due_net_balance', isHeader: true, isNumeric: true },
+            { text: 'AR Amount Due', columnId: 'no_due_ar_amount_due', isHeader: true, isNumeric: true },
+            { text: 'AP Amount Due', columnId: 'no_due_ap_amount_due', isHeader: true, isNumeric: true },
+            { text: '', columnId: 'days_91_bucket_1', isHeader: true, isNumeric: false },
+            { text: 'Payable Note Count', columnId: 'days_91_payable_note_count', isHeader: true, isNumeric: true },
+            { text: 'Sum of Invoice Count', columnId: 'days_91_invoice_count', isHeader: true, isNumeric: true },
+          ],
+        },
+      ],
+      rows: [
+        {
+          index: 0,
+          type: 'data',
+          cells: [
+            { text: '#Falcon Smelting', columnId: 'rowLevel0' },
+            { text: '10', columnId: 'no_due_net_balance', isNumeric: true },
+            { text: '11', columnId: 'no_due_ar_amount_due', isNumeric: true },
+            { text: '12', columnId: 'no_due_ap_amount_due', isNumeric: true },
+            { text: '', columnId: 'days_91_bucket_1', isNumeric: false },
+            { text: '14', columnId: 'days_91_payable_note_count', isNumeric: true },
+            { text: '15', columnId: 'days_91_invoice_count', isNumeric: true },
+          ],
+        },
+      ],
+      metadata: {
+        tableType: 'pivot',
+        rowLevels: '1',
+        pivotLevels: '2',
+        totalColumns: 7,
+      },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'A5',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+
+    expect(result.layoutApplied.usedBanding).toBe(true);
+    expect(result.layoutApplied.anchorColumns).toEqual(['Counterparty Name']);
+    expect(result.sections[0].headers.length).toBeGreaterThan(1);
+    expect(result.sections[0].bandLabel).toBe('Columns 1-7 of 7');
+    expect(result.sections[0].headers[0].cells.some((cell) => cell.text === 'Aging Bucket')).toBe(
+      true,
+    );
+    expect(result.sections[0].columns[0].columnId).toBe('__row_number__');
+    expect(result.sections[0].columns[1].columnId).toBe('rowLevel0');
+    expect(result.sections[0].columns[2].columnId).toBe('no_due_net_balance');
+  });
+
+  it('falls back to text anchor selection when pivot metadata does not expose rowLevels', () => {
+    const tableData = {
+      headers: [
+        {
+          headerType: 'pivot-hierarchy',
+          headerRowIndex: 0,
+          repeatHeader: true,
+          cells: [
+            { text: 'Dimensions', colspan: 2, rowspan: 1, isHeader: true },
+            { text: 'Aging Bucket', colspan: 6, rowspan: 1, isHeader: true },
+          ],
+        },
+        {
+          headerType: 'metrics',
+          headerRowIndex: 1,
+          repeatHeader: true,
+          cells: [
+            { text: 'Country', columnId: 'country', isHeader: true, measuredWidthPx: 180 },
+            { text: 'City', columnId: 'city', isHeader: true, measuredWidthPx: 180 },
+            ...Array.from({ length: 6 }).map((_, index) => ({
+              text: `Metric ${index + 1}`,
+              columnId: `metric_${index + 1}`,
+              isHeader: true,
+              isNumeric: true,
+              measuredWidthPx: 220,
+            })),
+          ],
+        },
+      ],
+      rows: [
+        {
+          index: 0,
+          type: 'data',
+          cells: [
+            { text: 'US', columnId: 'country' },
+            { text: 'Chicago', columnId: 'city' },
+            ...Array.from({ length: 6 }).map((_, index) => ({
+              text: String((index + 1) * 10),
+              columnId: `metric_${index + 1}`,
+              isNumeric: true,
+            })),
+          ],
+        },
+      ],
+      metadata: {
+        tableType: 'pivot',
+        pivotLevels: '1',
+        totalColumns: 8,
+      },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'A5',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+
+    expect(result.layoutApplied.usedBanding).toBe(true);
+    expect(result.layoutApplied.anchorColumns).toEqual(['Country', 'City']);
+    expect(result.sections.length).toBeGreaterThan(0);
+    expect(
+      result.sections.every(
+        (section) => section.columns[1]?.columnId === 'country' && section.columns[2]?.columnId === 'city',
+      ),
+    ).toBe(true);
+    expect(result.sections[0].bandLabel).toContain('Columns 1-');
+  });
+
+  it('preserves all configured pivot row headers across banded sections', () => {
+    const tableData = {
+      headers: [
+        {
+          headerType: 'pivot-hierarchy',
+          headerRowIndex: 0,
+          repeatHeader: true,
+          cells: [
+            { text: 'Country', columnId: 'rowLevel0', rowspan: 2, colspan: 1, isHeader: true, measuredWidthPx: 150 },
+            { text: 'State', columnId: 'rowLevel1', rowspan: 2, colspan: 1, isHeader: true, measuredWidthPx: 150 },
+            { text: 'City', columnId: 'rowLevel2', rowspan: 2, colspan: 1, isHeader: true, measuredWidthPx: 150 },
+            { text: 'Metrics', colspan: 8, rowspan: 1, isHeader: true },
+          ],
+        },
+        {
+          headerType: 'metrics',
+          headerRowIndex: 1,
+          repeatHeader: true,
+          cells: Array.from({ length: 8 }).map((_, index) => ({
+            text: `Metric ${index + 1}`,
+            columnId: `metric_${index + 1}`,
+            isHeader: true,
+            isNumeric: true,
+            measuredWidthPx: 240,
+          })),
+        },
+      ],
+      rows: [
+        {
+          index: 0,
+          type: 'data',
+          cells: [
+            { text: 'US', columnId: 'rowLevel0' },
+            { text: 'IL', columnId: 'rowLevel1' },
+            { text: 'Chicago', columnId: 'rowLevel2' },
+            ...Array.from({ length: 8 }).map((_, index) => ({
+              text: String((index + 1) * 10),
+              columnId: `metric_${index + 1}`,
+              isNumeric: true,
+            })),
+          ],
+        },
+      ],
+      metadata: {
+        tableType: 'pivot',
+        rowLevels: '3',
+        pivotLevels: '1',
+        totalColumns: 11,
+      },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'A6',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+
+    expect(result.layoutApplied.usedBanding).toBe(true);
+    expect(result.layoutApplied.anchorColumns).toEqual(['Country', 'State', 'City']);
+    expect(
+      result.sections.every((section) =>
+        section.columns[1]?.columnId === 'rowLevel0' &&
+        section.columns[2]?.columnId === 'rowLevel1' &&
+        section.columns[3]?.columnId === 'rowLevel2' &&
+        section.columns.length > 4,
+      ),
+    ).toBe(true);
+  });
+
+  it('trims configured pivot anchors only as a last resort when they alone would overflow the printable width', () => {
+    const rowHeaderCount = 20;
+    const rowHeaderCells = Array.from({ length: rowHeaderCount }).map((_, index) => ({
+      text: `Level ${index + 1}`,
+      columnId: `rowLevel${index}`,
+      rowspan: 2,
+      colspan: 1,
+      isHeader: true,
+      measuredWidthPx: 400,
+    }));
+    const metricHeaderCells = [
+      {
+        text: 'Metric 1',
+        columnId: 'metric_1',
+        isHeader: true,
+        isNumeric: true,
+        measuredWidthPx: 220,
+      },
+      {
+        text: 'Metric 2',
+        columnId: 'metric_2',
+        isHeader: true,
+        isNumeric: true,
+        measuredWidthPx: 220,
+      },
+    ];
+    const rowHeaderValues = Array.from({ length: rowHeaderCount }).map((_, index) => ({
+      text: `Value ${index + 1}`,
+      columnId: `rowLevel${index}`,
+    }));
+
+    const tableData = {
+      headers: [
+        {
+          headerType: 'pivot-hierarchy',
+          headerRowIndex: 0,
+          repeatHeader: true,
+          cells: [...rowHeaderCells, { text: 'Metrics', colspan: 2, rowspan: 1, isHeader: true }],
+        },
+        {
+          headerType: 'metrics',
+          headerRowIndex: 1,
+          repeatHeader: true,
+          cells: metricHeaderCells,
+        },
+      ],
+      rows: [
+        {
+          index: 0,
+          type: 'data',
+          cells: [
+            ...rowHeaderValues,
+            { text: '10', columnId: 'metric_1', isNumeric: true },
+            { text: '20', columnId: 'metric_2', isNumeric: true },
+          ],
+        },
+      ],
+      metadata: {
+        tableType: 'pivot',
+        rowLevels: String(rowHeaderCount),
+        pivotLevels: '1',
+        totalColumns: rowHeaderCount + 2,
+      },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'A6',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+
+    expect(result.layoutApplied.usedBanding).toBe(true);
+    expect(result.layoutApplied.anchorColumns.length).toBeLessThan(rowHeaderCount);
+    expect(result.layoutApplied.anchorColumns.length).toBeGreaterThan(0);
+    expect(result.layoutApplied.anchorColumns[0]).toBe('Level 1');
+    expect(
+      result.sections.every(
+        (section) =>
+          section.columns[1]?.columnId === 'rowLevel0' &&
+          section.columns.some((column) => column.columnId === 'metric_1' || column.columnId === 'metric_2'),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not pin a leading full-height numeric total column as a pivot row anchor', () => {
+    const tableData = {
+      headers: [
+        {
+          headerType: 'pivot-hierarchy',
+          headerRowIndex: 0,
+          repeatHeader: true,
+          cells: [
+            { text: 'Total', columnId: 'total', rowspan: 2, colspan: 1, isHeader: true, isNumeric: true, measuredWidthPx: 120 },
+            { text: 'Dimensions', colspan: 2, rowspan: 1, isHeader: true },
+            { text: 'Metrics', colspan: 8, rowspan: 1, isHeader: true },
+          ],
+        },
+        {
+          headerType: 'metrics',
+          headerRowIndex: 1,
+          repeatHeader: true,
+          cells: [
+            { text: 'Country', columnId: 'country', isHeader: true, measuredWidthPx: 160 },
+            { text: 'City', columnId: 'city', isHeader: true, measuredWidthPx: 160 },
+            ...Array.from({ length: 8 }).map((_, index) => ({
+              text: `Metric ${index + 1}`,
+              columnId: `metric_${index + 1}`,
+              isHeader: true,
+              isNumeric: true,
+              measuredWidthPx: 240,
+            })),
+          ],
+        },
+      ],
+      rows: [
+        {
+          index: 0,
+          type: 'data',
+          cells: [
+            { text: '100', columnId: 'total', isNumeric: true },
+            { text: 'US', columnId: 'country' },
+            { text: 'Chicago', columnId: 'city' },
+            ...Array.from({ length: 8 }).map((_, index) => ({
+              text: String((index + 1) * 10),
+              columnId: `metric_${index + 1}`,
+              isNumeric: true,
+            })),
+          ],
+        },
+      ],
+      metadata: {
+        tableType: 'pivot',
+        pivotLevels: '1',
+        totalColumns: 11,
+      },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'A6',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+
+    expect(result.layoutApplied.usedBanding).toBe(true);
+    expect(result.layoutApplied.anchorColumns).toEqual(['Country', 'City']);
+    expect(
+      result.sections.every(
+        (section) => section.columns[1]?.columnId === 'country' && section.columns[2]?.columnId === 'city',
+      ),
+    ).toBe(true);
+    expect(result.sections[0].columns[3]?.columnId).toBe('total');
+  });
+
+  it('preserves numeric-looking pivot row headers when rowLevels metadata is missing', () => {
+    const tableData = {
+      headers: [
+        {
+          headerType: 'pivot-hierarchy',
+          headerRowIndex: 0,
+          repeatHeader: true,
+          cells: [
+            { text: 'Dimensions', colspan: 2, rowspan: 1, isHeader: true },
+            { text: 'Metrics', colspan: 6, rowspan: 1, isHeader: true },
+          ],
+        },
+        {
+          headerType: 'metrics',
+          headerRowIndex: 1,
+          repeatHeader: true,
+          cells: [
+            { text: 'Year', columnId: 'year', isHeader: true, measuredWidthPx: 140 },
+            { text: 'Month', columnId: 'month', isHeader: true, measuredWidthPx: 140 },
+            ...Array.from({ length: 6 }).map((_, index) => ({
+              text: `Metric ${index + 1}`,
+              columnId: `metric_${index + 1}`,
+              isHeader: true,
+              isNumeric: true,
+              measuredWidthPx: 220,
+            })),
+          ],
+        },
+      ],
+      rows: [
+        {
+          index: 0,
+          type: 'data',
+          cells: [
+            { text: '2024', columnId: 'year', isHeader: true, isNumeric: true },
+            { text: '1', columnId: 'month', isHeader: true, isNumeric: true },
+            ...Array.from({ length: 6 }).map((_, index) => ({
+              text: String((index + 1) * 10),
+              columnId: `metric_${index + 1}`,
+              isNumeric: true,
+            })),
+          ],
+        },
+      ],
+      metadata: {
+        tableType: 'pivot',
+        pivotLevels: '1',
+        totalColumns: 8,
+      },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'A5',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+
+    expect(result.layoutApplied.usedBanding).toBe(true);
+    expect(result.layoutApplied.anchorColumns).toEqual(['Year', 'Month']);
+    expect(
+      result.sections.every(
+        (section) => section.columns[1]?.columnId === 'year' && section.columns[2]?.columnId === 'month',
+      ),
+    ).toBe(true);
+  });
+
+  it('falls back to grouped header structure when numeric-looking row headers are plain td cells', () => {
+    const tableData = {
+      headers: [
+        {
+          headerType: 'pivot-hierarchy',
+          headerRowIndex: 0,
+          repeatHeader: true,
+          cells: [
+            { text: 'Dimensions', colspan: 2, rowspan: 1, isHeader: true },
+            { text: 'Metrics', colspan: 6, rowspan: 1, isHeader: true },
+          ],
+        },
+        {
+          headerType: 'metrics',
+          headerRowIndex: 1,
+          repeatHeader: true,
+          cells: [
+            { text: 'Year', columnId: 'year', isHeader: true, measuredWidthPx: 140 },
+            { text: 'Month', columnId: 'month', isHeader: true, measuredWidthPx: 140 },
+            ...Array.from({ length: 6 }).map((_, index) => ({
+              text: `Metric ${index + 1}`,
+              columnId: `metric_${index + 1}`,
+              isHeader: true,
+              isNumeric: true,
+              measuredWidthPx: 220,
+            })),
+          ],
+        },
+      ],
+      rows: [
+        {
+          index: 0,
+          type: 'data',
+          cells: [
+            { text: '2024', columnId: 'year', isNumeric: true },
+            { text: '1', columnId: 'month', isNumeric: true },
+            ...Array.from({ length: 6 }).map((_, index) => ({
+              text: String((index + 1) * 10),
+              columnId: `metric_${index + 1}`,
+              isNumeric: true,
+            })),
+          ],
+        },
+      ],
+      metadata: {
+        tableType: 'pivot',
+        pivotLevels: '1',
+        totalColumns: 8,
+      },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'A5',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+
+    expect(result.layoutApplied.usedBanding).toBe(true);
+    expect(result.layoutApplied.anchorColumns).toEqual(['Year', 'Month']);
+    expect(
+      result.sections.every(
+        (section) => section.columns[1]?.columnId === 'year' && section.columns[2]?.columnId === 'month',
+      ),
+    ).toBe(true);
+  });
+
+  it('includes repeated anchor columns in non-contiguous band labels while excluding row numbers', () => {
+    const input = {
+      headers: [
+        {
+          cells: [
+            { text: 'Customer', columnId: 'customer', colspan: 1, rowspan: 1, measuredWidthPx: 160 },
+            ...Array.from({ length: 8 }).map((_, index) => ({
+              text: `Metric ${index + 1}`,
+              columnId: `metric_${index + 1}`,
+              colspan: 1,
+              rowspan: 1,
+              isNumeric: true,
+              measuredWidthPx: 220,
+            })),
+          ],
+        },
+      ],
+      rows: [
+        {
+          index: 0,
+          type: 'data',
+          cells: [
+            { text: 'Acme', columnId: 'customer' },
+            ...Array.from({ length: 8 }).map((_, index) => ({
+              text: String((index + 1) * 10),
+              columnId: `metric_${index + 1}`,
+              className: 'numeric',
+              isNumeric: true,
+            })),
+          ],
+        },
+      ],
+      metadata: {
+        tableType: 'data',
+        totalColumns: 9,
+        columns: [
+          { index: 0, columnId: 'customer', label: 'Customer', isNumeric: false, measuredWidthPx: 160 },
+          ...Array.from({ length: 8 }).map((_, index) => ({
+            index: index + 1,
+            columnId: `metric_${index + 1}`,
+            label: `Metric ${index + 1}`,
+            isNumeric: true,
+            measuredWidthPx: 220,
+          })),
+        ],
+      },
+    };
+    const result = buildWideTableLayout(input, {
+      pageSize: 'A5',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+
+    expect(result.layoutApplied.usedBanding).toBe(true);
+    expect(result.sections.length).toBeGreaterThan(1);
+    expect(result.sections[0].bandLabel).toMatch(/^Columns 1-\d+ of 9$/);
+    expect(result.sections[1].bandLabel).toContain('Columns 1, ');
+    expect(result.sections[1].bandLabel).toContain(' of 9');
+    expect(result.sections[0].bandLabel).not.toContain('Columns 2-');
+  });
+
   it('treats extractor-style pivot metadata as pivot input even without tableType', () => {
     const tableData = {
       headers: [

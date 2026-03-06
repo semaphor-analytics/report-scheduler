@@ -9,6 +9,7 @@
 
 import { launchBrowser, closeBrowser } from './browser.js';
 import { encryptPdfBuffer } from '../pdf-encrypt.js';
+import { applyPdfMetadata } from './pdf-metadata.js';
 import {
   getWatermarkHtml,
   getHeaderLogoHtml,
@@ -78,6 +79,10 @@ export async function generatePdfFromData(payload, options = {}) {
     if (payload.password) {
       console.log('Applying password protection');
       pdfBuffer = await encryptPdfBuffer(pdfBuffer, payload.password);
+    } else {
+      pdfBuffer = await applyPdfMetadata(pdfBuffer, {
+        title: payload.reportTitle,
+      });
     }
 
     if (generation.layoutApplied) {

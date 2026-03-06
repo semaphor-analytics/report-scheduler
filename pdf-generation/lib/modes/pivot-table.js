@@ -370,6 +370,18 @@ export function renderPivotTableHtml(pages, options = {}) {
         layoutApplied?.usedBanding && section.bandLabel
           ? `<div class="band-label">${escapeHtml(section.bandLabel)}</div>`
           : '';
+      const bandFooterHtml =
+        layoutApplied?.usedBanding && section.bandLabel
+          ? `
+      <tfoot class="band-footer">
+        <tr>
+          <td colspan="${Math.max(1, Array.isArray(section.columns) ? section.columns.length : 1)}" class="band-footer-cell">
+            ${escapeHtml(section.bandLabel)}
+          </td>
+        </tr>
+      </tfoot>
+    `
+          : '';
 
       return `
       <section class="band-section ${sectionIndex === 0 ? 'first-band' : ''}">
@@ -381,6 +393,7 @@ export function renderPivotTableHtml(pages, options = {}) {
           </thead>
           ${groupedBodyHtml}
           ${grandTotalHtml}
+          ${bandFooterHtml}
         </table>
       </section>
     `;
@@ -488,6 +501,16 @@ export function renderPivotTableHtml(pages, options = {}) {
             font-weight: 600;
           }
 
+          tfoot.band-footer td.band-footer-cell {
+            border: none;
+            padding: 6px 0 0;
+            font-size: 9pt;
+            color: #666;
+            font-weight: 500;
+            text-align: left;
+            background: transparent;
+          }
+
           tbody tr.row-even:not(.subtotal) {
             background: #f7f7f7;
           }
@@ -508,6 +531,7 @@ export function renderPivotTableHtml(pages, options = {}) {
             }
 
             thead { display: table-header-group; }
+            tfoot.band-footer { display: table-footer-group; }
 
             tr {
               break-inside: auto;

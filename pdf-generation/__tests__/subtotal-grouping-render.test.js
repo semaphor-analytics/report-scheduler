@@ -180,4 +180,75 @@ describe('subtotal grouping render', () => {
     expect(html).toContain('rowspan="3"');
     expect((html.match(/<tbody class="group subtotal-tail">/g) || []).length).toBe(1);
   });
+
+  it('repeats pivot band labels at the top and bottom of each overflow section', () => {
+    const pages = [
+      {
+        headers: [
+          {
+            headerType: 'pivot-hierarchy',
+            headerRowIndex: 0,
+            repeatHeader: true,
+            cells: [
+              { text: 'Counterparty', columnId: 'rowLevel0', rowspan: 3, colspan: 1, isHeader: true },
+              { text: 'Aging Bucket', colspan: 6, rowspan: 1, isHeader: true },
+            ],
+          },
+          {
+            headerType: 'pivot-values',
+            headerRowIndex: 1,
+            repeatHeader: true,
+            cells: [
+              { text: 'Current', colspan: 3, rowspan: 1, isHeader: true },
+              { text: '91+ Days', colspan: 3, rowspan: 1, isHeader: true },
+            ],
+          },
+          {
+            headerType: 'metrics',
+            headerRowIndex: 2,
+            repeatHeader: true,
+            cells: [
+              { text: 'Net Balance', columnId: 'current_net_balance', isHeader: true, isNumeric: true },
+              { text: 'AR Amount Due', columnId: 'current_ar_amount_due', isHeader: true, isNumeric: true },
+              { text: 'AP Amount Due', columnId: 'current_ap_amount_due', isHeader: true, isNumeric: true },
+              { text: 'Net Balance', columnId: 'past_net_balance', isHeader: true, isNumeric: true },
+              { text: 'AR Amount Due', columnId: 'past_ar_amount_due', isHeader: true, isNumeric: true },
+              { text: 'AP Amount Due', columnId: 'past_ap_amount_due', isHeader: true, isNumeric: true },
+            ],
+          },
+        ],
+        rows: [
+          {
+            index: 0,
+            type: 'data',
+            cells: [
+              { text: 'Falcon', columnId: 'rowLevel0' },
+              { text: '10', columnId: 'current_net_balance', className: 'numeric', isNumeric: true },
+              { text: '11', columnId: 'current_ar_amount_due', className: 'numeric', isNumeric: true },
+              { text: '12', columnId: 'current_ap_amount_due', className: 'numeric', isNumeric: true },
+              { text: '13', columnId: 'past_net_balance', className: 'numeric', isNumeric: true },
+              { text: '14', columnId: 'past_ar_amount_due', className: 'numeric', isNumeric: true },
+              { text: '15', columnId: 'past_ap_amount_due', className: 'numeric', isNumeric: true },
+            ],
+          },
+        ],
+        metadata: { tableType: 'pivot', rowLevels: '1', pivotLevels: '2', totalColumns: 7 },
+      },
+    ];
+
+    const { html, layoutApplied } = renderPivotTableHtml(pages, {
+      reportTitle: 'Pivot Bands',
+      timezone: 'UTC',
+      pageSize: 'A5',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+
+    expect(layoutApplied.usedBanding).toBe(true);
+    expect((html.match(/class="band-label"/g) || []).length).toBe(layoutApplied.bandCount);
+    expect((html.match(/<tfoot class="band-footer">/g) || []).length).toBe(
+      layoutApplied.bandCount,
+    );
+    expect(html).toContain('tfoot.band-footer { display: table-footer-group; }');
+  });
 });
