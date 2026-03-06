@@ -59,18 +59,27 @@ function createExternalProvider({
         }
 
         const payloadAttachments = attachments.map((attachment) => {
-          const presignedUrl = s3.getSignedUrl('getObject', {
-            Bucket: attachment.s3Bucket,
-            Key: attachment.s3Key,
-            Expires: presignedUrlExpirySeconds,
-          });
+          const presignedUrl =
+            typeof attachment.presignedUrl === 'string' &&
+            attachment.presignedUrl.length > 0
+              ? attachment.presignedUrl
+              : s3.getSignedUrl('getObject', {
+                  Bucket: attachment.s3Bucket,
+                  Key: attachment.s3Key,
+                  Expires: presignedUrlExpirySeconds,
+                });
           return {
             name: attachment.name,
             contentType: attachment.contentType,
             s3Bucket: attachment.s3Bucket,
             s3Key: attachment.s3Key,
             presignedUrl,
-            expiresInSeconds: presignedUrlExpirySeconds,
+            expiresInSeconds:
+              typeof attachment.expiresInSeconds === 'number' &&
+              Number.isFinite(attachment.expiresInSeconds) &&
+              attachment.expiresInSeconds > 0
+                ? attachment.expiresInSeconds
+                : presignedUrlExpirySeconds,
           };
         });
 

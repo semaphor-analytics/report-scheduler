@@ -24,7 +24,8 @@ import {
  */
 function adaptColumnSettings(
   settings: ColumnSettings | undefined,
-  value: unknown
+  value: unknown,
+  fallbackLocale: string
 ): SharedColumnSettings | undefined {
   if (!settings) return undefined;
 
@@ -46,9 +47,11 @@ function adaptColumnSettings(
       ? {
           style: settings.numberFormat.style || 'decimal',
           currency: settings.numberFormat.currency || 'USD',
-          locale: settings.numberFormat.locale,
+          locale: settings.numberFormat.locale || fallbackLocale,
           minimumFractionDigits: settings.numberFormat.minimumFractionDigits ?? 0,
           maximumFractionDigits: settings.numberFormat.maximumFractionDigits ?? 2,
+          useGrouping: settings.numberFormat.useGrouping,
+          percentValueMode: settings.numberFormat.percentValueMode,
         }
       : undefined,
     dateFormat: settings.dateFormat
@@ -116,7 +119,7 @@ function formatCellValue(
     return String(value);
   }
 
-  const sharedSettings = adaptColumnSettings(columnSettings, value);
+  const sharedSettings = adaptColumnSettings(columnSettings, value, formatting.locale);
 
   // Number formatting
   if (typeof value === 'number') {

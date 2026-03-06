@@ -13,12 +13,13 @@
 // ============================================================
 
 export interface NumberFormatOptions {
-  style: 'decimal' | 'currency' | 'percent';
+  style: 'decimal' | 'currency' | 'percent' | 'scientific';
   locale?: string;
   currency?: string;
   minimumFractionDigits?: number;
   maximumFractionDigits?: number;
   useGrouping?: boolean;
+  percentValueMode?: 'fraction' | 'whole';
   /** Multiply value before formatting (e.g., 100 for percent) */
   multiplyBy?: number;
   /** Add prefix string (e.g., "$") */
@@ -62,11 +63,13 @@ export interface ColumnSettings {
   width?: number;
 
   numberFormat?: {
-    style: 'decimal' | 'currency' | 'percent';
+    style: 'decimal' | 'currency' | 'percent' | 'scientific';
     currency: string;
-    locale?: string; // Optional - falls back to export config's locale
+    locale: string;
     minimumFractionDigits: number;
     maximumFractionDigits: number;
+    useGrouping?: boolean;
+    percentValueMode?: 'fraction' | 'whole';
     showDataBar?: boolean;
     dataBarColor?: string;
     dataBarMinValue?: number;

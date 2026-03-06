@@ -6,6 +6,56 @@ import { normalizePageSize } from '../page-size-utils.js';
 import { buildWideTableLayout } from './wide-table-layout.js';
 import { groupRowsBySubtotal } from './subtotal-groups.js';
 
+const SUBTOTAL_CONTEXT_ROWS = 2;
+
+function rowSpansAcrossSplit(group = [], splitIndex = 0) {
+  if (!Array.isArray(group) || splitIndex <= 0) {
+    return false;
+  }
+
+  for (let rowIndex = 0; rowIndex < splitIndex; rowIndex += 1) {
+    const row = group[rowIndex];
+    const spansBoundary = (row?.cells || []).some((cell) => {
+      const rowspan = Math.max(1, Number(cell?.rowspan || 1));
+      return rowIndex + rowspan > splitIndex;
+    });
+
+    if (spansBoundary) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function splitSubtotalGroupForPagination(group = []) {
+  if (!Array.isArray(group) || group.length === 0) {
+    return [];
+  }
+
+  const lastRow = group[group.length - 1];
+  if (lastRow?.type !== 'subtotal') {
+    return [{ className: 'group', rows: group }];
+  }
+
+  const detailRows = group.slice(0, -1);
+  const protectedDetailCount = Math.min(SUBTOTAL_CONTEXT_ROWS, detailRows.length);
+  const splitIndex = detailRows.length - protectedDetailCount;
+
+  if (splitIndex <= 0) {
+    return [{ className: 'group subtotal-tail', rows: group }];
+  }
+
+  if (rowSpansAcrossSplit(group, splitIndex)) {
+    return [{ className: 'group subtotal-tail', rows: group }];
+  }
+
+  return [
+    { className: 'group', rows: group.slice(0, splitIndex) },
+    { className: 'group subtotal-tail', rows: group.slice(splitIndex) },
+  ];
+}
+
 export function getPdfOptions(dimensions, pageSize = 'A4', options = {}) {
   const now = new Date();
   const timezone = options.timezone || 'UTC';
@@ -249,8 +299,9 @@ export function renderPivotTableHtml(pages, options = {}) {
       const rowGroups = groupRowsBySubtotal(section.rows || []);
       let dataRowIndex = 0;
       const groupedBodyHtml = rowGroups
-        .map((group) => {
-          const groupRowsHtml = group
+        .flatMap((group) => splitSubtotalGroupForPagination(group))
+        .map((groupSegment) => {
+          const groupRowsHtml = groupSegment.rows
             .map((row) => {
               const isSubtotal = row.type === 'subtotal';
               const rowClassNames = [
@@ -280,7 +331,7 @@ export function renderPivotTableHtml(pages, options = {}) {
             })
             .join('');
 
-          return `<tbody class="group">${groupRowsHtml}</tbody>`;
+          return `<tbody class="${groupSegment.className}">${groupRowsHtml}</tbody>`;
         })
         .join('');
 
@@ -458,8 +509,18 @@ export function renderPivotTableHtml(pages, options = {}) {
 
             thead { display: table-header-group; }
 
-            tbody.group,
             tr {
+              break-inside: auto;
+              page-break-inside: auto;
+            }
+
+            tbody.group.subtotal-tail {
+              break-inside: avoid-page;
+              page-break-inside: avoid;
+            }
+
+            tr.subtotal,
+            tr.grand-total {
               break-inside: avoid-page;
               page-break-inside: avoid;
             }

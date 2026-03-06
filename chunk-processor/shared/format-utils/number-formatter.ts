@@ -9,23 +9,41 @@ import type { NumberFormatOptions, FormatOptions } from './types';
 // MAGNITUDE SUFFIXES
 // ============================================================
 
-const MAGNITUDE_SUFFIXES = [
-  { value: 1e12, suffix: 'T' },
-  { value: 1e9, suffix: 'B' },
-  { value: 1e7, suffix: 'Cr' }, // Crore (Indian)
-  { value: 1e6, suffix: 'M' },
-  { value: 1e5, suffix: 'L' }, // Lakh (Indian)
-  { value: 1e3, suffix: 'K' },
-];
+function isIndianLocale(locale?: string): boolean {
+  if (!locale) return false;
+  const normalized = locale.toLowerCase().replace('_', '-');
+  return normalized === 'en-in' || normalized.startsWith('en-in-');
+}
 
-function getMagnitude(value: number): { divisor: number; suffix: string } {
+function getMagnitude(
+  value: number,
+  locale?: string
+): { divisor: number; suffix: string } {
   const absValue = Math.abs(value);
-  for (const { value: threshold, suffix } of MAGNITUDE_SUFFIXES) {
-    if (absValue >= threshold) {
-      return { divisor: threshold, suffix };
-    }
-  }
+
+  // Preserve legacy behavior:
+  // - K/M/B/T for most locales
+  // - L/Cr for Indian English ranges
+  if (absValue >= 1e12) return { divisor: 1e12, suffix: 'T' };
+  if (absValue >= 1e9) return { divisor: 1e9, suffix: 'B' };
+  if (isIndianLocale(locale) && absValue >= 1e7) return { divisor: 1e7, suffix: 'Cr' };
+  if (absValue >= 1e6) return { divisor: 1e6, suffix: 'M' };
+  if (isIndianLocale(locale) && absValue >= 1e5) return { divisor: 1e5, suffix: 'L' };
+  if (absValue >= 1e3) return { divisor: 1e3, suffix: 'K' };
+
   return { divisor: 1, suffix: '' };
+}
+
+function getMagnitudeSuffix(
+  value: number,
+  locale?: string
+): { divisor: number; suffix: string } {
+  try {
+    const safeLocale = getSafeLocale(locale);
+    return getMagnitude(value, safeLocale);
+  } catch {
+    return getMagnitude(value, 'en-US');
+  }
 }
 
 // ============================================================
@@ -73,7 +91,7 @@ export function formatNumber(
 
   // Handle magnitude suffixes
   if (options?.useSuffix) {
-    const { divisor, suffix } = getMagnitude(num);
+    const { divisor, suffix } = getMagnitudeSuffix(num, locale);
     num = num / divisor;
 
     const formatted = new Intl.NumberFormat(locale, {
@@ -95,7 +113,7 @@ export function formatNumber(
   // Handle negative in parentheses
   if (options?.negativeInParentheses && num < 0) {
     const positive = formatted.replace('-', '');
-    return `${options?.prefix ?? ''}(${positive})${options?.suffix ?? ''}`;
+    return `(${options?.prefix ?? ''}${positive}${options?.suffix ?? ''})`;
   }
 
   return `${options?.prefix ?? ''}${formatted}${options?.suffix ?? ''}`;
@@ -114,29 +132,60 @@ export function formatCurrency(
 
   const locale = getSafeLocale(options?.locale);
   const currency = options?.currency || 'USD';
+  const isNegative = value < 0;
+  const formatWithParentheses = Boolean(options?.negativeInParentheses && isNegative);
+  const valueForFormatting = formatWithParentheses ? Math.abs(value) : value;
 
-  // Handle magnitude suffixes for currency
-  if (options?.useSuffix) {
-    const { divisor, suffix } = getMagnitude(value);
-    const num = value / divisor;
+  try {
+    // Handle magnitude suffixes for currency
+    if (options?.useSuffix) {
+      const { divisor, suffix } = getMagnitudeSuffix(valueForFormatting, locale);
+      const num = valueForFormatting / divisor;
+
+      const formatted = new Intl.NumberFormat(locale, {
+        style: 'currency',
+        currency,
+        minimumFractionDigits: options?.minimumFractionDigits ?? 0,
+        maximumFractionDigits: options?.maximumFractionDigits ?? 2,
+        useGrouping: options?.useGrouping ?? true,
+      }).format(num);
+
+      const withSuffix = `${formatted}${suffix}`;
+      return formatWithParentheses ? `(${withSuffix})` : withSuffix;
+    }
 
     const formatted = new Intl.NumberFormat(locale, {
       style: 'currency',
       currency,
       minimumFractionDigits: options?.minimumFractionDigits ?? 0,
       maximumFractionDigits: options?.maximumFractionDigits ?? 2,
-    }).format(num);
+      useGrouping: options?.useGrouping ?? true,
+    }).format(valueForFormatting);
 
-    // Insert suffix before the last character if it's a currency symbol suffix
-    return `${formatted}${suffix}`;
+    return formatWithParentheses ? `(${formatted})` : formatted;
+  } catch {
+    const fallbackBaseValue = Math.abs(value);
+    const fallbackMagnitude = options?.useSuffix
+      ? getMagnitudeSuffix(fallbackBaseValue, locale)
+      : { divisor: 1, suffix: '' };
+    const fallbackNumber = formatNumber(
+      fallbackBaseValue / fallbackMagnitude.divisor,
+      {
+      style: 'decimal',
+      locale,
+      minimumFractionDigits: options?.minimumFractionDigits ?? 0,
+      maximumFractionDigits: options?.maximumFractionDigits ?? 2,
+      useGrouping: options?.useGrouping ?? true,
+      },
+    );
+    const fallbackCurrency = `${currency} ${fallbackNumber}${fallbackMagnitude.suffix}`;
+    if (isNegative) {
+      return options?.negativeInParentheses
+        ? `(${fallbackCurrency})`
+        : `-${fallbackCurrency}`;
+    }
+    return fallbackCurrency;
   }
-
-  return new Intl.NumberFormat(locale, {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: options?.minimumFractionDigits ?? 0,
-    maximumFractionDigits: options?.maximumFractionDigits ?? 2,
-  }).format(value);
 }
 
 /**
@@ -153,14 +202,16 @@ export function formatPercent(
 
   const locale = getSafeLocale(options?.locale);
 
-  // If value is already 0-100 (e.g., 75 for 75%), divide by 100 for Intl
-  // If value is 0-1 (e.g., 0.75 for 75%), use as-is
-  const numValue = options?.alreadyPercent ? value / 100 : value;
+  const isWholePercent =
+    options?.alreadyPercent ?? options?.percentValueMode === 'whole';
+  // Intl expects fraction values for percent style.
+  const numValue = isWholePercent ? value / 100 : value;
 
   return new Intl.NumberFormat(locale, {
     style: 'percent',
     minimumFractionDigits: options?.minimumFractionDigits ?? 0,
     maximumFractionDigits: options?.maximumFractionDigits ?? 2,
+    useGrouping: options?.useGrouping ?? true,
   }).format(numValue);
 }
 
@@ -196,11 +247,13 @@ export function formatNumberWithColumnSettings(
   value: number | null | undefined,
   numberFormat:
     | {
-        style?: 'decimal' | 'currency' | 'percent';
+        style?: 'decimal' | 'currency' | 'percent' | 'scientific';
         currency?: string;
         locale?: string;
         minimumFractionDigits?: number;
         maximumFractionDigits?: number;
+        useGrouping?: boolean;
+        percentValueMode?: 'fraction' | 'whole';
       }
     | undefined,
   defaultLocale: string = 'en-US'
@@ -213,12 +266,15 @@ export function formatNumberWithColumnSettings(
   const style = numberFormat?.style || 'decimal';
 
   if (style === 'percent') {
-    // Column settings stores percent as 0-100, Intl expects 0-1
+    const percentValueMode = numberFormat?.percentValueMode ?? 'whole';
+    const percentInput =
+      percentValueMode === 'whole' ? value / 100 : value;
     return new Intl.NumberFormat(locale, {
       style: 'percent',
       minimumFractionDigits: numberFormat?.minimumFractionDigits ?? 0,
       maximumFractionDigits: numberFormat?.maximumFractionDigits ?? 2,
-    }).format(value / 100);
+      useGrouping: numberFormat?.useGrouping ?? true,
+    }).format(percentInput);
   }
 
   if (style === 'currency') {
@@ -227,13 +283,24 @@ export function formatNumberWithColumnSettings(
       currency: numberFormat?.currency || 'USD',
       minimumFractionDigits: numberFormat?.minimumFractionDigits ?? 0,
       maximumFractionDigits: numberFormat?.maximumFractionDigits ?? 2,
+      useGrouping: numberFormat?.useGrouping ?? true,
     }).format(value);
+  }
+
+  if (style === 'scientific') {
+    return formatScientific(value, {
+      style: 'scientific',
+      locale,
+      minimumFractionDigits: numberFormat?.minimumFractionDigits ?? 0,
+      maximumFractionDigits: numberFormat?.maximumFractionDigits ?? 2,
+    });
   }
 
   // Decimal (default)
   return new Intl.NumberFormat(locale, {
     minimumFractionDigits: numberFormat?.minimumFractionDigits ?? 0,
     maximumFractionDigits: numberFormat?.maximumFractionDigits ?? 2,
+    useGrouping: numberFormat?.useGrouping ?? true,
   }).format(value);
 }
 

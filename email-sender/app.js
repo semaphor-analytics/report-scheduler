@@ -11,6 +11,8 @@ const { createSesProvider } = require('./providers/ses-provider');
 const { createExternalProvider } = require('./providers/external-provider');
 
 const SES_MIME_SIZE_SAFETY_BUFFER_BYTES = 64 * 1024;
+const SEND_RETRY_DELAYS_MS = [250, 1000, 3000];
+const EXTERNAL_PROVIDER_URL_EXPIRY_SECONDS = 15 * 60;
 
 function parseRecipientEmails(rawRecipients) {
   if (Array.isArray(rawRecipients)) {
@@ -23,14 +25,6 @@ function parseRecipientEmails(rawRecipients) {
     .split(',')
     .map((email) => email.trim())
     .filter((email) => email && email.includes('@'));
-}
-
-function selectRecipients(recipientEmails, enableMultiRecipients) {
-  if (enableMultiRecipients) {
-    return recipientEmails;
-  }
-
-  return recipientEmails.length > 0 ? [recipientEmails[0]] : [];
 }
 
 function buildProvider(config) {
@@ -94,6 +88,16 @@ function buildDownloadLinks(attachments, expiresInSeconds) {
       Expires: expiresInSeconds,
       ResponseContentDisposition: `attachment; filename="${attachment.name}"`,
     }),
+  }));
+}
+
+function buildExternalPayloadAttachments(attachments, expiresInSeconds) {
+  return attachments.map((attachment) => ({
+    name: attachment.name,
+    contentType: attachment.contentType,
+    s3Bucket: attachment.s3Bucket,
+    s3Key: attachment.s3Key,
+    expiresInSeconds,
   }));
 }
 
@@ -247,33 +251,26 @@ function buildDirectEmailContext(payload, config) {
   };
 }
 
-async function sendConsolidated(payload) {
-  const config = getEmailSenderConfig();
-  const provider = buildProvider(config);
-
-  const scheduleId =
-    typeof payload?.scheduleId === 'string' ? payload.scheduleId : null;
-  const leaseOwner =
-    typeof payload?.leaseOwner === 'string' ? payload.leaseOwner : null;
-  const artifacts = normalizeArtifacts(payload?.attachments);
-
-  if (artifacts.length === 0) {
-    throw new Error('At least one attachment is required');
+function getLongestRecipient(recipients) {
+  if (!Array.isArray(recipients) || recipients.length === 0) {
+    return '';
   }
 
-  const emailContext = scheduleId
-    ? await buildScheduledEmailContext(scheduleId, payload, config)
-    : buildDirectEmailContext(payload, config);
-
-  const recipientsToSend = selectRecipients(
-    emailContext.recipientEmails,
-    config.emailEnableMultiRecipients
+  return recipients.reduce(
+    (longest, recipient) =>
+      String(recipient || '').length > longest.length ? String(recipient || '') : longest,
+    ''
   );
+}
 
-  if (recipientsToSend.length === 0) {
-    throw new Error('No recipients selected for sending');
-  }
-
+async function prepareEmailDelivery({
+  artifacts,
+  emailContext,
+  provider,
+  scheduleId,
+  leaseOwner,
+  config,
+}) {
   let attachmentsForProvider = artifacts;
   let totalAttachmentBytes = 0;
   let usedLinkFallback = false;
@@ -292,10 +289,11 @@ async function sendConsolidated(payload) {
     const resolved = await resolveAttachmentsWithSize(artifacts);
     const sizedArtifacts = resolved.attachments;
     totalAttachmentBytes = resolved.totalAttachmentBytes;
+    const longestRecipient = getLongestRecipient(emailContext.recipientEmails);
 
     estimatedSesRawSizeBytes = estimateSesRawMessageSizeBytes({
       from: emailContext.senderEmail,
-      to: recipientsToSend,
+      to: longestRecipient ? [longestRecipient] : [],
       subject: emailContext.emailSubject,
       textBody: emailBodies.textBody,
       htmlBody: emailBodies.htmlBody,
@@ -320,17 +318,21 @@ async function sendConsolidated(payload) {
       const withBuffers = await attachSesBuffers(sizedArtifacts);
       attachmentsForProvider = withBuffers.attachments;
     }
+  } else if (provider.name === 'EXTERNAL') {
+    attachmentsForProvider = buildExternalPayloadAttachments(
+      artifacts,
+      EXTERNAL_PROVIDER_URL_EXPIRY_SECONDS
+    );
   }
 
-  const { textBody, htmlBody } = emailBodies;
-
-  const message = {
-    from: emailContext.senderEmail,
-    to: recipientsToSend,
-    subject: emailContext.emailSubject,
-    textBody,
-    htmlBody,
-    attachments: attachmentsForProvider,
+  return {
+    attachmentsForProvider,
+    totalAttachmentBytes,
+    usedLinkFallback,
+    estimatedSesRawSizeBytes,
+    downloadLinkCount: downloadLinks.length,
+    textBody: emailBodies.textBody,
+    htmlBody: emailBodies.htmlBody,
     metadata: {
       scheduleId,
       leaseOwner,
@@ -340,27 +342,196 @@ async function sendConsolidated(payload) {
       estimatedSesRawSizeBytes,
     },
   };
+}
 
-  const result = await provider.send(message);
-  if (!result.success) {
-    throw new Error(result.error || 'Failed to send email');
+function summarizeFailures(failures) {
+  if (!Array.isArray(failures) || failures.length === 0) {
+    return 'success';
   }
 
-  return {
-    success: true,
-    provider: provider.name,
-    providerMessageId: result.providerMessageId || null,
-    scheduleId,
-    leaseOwner,
-    recipientCount: recipientsToSend.length,
-    attachmentCount: artifacts.length,
-    sentAttachmentCount: attachmentsForProvider.length,
-    usedLinkFallback,
-    totalAttachmentBytes,
-    estimatedSesRawSizeBytes,
-    downloadLinkCount: downloadLinks.length,
+  return failures
+    .map((failure) =>
+      `${failure.recipient}${failure.error ? ` (${failure.error})` : ''}`
+    )
+    .join('; ');
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableSendError(error) {
+  const message = String(error || '').toLowerCase();
+
+  return [
+    'throttl',
+    'rate exceeded',
+    'maximum sending rate exceeded',
+    'too many requests',
+    'http 429',
+    'http 500',
+    'http 502',
+    'http 503',
+    'http 504',
+    'timeout',
+    'timed out',
+    'socket hang up',
+    'econnreset',
+    'eai_again',
+    'network',
+  ].some((token) => message.includes(token));
+}
+
+async function sendWithRetry(sendAttempt, retryDelaysMs, sleepFn) {
+  let lastResult = null;
+
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+    lastResult = await sendAttempt();
+
+    if (lastResult.success || !isRetryableSendError(lastResult.error)) {
+      return lastResult;
+    }
+
+    if (attempt < retryDelaysMs.length) {
+      await sleepFn(retryDelaysMs[attempt]);
+    }
+  }
+
+  return lastResult;
+}
+
+function createSendConsolidated(deps = {}) {
+  return async function sendConsolidated(payload) {
+    const config = deps.getEmailSenderConfig
+      ? deps.getEmailSenderConfig()
+      : getEmailSenderConfig();
+    const provider = deps.buildProvider
+      ? deps.buildProvider(config)
+      : buildProvider(config);
+
+    const scheduleId =
+      typeof payload?.scheduleId === 'string' ? payload.scheduleId : null;
+    const leaseOwner =
+      typeof payload?.leaseOwner === 'string' ? payload.leaseOwner : null;
+    const artifacts = deps.normalizeArtifacts
+      ? deps.normalizeArtifacts(payload?.attachments)
+      : normalizeArtifacts(payload?.attachments);
+
+    if (artifacts.length === 0) {
+      throw new Error('At least one attachment is required');
+    }
+
+    const emailContext = scheduleId
+      ? await (deps.buildScheduledEmailContext || buildScheduledEmailContext)(
+          scheduleId,
+          payload,
+          config
+        )
+      : (deps.buildDirectEmailContext || buildDirectEmailContext)(payload, config);
+
+    if (emailContext.recipientEmails.length === 0) {
+      throw new Error('No recipients selected for sending');
+    }
+
+    const preparedDelivery = await (
+      deps.prepareEmailDelivery || prepareEmailDelivery
+    )({
+      artifacts,
+      emailContext,
+      provider,
+      scheduleId,
+      leaseOwner,
+      config,
+    });
+
+    const retryDelaysMs = Array.isArray(deps.sendRetryDelaysMs)
+      ? deps.sendRetryDelaysMs
+      : SEND_RETRY_DELAYS_MS;
+    const sleepFn = deps.sleep || sleep;
+    const recipientResults = [];
+
+    for (const recipient of emailContext.recipientEmails) {
+      const result = await sendWithRetry(
+        async () => {
+          try {
+            const sendResult = await provider.send({
+              from: emailContext.senderEmail,
+              to: [recipient],
+              subject: emailContext.emailSubject,
+              textBody: preparedDelivery.textBody,
+              htmlBody: preparedDelivery.htmlBody,
+              attachments: preparedDelivery.attachmentsForProvider,
+              metadata: preparedDelivery.metadata,
+            });
+
+            if (!sendResult.success) {
+              return {
+                success: false,
+                recipient,
+                providerMessageId: null,
+                error: sendResult.error || 'Failed to send email',
+              };
+            }
+
+            return {
+              success: true,
+              recipient,
+              providerMessageId: sendResult.providerMessageId || null,
+              error: null,
+            };
+          } catch (error) {
+            return {
+              success: false,
+              recipient,
+              providerMessageId: null,
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+        },
+        retryDelaysMs,
+        sleepFn
+      );
+
+      recipientResults.push(result);
+    }
+
+    const successfulDeliveries = recipientResults.filter((result) => result.success);
+    const failedDeliveries = recipientResults.filter((result) => !result.success);
+    const statusMessage =
+      failedDeliveries.length === 0
+        ? 'success'
+        : `Failed to send to: ${summarizeFailures(failedDeliveries)}`;
+
+    return {
+      success: failedDeliveries.length === 0,
+      allSucceeded: failedDeliveries.length === 0,
+      provider: provider.name,
+      providerMessageId:
+        successfulDeliveries.length === 1
+          ? successfulDeliveries[0].providerMessageId
+          : null,
+      providerMessageIds: successfulDeliveries
+        .map((result) => result.providerMessageId)
+        .filter(Boolean),
+      scheduleId,
+      leaseOwner,
+      recipientCount: emailContext.recipientEmails.length,
+      successCount: successfulDeliveries.length,
+      failureCount: failedDeliveries.length,
+      failedRecipients: failedDeliveries.map((result) => result.recipient),
+      recipientResults,
+      attachmentCount: artifacts.length,
+      sentAttachmentCount: preparedDelivery.attachmentsForProvider.length,
+      usedLinkFallback: preparedDelivery.usedLinkFallback,
+      totalAttachmentBytes: preparedDelivery.totalAttachmentBytes,
+      estimatedSesRawSizeBytes: preparedDelivery.estimatedSesRawSizeBytes,
+      downloadLinkCount: preparedDelivery.downloadLinkCount,
+      statusMessage,
+    };
   };
 }
+
+const sendConsolidated = createSendConsolidated();
 
 exports.handler = async (event) => {
   if (event?.action === 'update_status') {
@@ -447,3 +618,15 @@ async function getScheduleDetails(scheduleId) {
 
   return response.json();
 }
+
+module.exports = {
+  handler: exports.handler,
+  createSendConsolidated,
+  sendConsolidated,
+  isRetryableSendError,
+  prepareEmailDelivery,
+  parseRecipientEmails,
+  sendWithRetry,
+  sleep,
+  summarizeFailures,
+};

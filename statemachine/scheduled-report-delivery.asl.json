@@ -1,5 +1,5 @@
 {
-  "Comment": "Scheduled report delivery orchestration (one email per schedule run)",
+  "Comment": "Scheduled report delivery orchestration (per-recipient email sends per schedule run)",
   "StartAt": "GenerateAttachments",
   "States": {
     "GenerateAttachments": {
@@ -46,7 +46,7 @@
             "States.ALL"
           ],
           "ResultPath": "$.deliveryError",
-          "Next": "UpdateStatusFailed"
+          "Next": "UpdateStatusFailedFromException"
         }
       ],
       "Next": "SendConsolidatedEmail"
@@ -70,10 +70,21 @@
             "States.ALL"
           ],
           "ResultPath": "$.deliveryError",
-          "Next": "UpdateStatusFailed"
+          "Next": "UpdateStatusFailedFromException"
         }
       ],
-      "Next": "UpdateStatusSuccess"
+      "Next": "EvaluateDeliveryResult"
+    },
+    "EvaluateDeliveryResult": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.allSucceeded",
+          "BooleanEquals": true,
+          "Next": "UpdateStatusSuccess"
+        }
+      ],
+      "Default": "UpdateStatusFailedFromResult"
     },
     "UpdateStatusSuccess": {
       "Type": "Task",
@@ -104,12 +115,35 @@
             "States.ALL"
           ],
           "ResultPath": "$.deliveryError",
-          "Next": "UpdateStatusFailed"
+          "Next": "UpdateStatusFailedFromException"
         }
       ],
       "Next": "DeliverySucceeded"
     },
-    "UpdateStatusFailed": {
+    "UpdateStatusFailedFromResult": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "OutputPath": "$.Payload",
+      "Parameters": {
+        "FunctionName": "${EmailSenderFunctionArn}",
+        "Payload": {
+          "action": "update_status",
+          "scheduleId.$": "$.scheduleId",
+          "leaseOwner.$": "$.leaseOwner",
+          "status.$": "$.statusMessage"
+        }
+      },
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "DeliveryFailed"
+        }
+      ],
+      "Next": "DeliveryFailed"
+    },
+    "UpdateStatusFailedFromException": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
       "OutputPath": "$.Payload",

@@ -597,6 +597,7 @@ function buildColumns(tableData, options = {}) {
   const headers = tableData?.headers || [];
   const rows = tableData?.rows || [];
   const metadata = tableData?.metadata || {};
+  const pivotTableData = isPivotTableData(tableData);
 
   const leafHeaders = extractLeafHeaderCells(headers);
   const maxCellsInRows = rows.reduce((max, row) => {
@@ -618,9 +619,15 @@ function buildColumns(tableData, options = {}) {
   const columns = [];
   for (let index = 0; index < leafCount; index += 1) {
     const headerCell = leafHeaders[index] || {};
-    const label = normalizeCellText(headerCell.text) || `Column ${index + 1}`;
-    const columnId = headerCell.columnId || `col_${index + 1}`;
     const columnMeta = getColumnMeta(columnsMeta, headerCell.columnId, index);
+    const label =
+      (pivotTableData
+        ? normalizeCellText(headerCell.text) ||
+          normalizeCellText(columnMeta?.label)
+        : normalizeCellText(headerCell.text) ||
+          normalizeCellText(columnMeta?.label)) ||
+      `Column ${index + 1}`;
+    const columnId = headerCell.columnId || columnMeta?.columnId || `col_${index + 1}`;
     const sampleValues = normalizedRows
       .slice(0, 50)
       .map((rowCells) => rowCells[index]?.text ?? '');
@@ -630,7 +637,7 @@ function buildColumns(tableData, options = {}) {
       [...sampleValues, grandTotalValue],
     );
     const minWidthPx = getMinWidthForType(type);
-    const measuredWidthPx = getColumnMeasuredWidth(columnsMeta, headerCell.columnId, index);
+    const measuredWidthPx = getColumnMeasuredWidth(columnsMeta, columnId, index);
     let widthPx = clampColumnWidth(minWidthPx, measuredWidthPx);
     if (type === 'numeric') {
       widthPx = Math.max(widthPx, estimateNumericWidthPx(sampleValues, grandTotalValue));
@@ -657,6 +664,16 @@ function buildColumns(tableData, options = {}) {
     normalizedGrandTotal,
     hiddenEmptyColumns: [],
   };
+}
+
+function isPivotTableData(tableData) {
+  const metadata = tableData?.metadata || {};
+  const tableType = String(metadata.tableType || '').toLowerCase();
+  if (tableType === 'pivot') {
+    return true;
+  }
+
+  return metadata.pivotLevels !== undefined || metadata.rowLevels !== undefined;
 }
 
 function buildCandidateLayouts(pageSize, orientation) {
@@ -871,6 +888,231 @@ function buildBandHeaderCells(
   return { cells, descriptors };
 }
 
+function buildPivotHeaderPlacements(headers = []) {
+  const headerRows = headers.map((headerRow) => {
+    if (Array.isArray(headerRow)) return { cells: headerRow };
+    return headerRow || { cells: [] };
+  });
+  const rowCount = headerRows.length;
+  const occupied = Array.from({ length: rowCount }, () => []);
+  const placements = [];
+
+  headerRows.forEach((headerRow, rowIndex) => {
+    let colIndex = 0;
+
+    (headerRow.cells || []).forEach((cell, cellIndex) => {
+      while (occupied[rowIndex][colIndex] !== undefined) {
+        colIndex += 1;
+      }
+
+      const colspan = Math.max(1, Number(cell?.colspan || 1));
+      const rowspan = Math.max(1, Number(cell?.rowspan || 1));
+      const id = `${rowIndex}:${cellIndex}:${cell?.columnId || cell?.text || 'cell'}`;
+
+      for (let rowOffset = 0; rowOffset < rowspan; rowOffset += 1) {
+        const targetRow = rowIndex + rowOffset;
+        if (targetRow >= rowCount) break;
+
+        for (let colOffset = 0; colOffset < colspan; colOffset += 1) {
+          occupied[targetRow][colIndex + colOffset] = id;
+        }
+      }
+
+      placements.push({
+        id,
+        rowIndex,
+        startCol: colIndex,
+        endCol: colIndex + colspan - 1,
+        rowspan,
+        cell,
+      });
+
+      colIndex += colspan;
+    });
+  });
+
+  return { headerRows, placements };
+}
+
+function buildPivotBandHeaders(
+  headers,
+  selectedIndices,
+  includeRowNumber,
+  rowNumberWidth,
+) {
+  const { headerRows, placements } = buildPivotHeaderPlacements(headers);
+  const selectedSet = new Set(selectedIndices);
+  const sourceToOutput = new Map();
+  let outputIndex = 0;
+
+  if (includeRowNumber) {
+    outputIndex += 1;
+  }
+
+  selectedIndices.forEach((sourceIndex) => {
+    sourceToOutput.set(sourceIndex, outputIndex);
+    outputIndex += 1;
+  });
+
+  const bandHeaders = headerRows.map((headerRow, rowIndex) => ({
+    headerType: headerRow.headerType,
+    headerRowIndex:
+      headerRow.headerRowIndex !== undefined ? headerRow.headerRowIndex : rowIndex,
+    repeatHeader: headerRow.repeatHeader,
+    cells: [],
+  }));
+
+  if (includeRowNumber && bandHeaders.length > 0) {
+    bandHeaders[0].cells.push({
+      sortIndex: 0,
+      text: 'Row #',
+      colspan: 1,
+      rowspan: bandHeaders.length,
+      className: 'numeric',
+      columnId: '__row_number__',
+      isHeader: true,
+      isNumeric: true,
+      measuredWidthPx: rowNumberWidth,
+    });
+  }
+
+  placements.forEach((placement) => {
+    const includedOutputIndices = [];
+
+    for (let sourceIndex = placement.startCol; sourceIndex <= placement.endCol; sourceIndex += 1) {
+      if (!selectedSet.has(sourceIndex)) {
+        continue;
+      }
+
+      const mappedIndex = sourceToOutput.get(sourceIndex);
+      if (mappedIndex === undefined) {
+        continue;
+      }
+
+      includedOutputIndices.push(mappedIndex);
+    }
+
+    if (includedOutputIndices.length === 0) {
+      return;
+    }
+
+    bandHeaders[placement.rowIndex].cells.push({
+      sortIndex: includedOutputIndices[0],
+      text: normalizeCellText(placement.cell?.text),
+      colspan: includedOutputIndices.length,
+      rowspan: placement.rowspan,
+      className: placement.cell?.className || '',
+      columnId: placement.cell?.columnId || null,
+      isHeader: true,
+      isNumeric: Boolean(placement.cell?.isNumeric),
+      measuredWidthPx: Number(placement.cell?.measuredWidthPx) || null,
+    });
+  });
+
+  return bandHeaders.map((headerRow) => ({
+    headerType: headerRow.headerType,
+    headerRowIndex: headerRow.headerRowIndex,
+    repeatHeader: headerRow.repeatHeader,
+    cells: (headerRow.cells || [])
+      .sort((a, b) => a.sortIndex - b.sortIndex)
+      .map(({ sortIndex, ...cell }) => cell),
+  }));
+}
+
+function canBuildPivotBandHeaders(
+  headers = [],
+  selectedIndices = [],
+  includeRowNumber = false,
+  rowNumberWidth = MIN_WIDTHS_PX.rowNumber,
+) {
+  if (!Array.isArray(headers) || headers.length === 0) {
+    return false;
+  }
+
+  const { placements } = buildPivotHeaderPlacements(headers);
+  if (placements.length === 0) {
+    return false;
+  }
+
+  const rowCount = headers.length;
+  const coversAllSelectedColumns = selectedIndices.every((selectedIndex) => {
+    for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+      const hasPlacementForRow = placements.some((placement) => {
+        const rowStart = placement.rowIndex;
+        const rowEnd = placement.rowIndex + Math.max(1, Number(placement.rowspan || 1)) - 1;
+        return (
+          placement.startCol <= selectedIndex &&
+          placement.endCol >= selectedIndex &&
+          rowStart <= rowIndex &&
+          rowEnd >= rowIndex
+        );
+      });
+
+      if (!hasPlacementForRow) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  if (!coversAllSelectedColumns) {
+    return false;
+  }
+
+  const selectedSet = new Set(selectedIndices);
+  const sourceToOutput = new Map();
+  let outputIndex = includeRowNumber ? 1 : 0;
+  selectedIndices.forEach((sourceIndex) => {
+    sourceToOutput.set(sourceIndex, outputIndex);
+    outputIndex += 1;
+  });
+
+  const hasContiguousHeaderSpans = placements.every((placement) => {
+    const includedOutputIndices = [];
+
+    for (let sourceIndex = placement.startCol; sourceIndex <= placement.endCol; sourceIndex += 1) {
+      if (!selectedSet.has(sourceIndex)) {
+        continue;
+      }
+
+      const mappedIndex = sourceToOutput.get(sourceIndex);
+      if (mappedIndex === undefined) {
+        continue;
+      }
+
+      includedOutputIndices.push(mappedIndex);
+    }
+
+    if (includedOutputIndices.length <= 1) {
+      return true;
+    }
+
+    for (let index = 1; index < includedOutputIndices.length; index += 1) {
+      if (includedOutputIndices[index] !== includedOutputIndices[index - 1] + 1) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  if (!hasContiguousHeaderSpans) {
+    return false;
+  }
+
+  const bandHeaders = buildPivotBandHeaders(
+    headers,
+    selectedIndices,
+    includeRowNumber,
+    rowNumberWidth,
+  );
+
+  return bandHeaders.every(
+    (headerRow) => Array.isArray(headerRow?.cells) && headerRow.cells.length > 0,
+  );
+}
+
 function buildBandRows(
   rows,
   normalizedRows,
@@ -1080,6 +1322,7 @@ export function buildWideTableLayout(tableData, options = {}) {
       selectedIndices,
       true,
     );
+    const isPivotTable = isPivotTableData(tableData);
     const grandTotal = buildBandGrandTotal(
       normalizedGrandTotal,
       columns,
@@ -1093,9 +1336,24 @@ export function buildWideTableLayout(tableData, options = {}) {
       ? dynamicSorted[dynamicSorted.length - 1] + 1
       : columns.length;
     const bandLabel = `Columns ${start}-${end} of ${columns.length}`;
+    const headers =
+      isPivotTable &&
+      canBuildPivotBandHeaders(
+        tableData.headers || [],
+        selectedIndices,
+        true,
+        bandingPlan.rowNumberWidth,
+      )
+        ? buildPivotBandHeaders(
+            tableData.headers || [],
+            selectedIndices,
+            true,
+            bandingPlan.rowNumberWidth,
+          )
+        : [{ cells: headerCells }];
 
     return {
-      headers: [{ cells: headerCells }],
+      headers,
       rows,
       grandTotal,
       bandLabel,

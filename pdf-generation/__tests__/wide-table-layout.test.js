@@ -213,6 +213,436 @@ describe('wide-table-layout', () => {
     expect(result.layoutApplied.effectiveOrientation).toBe('portrait');
   });
 
+  it('preserves pivot header hierarchy and only renders grand total on the final band', () => {
+    const pivotHeaders = [
+      {
+        headerType: 'pivot-hierarchy',
+        headerRowIndex: 0,
+        repeatHeader: true,
+        cells: [
+          { text: 'Country', columnId: 'country', colspan: 1, rowspan: 3, isHeader: true },
+          { text: 'Region', colspan: 8, rowspan: 1, isHeader: true },
+        ],
+      },
+      {
+        headerType: 'pivot-values',
+        headerRowIndex: 1,
+        repeatHeader: true,
+        cells: [
+          { text: 'East', colspan: 4, rowspan: 1, isHeader: true },
+          { text: 'West', colspan: 4, rowspan: 1, isHeader: true },
+        ],
+      },
+      {
+        headerType: 'metrics',
+        headerRowIndex: 2,
+        repeatHeader: true,
+        cells: [
+          { text: 'Sales', columnId: 'east_online_1', isHeader: true },
+          { text: 'Sales', columnId: 'east_online_2', isHeader: true },
+          { text: 'Sales', columnId: 'east_store_1', isHeader: true },
+          { text: 'Sales', columnId: 'east_store_2', isHeader: true },
+          { text: 'Sales', columnId: 'west_online_1', isHeader: true },
+          { text: 'Sales', columnId: 'west_online_2', isHeader: true },
+          { text: 'Sales', columnId: 'west_store_1', isHeader: true },
+          { text: 'Sales', columnId: 'west_store_2', isHeader: true },
+        ],
+      },
+    ];
+
+    const tableData = {
+      headers: pivotHeaders,
+      rows: [
+        {
+          index: 0,
+          type: 'data',
+          cells: [
+            { text: 'US', columnId: 'country' },
+            { text: '10', columnId: 'east_online_1', isNumeric: true },
+            { text: '11', columnId: 'east_online_2', isNumeric: true },
+            { text: '12', columnId: 'east_store_1', isNumeric: true },
+            { text: '13', columnId: 'east_store_2', isNumeric: true },
+            { text: '14', columnId: 'west_online_1', isNumeric: true },
+            { text: '15', columnId: 'west_online_2', isNumeric: true },
+            { text: '16', columnId: 'west_store_1', isNumeric: true },
+            { text: '17', columnId: 'west_store_2', isNumeric: true },
+          ],
+        },
+      ],
+      grandTotal: {
+        cells: [
+          { text: 'Grand Total', columnId: 'country' },
+          { text: '10', columnId: 'east_online_1', isNumeric: true },
+          { text: '11', columnId: 'east_online_2', isNumeric: true },
+          { text: '12', columnId: 'east_store_1', isNumeric: true },
+          { text: '13', columnId: 'east_store_2', isNumeric: true },
+          { text: '14', columnId: 'west_online_1', isNumeric: true },
+          { text: '15', columnId: 'west_online_2', isNumeric: true },
+          { text: '16', columnId: 'west_store_1', isNumeric: true },
+          { text: '17', columnId: 'west_store_2', isNumeric: true },
+        ],
+      },
+      metadata: {
+        tableType: 'pivot',
+        totalColumns: 9,
+        columns: [
+          { index: 0, columnId: 'country', label: 'Country', isNumeric: false, measuredWidthPx: 120 },
+          { index: 1, columnId: 'east_online_1', label: 'Sales', isNumeric: true, measuredWidthPx: 120 },
+          { index: 2, columnId: 'east_online_2', label: 'Sales', isNumeric: true, measuredWidthPx: 120 },
+          { index: 3, columnId: 'east_store_1', label: 'Sales', isNumeric: true, measuredWidthPx: 120 },
+          { index: 4, columnId: 'east_store_2', label: 'Sales', isNumeric: true, measuredWidthPx: 120 },
+          { index: 5, columnId: 'west_online_1', label: 'Sales', isNumeric: true, measuredWidthPx: 120 },
+          { index: 6, columnId: 'west_online_2', label: 'Sales', isNumeric: true, measuredWidthPx: 120 },
+          { index: 7, columnId: 'west_store_1', label: 'Sales', isNumeric: true, measuredWidthPx: 120 },
+          { index: 8, columnId: 'west_store_2', label: 'Sales', isNumeric: true, measuredWidthPx: 120 },
+        ],
+      },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'A5',
+      orientation: 'landscape',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+
+    expect(result.layoutApplied.usedBanding).toBe(true);
+    expect(result.sections.length).toBeGreaterThan(1);
+    expect(result.sections[0].headers).toHaveLength(3);
+    expect(result.sections[0].headers[0].cells[0]).toEqual(
+      expect.objectContaining({
+        columnId: '__row_number__',
+        rowspan: 3,
+      }),
+    );
+    expect(result.sections[0].headers[0].cells).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ columnId: 'country', rowspan: 3 }),
+      ]),
+    );
+    expect(result.sections[0].headers[1].cells.some((cell) => cell.text === 'East')).toBe(true);
+    expect(result.sections.every((section) => section.grandTotal !== null)).toBe(true);
+    expect(
+      result.sections.every(
+        (section) => section.grandTotal.cells.length === section.columns.length,
+      ),
+    ).toBe(true);
+    expect(
+      result.sections[0].grandTotal.cells.some(
+        (cell) => cell.columnId === 'east_online_1' && cell.text === '10',
+      ),
+    ).toBe(true);
+    expect(
+      result.sections[result.sections.length - 1].grandTotal.cells.some(
+        (cell) => cell.columnId === 'west_store_2' && cell.text === '17',
+      ),
+    ).toBe(true);
+  });
+
+  it('treats extractor-style pivot metadata as pivot input even without tableType', () => {
+    const tableData = {
+      headers: [
+        {
+          cells: [
+            { text: 'Country', columnId: 'country', rowspan: 2, colspan: 1, isHeader: true },
+            { text: 'East', colspan: 2, rowspan: 1, isHeader: true },
+            { text: 'West', colspan: 2, rowspan: 1, isHeader: true },
+          ],
+        },
+        {
+          cells: [
+            { text: 'Sales', columnId: 'east_1', isHeader: true },
+            { text: 'Units', columnId: 'east_2', isHeader: true },
+            { text: 'Sales', columnId: 'west_1', isHeader: true },
+            { text: 'Units', columnId: 'west_2', isHeader: true },
+          ],
+        },
+      ],
+      rows: [
+        {
+          index: 0,
+          type: 'data',
+          cells: [
+            { text: 'US', columnId: 'country' },
+            { text: '10', columnId: 'east_1', isNumeric: true },
+            { text: '11', columnId: 'east_2', isNumeric: true },
+            { text: '12', columnId: 'west_1', isNumeric: true },
+            { text: '13', columnId: 'west_2', isNumeric: true },
+          ],
+        },
+      ],
+      metadata: {
+        rowLevels: '1',
+        pivotLevels: '2',
+        totalColumns: 5,
+        columns: [
+          { index: 0, columnId: 'country', label: 'Country', isNumeric: false, measuredWidthPx: 120 },
+          { index: 1, columnId: 'east_1', label: 'Sales', isNumeric: true, measuredWidthPx: 120 },
+          { index: 2, columnId: 'east_2', label: 'Units', isNumeric: true, measuredWidthPx: 120 },
+          { index: 3, columnId: 'west_1', label: 'Sales', isNumeric: true, measuredWidthPx: 120 },
+          { index: 4, columnId: 'west_2', label: 'Units', isNumeric: true, measuredWidthPx: 120 },
+        ],
+      },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'A5',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+
+    expect(result.layoutApplied.usedBanding).toBe(true);
+    expect(result.sections[0].headers.length).toBe(2);
+    expect(result.sections[0].headers[0].cells[0]).toEqual(
+      expect.objectContaining({ columnId: '__row_number__', rowspan: 2 }),
+    );
+    expect(result.sections[0].headers[0].cells.some((cell) => cell.text === 'East')).toBe(
+      true,
+    );
+  });
+
+  it('falls back to flat band headers when pivot header rows are incomplete', () => {
+    const tableData = {
+      headers: [
+        {
+          cells: [
+            { text: 'Country', columnId: 'country', rowspan: 1, colspan: 1, isHeader: true },
+            { text: 'East', columnId: 'east_1', rowspan: 1, colspan: 1, isHeader: true },
+          ],
+        },
+      ],
+      rows: [
+        {
+          index: 0,
+          type: 'data',
+          cells: [
+            { text: 'US', columnId: 'country' },
+            { text: '10', columnId: 'east_1', isNumeric: true },
+            { text: '11', columnId: 'east_2', isNumeric: true },
+            { text: '12', columnId: 'west_1', isNumeric: true },
+            { text: '13', columnId: 'west_2', isNumeric: true },
+          ],
+        },
+      ],
+      metadata: {
+        rowLevels: '1',
+        pivotLevels: '2',
+        totalColumns: 5,
+        columns: [
+          { index: 0, columnId: 'country', label: 'Country', isNumeric: false, measuredWidthPx: 120 },
+          { index: 1, columnId: 'east_1', label: 'East Sales', isNumeric: true, measuredWidthPx: 120 },
+          { index: 2, columnId: 'east_2', label: 'East Units', isNumeric: true, measuredWidthPx: 120 },
+          { index: 3, columnId: 'west_1', label: 'West Sales', isNumeric: true, measuredWidthPx: 120 },
+          { index: 4, columnId: 'west_2', label: 'West Units', isNumeric: true, measuredWidthPx: 120 },
+        ],
+      },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'A5',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+
+    expect(result.layoutApplied.usedBanding).toBe(true);
+    expect(result.sections.length).toBeGreaterThan(1);
+    expect(result.sections.every((section) => section.headers.length === 1)).toBe(true);
+    expect(
+      result.sections.every(
+        (section) => section.headers[0].cells.length === section.columns.length,
+      ),
+    ).toBe(true);
+    expect(
+      result.sections.some((section) =>
+        section.headers[0].cells.some((cell) => cell.text === 'West Units'),
+      ),
+    ).toBe(true);
+  });
+
+  it('falls back to flat band headers when a pivot band would leave an intermediate header row empty', () => {
+    const tableData = {
+      headers: [
+        {
+          cells: [
+            { text: 'Country', columnId: 'country', rowspan: 3, colspan: 1, isHeader: true },
+            { text: 'Region', rowspan: 1, colspan: 6, isHeader: true },
+          ],
+        },
+        {
+          cells: [{ text: 'East', rowspan: 1, colspan: 3, isHeader: true }],
+        },
+        {
+          cells: [
+            { text: 'Sales', columnId: 'east_1', isHeader: true },
+            { text: 'Units', columnId: 'east_2', isHeader: true },
+            { text: 'Margin', columnId: 'east_3', isHeader: true },
+            { text: 'Sales', columnId: 'west_1', isHeader: true },
+            { text: 'Units', columnId: 'west_2', isHeader: true },
+            { text: 'Margin', columnId: 'west_3', isHeader: true },
+          ],
+        },
+      ],
+      rows: [
+        {
+          index: 0,
+          type: 'data',
+          cells: [
+            { text: 'US', columnId: 'country' },
+            { text: '10', columnId: 'east_1', isNumeric: true },
+            { text: '11', columnId: 'east_2', isNumeric: true },
+            { text: '12', columnId: 'east_3', isNumeric: true },
+            { text: '13', columnId: 'west_1', isNumeric: true },
+            { text: '14', columnId: 'west_2', isNumeric: true },
+            { text: '15', columnId: 'west_3', isNumeric: true },
+          ],
+        },
+      ],
+      metadata: {
+        rowLevels: '1',
+        pivotLevels: '2',
+        totalColumns: 7,
+        columns: [
+          { index: 0, columnId: 'country', label: 'Country', isNumeric: false, measuredWidthPx: 220 },
+          { index: 1, columnId: 'east_1', label: 'East Sales', isNumeric: true, measuredWidthPx: 220 },
+          { index: 2, columnId: 'east_2', label: 'East Units', isNumeric: true, measuredWidthPx: 220 },
+          { index: 3, columnId: 'east_3', label: 'East Margin', isNumeric: true, measuredWidthPx: 220 },
+          { index: 4, columnId: 'west_1', label: 'West Sales', isNumeric: true, measuredWidthPx: 220 },
+          { index: 5, columnId: 'west_2', label: 'West Units', isNumeric: true, measuredWidthPx: 220 },
+          { index: 6, columnId: 'west_3', label: 'West Margin', isNumeric: true, measuredWidthPx: 220 },
+        ],
+      },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'A5',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+
+    const westSection = result.sections.find((section) =>
+      section.columns.some((column) => column.columnId === 'west_1'),
+    );
+
+    expect(westSection).toBeDefined();
+    expect(westSection.headers).toHaveLength(1);
+    expect(westSection.headers[0].cells.some((cell) => cell.text === 'Margin')).toBe(
+      true,
+    );
+  });
+
+  it('falls back to flat headers when anchor columns reorder grouped pivot leaves', () => {
+    const tableData = {
+      headers: [
+        {
+          cells: [
+            { text: 'East', colspan: 3, rowspan: 1, isHeader: true },
+            { text: 'West', colspan: 3, rowspan: 1, isHeader: true },
+          ],
+        },
+        {
+          cells: [
+            { text: 'Status', columnId: 'east_status', isHeader: true },
+            { text: 'Count', columnId: 'east_count', isHeader: true, isNumeric: true },
+            { text: 'Status', columnId: 'west_status', isHeader: true },
+            { text: 'Count', columnId: 'west_count', isHeader: true, isNumeric: true },
+          ],
+        },
+      ],
+      rows: [
+        {
+          index: 0,
+          type: 'data',
+          cells: [
+            { text: 'Open', columnId: 'east_status' },
+            { text: '10', columnId: 'east_count', isNumeric: true },
+            { text: 'Closed', columnId: 'west_status' },
+            { text: '20', columnId: 'west_count', isNumeric: true },
+          ],
+        },
+      ],
+      metadata: {
+        tableType: 'pivot',
+        totalColumns: 4,
+        columns: [
+          { index: 0, columnId: 'east_status', label: 'East Status', isNumeric: false, measuredWidthPx: 80 },
+          { index: 1, columnId: 'east_count', label: 'East Count', isNumeric: true, measuredWidthPx: 360 },
+          { index: 2, columnId: 'west_status', label: 'West Status', isNumeric: false, measuredWidthPx: 80 },
+          { index: 3, columnId: 'west_count', label: 'West Count', isNumeric: true, measuredWidthPx: 360 },
+        ],
+      },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'A5',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+
+    expect(result.layoutApplied.usedBanding).toBe(true);
+    const firstSection = result.sections[0];
+    expect(firstSection.headers).toHaveLength(1);
+    expect(firstSection.headers[0].cells.map((cell) => cell.text)).toEqual(
+      firstSection.columns.map((column) => column.label),
+    );
+  });
+
+  it('prefers leaf header text over repeated metadata labels for pivot fallback headers', () => {
+    const tableData = {
+      headers: [
+        {
+          cells: [
+            { text: 'Jan', columnId: 'sales_jan', isHeader: true },
+            { text: 'Feb', columnId: 'sales_feb', isHeader: true },
+            { text: 'Mar', columnId: 'sales_mar', isHeader: true },
+            { text: 'Apr', columnId: 'sales_apr', isHeader: true },
+          ],
+        },
+      ],
+      rows: [
+        {
+          index: 0,
+          type: 'data',
+          cells: [
+            { text: '10', columnId: 'sales_jan', isNumeric: true },
+            { text: '12', columnId: 'sales_feb', isNumeric: true },
+            { text: '14', columnId: 'sales_mar', isNumeric: true },
+            { text: '16', columnId: 'sales_apr', isNumeric: true },
+          ],
+        },
+      ],
+      metadata: {
+        rowLevels: '0',
+        pivotLevels: '1',
+        totalColumns: 4,
+        columns: [
+          { index: 0, columnId: 'sales_jan', label: 'Sales', isNumeric: true, measuredWidthPx: 360 },
+          { index: 1, columnId: 'sales_feb', label: 'Sales', isNumeric: true, measuredWidthPx: 360 },
+          { index: 2, columnId: 'sales_mar', label: 'Sales', isNumeric: true, measuredWidthPx: 360 },
+          { index: 3, columnId: 'sales_apr', label: 'Sales', isNumeric: true, measuredWidthPx: 360 },
+        ],
+      },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'A5',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+
+    expect(result.layoutApplied.usedBanding).toBe(true);
+    const firstSection = result.sections[0];
+    expect(firstSection.headers).toHaveLength(1);
+    expect(firstSection.headers[0].cells.map((cell) => cell.text)).toEqual(
+      firstSection.columns.map((column) => column.label),
+    );
+    expect(firstSection.headers[0].cells.map((cell) => cell.text)).toEqual([
+      'Row #',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+    ]);
+  });
+
   it('evaluates portrait candidate for landscape requests on the same page size', () => {
     const input = createMockTableData(8, 10);
     const result = buildWideTableLayout(input, {

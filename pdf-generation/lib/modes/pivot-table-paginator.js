@@ -75,6 +75,7 @@ export async function extractPivotTableData(page) {
     }
 
     const metadata = {
+      tableType: 'pivot',
       rowLevels: table.getAttribute('data-row-levels'),
       pivotLevels: table.getAttribute('data-pivot-levels'),
       totalRows: rows.length,

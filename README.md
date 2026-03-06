@@ -15,7 +15,7 @@ Pipeline 1: Scheduled Reports
   ScheduleProcessor --> ScheduleDeliveryStateMachine
        |                    |
        |                    |-- Map: GeneratePdf (one per attachment)
-       |                    |-- Task: EmailSender (single consolidated send)
+       |                    |-- Task: EmailSender (one send per recipient)
        |                    |-- Task: update-status (success/error)
        |                    |
        |  GET /schedules/ready   Uses Puppeteer for PDF/CSV
@@ -138,7 +138,6 @@ Then configure the following environment variables in your **semaphor-app** `.en
 | `LAMBDA_API_KEY` | API key for Lambda function authentication | `sk_lambda_abc123...` |
 | `SES_SENDER_EMAIL` | Verified sender email address for reports (SES mode) | `noreply@yourdomain.com` |
 | `EMAIL_PROVIDER_MODE` | Email provider mode (`SES` or `EXTERNAL`) | `SES` |
-| `EMAIL_ENABLE_MULTI_RECIPIENTS` | Send to all recipients when `true`; first recipient only when `false` | `false` |
 | `SES_REGION` | AWS region used by SES client | `us-east-1` |
 | `EMAIL_EXTERNAL_AUTH_SECRET` | Shared secret for signed external provider requests (required when `EMAIL_PROVIDER_MODE=EXTERNAL`) | _(empty)_ |
 | `RESEND_API_KEY` | API key for same-stack `ResendProviderFunction` | _(empty)_ |
@@ -201,9 +200,9 @@ The deployment creates:
 | Resource | Purpose |
 |----------|---------|
 | **ScheduleProcessorFunction** | Fetches ready schedules every 60 minutes |
-| **ScheduleDeliveryStateMachine** | Orchestrates per-schedule attachment generation and single consolidated email |
+| **ScheduleDeliveryStateMachine** | Orchestrates per-schedule attachment generation and per-recipient email delivery |
 | **GeneratePdfFunction** | Generates PDFs/CSVs using Puppeteer (has public Function URL) |
-| **EmailSenderFunction** | Sends consolidated report emails (`SES` or `EXTERNAL` mode) and updates schedule status |
+| **EmailSenderFunction** | Sends one report email per recipient (`SES` or `EXTERNAL` mode) and updates schedule status |
 | **ResendProviderFunction** | External provider endpoint (Function URL) that sends email via Resend |
 | **ChunkProcessorFunction** | Processes individual data chunks for large exports |
 | **CompactionProcessorFunction** | Merges chunks into final gzip-compressed CSV |
@@ -306,7 +305,6 @@ sam deploy \
     LambdaApiKey=$LAMBDA_API_KEY \
     SesSenderEmail=$SES_SENDER_EMAIL \
     EmailProviderMode=$EMAIL_PROVIDER_MODE \
-    EmailEnableMultiRecipients=$EMAIL_ENABLE_MULTI_RECIPIENTS \
     SesRegion=$SES_REGION \
     EmailExternalAuthSecret=$EMAIL_EXTERNAL_AUTH_SECRET \
     ResendApiKey=$RESEND_API_KEY \

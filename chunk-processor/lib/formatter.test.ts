@@ -144,6 +144,50 @@ describe('formatter', () => {
 
       expect(result[0][0]).toBe('75%');
     });
+
+    it('should preserve percentValueMode=fraction from column settings', () => {
+      const data = [{ rate: 0.125 }]; // 12.5% when interpreted as fraction
+      const columns: ColumnInfo[] = [{ field: 'rate' }];
+      const formatting: ExportFormattingConfig = {
+        ...defaultFormatting,
+        columnSettings: {
+          rate: {
+            numberFormat: {
+              style: 'percent',
+              minimumFractionDigits: 1,
+              maximumFractionDigits: 1,
+              percentValueMode: 'fraction',
+            },
+          },
+        },
+      };
+
+      const result = formatRowsForExport(data, columns, formatting);
+
+      expect(result[0][0]).toBe('12.5%');
+    });
+
+    it('should preserve useGrouping=false from column settings', () => {
+      const data = [{ value: 12345.67 }];
+      const columns: ColumnInfo[] = [{ field: 'value' }];
+      const formatting: ExportFormattingConfig = {
+        ...defaultFormatting,
+        columnSettings: {
+          value: {
+            numberFormat: {
+              style: 'decimal',
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+              useGrouping: false,
+            },
+          },
+        },
+      };
+
+      const result = formatRowsForExport(data, columns, formatting);
+
+      expect(result[0][0]).toBe('12345.67');
+    });
   });
 
   describe('generateCSV', () => {

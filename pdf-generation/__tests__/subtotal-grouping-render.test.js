@@ -54,7 +54,8 @@ describe('subtotal grouping render', () => {
       wideTableStrategy: 'legacy',
     });
 
-    const groupCount = (html.match(/<tbody class="group">/g) || []).length;
+    const groupCount =
+      (html.match(/<tbody class="group(?: subtotal-tail)?">/g) || []).length;
     expect(groupCount).toBe(2);
     expect(html).toContain('<tbody class="group grand-total-group">');
     expect(html).toMatch(
@@ -96,16 +97,87 @@ describe('subtotal grouping render', () => {
       wideTableStrategy: 'legacy',
     });
 
-    const groupCount = (html.match(/<tbody class="group">/g) || []).length;
+    const groupCount =
+      (html.match(/<tbody class="group(?: subtotal-tail)?">/g) || []).length;
     expect(groupCount).toBe(2);
     expect(html).toContain('<tbody class="group grand-total-group">');
     expect(html).toMatch(
-      /<tbody class="group">[\s\S]*East[\s\S]*Subtotal East[\s\S]*<\/tbody>/,
+      /<tbody class="group(?: subtotal-tail)?">[\s\S]*East[\s\S]*Subtotal East[\s\S]*<\/tbody>/,
     );
     expect(html).toMatch(
-      /<tbody class="group">[\s\S]*West[\s\S]*Subtotal West[\s\S]*<\/tbody>/,
+      /<tbody class="group(?: subtotal-tail)?">[\s\S]*West[\s\S]*Subtotal West[\s\S]*<\/tbody>/,
     );
     expect(html).toContain('<tr class="row-even">');
     expect(html).toContain('font-variant-numeric: tabular-nums;');
+  });
+
+  it('keeps only the subtotal tail block non-breaking for pivot groups', () => {
+    const pages = [
+      {
+        headers: [{ cells: createHeaderCells(['Region', 'Sales']) }],
+        rows: [
+          { type: 'data', cells: [{ text: 'East' }, { text: '100', className: 'numeric' }] },
+          { type: 'data', cells: [{ text: 'East 2' }, { text: '120', className: 'numeric' }] },
+          { type: 'data', cells: [{ text: 'East 3' }, { text: '140', className: 'numeric' }] },
+          {
+            type: 'subtotal',
+            cells: [{ text: 'Subtotal East' }, { text: '360', className: 'numeric' }],
+          },
+        ],
+        metadata: { tableType: 'pivot' },
+      },
+    ];
+
+    const { html } = renderPivotTableHtml(pages, {
+      reportTitle: 'Pivot Pagination CSS',
+      timezone: 'UTC',
+      wideTableStrategy: 'legacy',
+    });
+
+    expect(html).toContain('<tbody class="group">');
+    expect(html).toContain('<tbody class="group subtotal-tail">');
+    expect(html).toContain('tbody.group.subtotal-tail {');
+    expect(html).toContain('tr {\n              break-inside: auto;');
+    expect(html).toContain('tr.subtotal,\n            tr.grand-total {');
+  });
+
+  it('does not split a pivot subtotal group when a rowspan would cross the tbody boundary', () => {
+    const pages = [
+      {
+        headers: [{ cells: createHeaderCells(['Group', 'Region', 'Sales']) }],
+        rows: [
+          {
+            type: 'data',
+            cells: [
+              { text: 'North America', rowspan: 3, colspan: 1, isHeader: true },
+              { text: 'East' },
+              { text: '100', className: 'numeric' },
+            ],
+          },
+          {
+            type: 'data',
+            cells: [{ text: 'Central' }, { text: '120', className: 'numeric' }],
+          },
+          {
+            type: 'data',
+            cells: [{ text: 'West' }, { text: '140', className: 'numeric' }],
+          },
+          {
+            type: 'subtotal',
+            cells: [{ text: 'Subtotal North America' }, { text: '360', className: 'numeric' }],
+          },
+        ],
+        metadata: { tableType: 'pivot' },
+      },
+    ];
+
+    const { html } = renderPivotTableHtml(pages, {
+      reportTitle: 'Pivot Rowspan Group',
+      timezone: 'UTC',
+      wideTableStrategy: 'legacy',
+    });
+
+    expect(html).toContain('rowspan="3"');
+    expect((html.match(/<tbody class="group subtotal-tail">/g) || []).length).toBe(1);
   });
 });

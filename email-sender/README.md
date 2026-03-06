@@ -1,13 +1,13 @@
 # Email Sender Lambda
 
-`email-sender` is the report-delivery Lambda used by Step Functions to send consolidated scheduled report emails.
+`email-sender` is the report-delivery Lambda used by Step Functions to send scheduled report emails to every resolved recipient.
 
 ## What it does
 
 1. Receives direct invocation payloads (`action: send_consolidated` or `action: update_status`) from Step Functions / scheduler.
 2. Resolves recipients + sender context (for scheduled reports via `GET /api/v1/schedules/{id}/internal`).
-3. Sends one email with N attachments in a single message.
-4. Applies SES size guardrail; if size is too large, sends one email with secure download links.
+3. Sends one email per recipient with the same attachment set.
+4. Applies the SES size guardrail once; if size is too large, sends secure download links instead of attachments.
 5. Chooses delivery provider based on `EMAIL_PROVIDER_MODE`:
    - `SES` (default)
    - `EXTERNAL` (signed webhook call)
@@ -34,8 +34,20 @@
 
 ## Recipient behavior
 
-- `EMAIL_ENABLE_MULTI_RECIPIENTS=false` (default): sends only to first valid recipient.
-- `EMAIL_ENABLE_MULTI_RECIPIENTS=true`: sends to all valid recipients.
+- All resolved recipients receive the report.
+- Each recipient is sent separately to avoid exposing recipient addresses to one another.
+
+## `send_consolidated` result
+
+The Lambda returns an aggregate result for the schedule run, including:
+
+- `success` / `allSucceeded`
+- `recipientCount`
+- `successCount`
+- `failureCount`
+- `failedRecipients`
+- `providerMessageIds`
+- `statusMessage`
 
 ## External webhook contract
 

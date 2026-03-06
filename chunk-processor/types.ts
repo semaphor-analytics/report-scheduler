@@ -54,6 +54,8 @@ export interface ColumnSettings {
     locale?: string;
     minimumFractionDigits?: number;
     maximumFractionDigits?: number;
+    useGrouping?: boolean;
+    percentValueMode?: 'fraction' | 'whole';
   };
   dateFormat?: {
     format?: string;

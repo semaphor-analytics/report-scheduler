@@ -12,11 +12,11 @@ Instead, we maintain exact copies of the formatting utilities here inside `chunk
 
 | Local File | Source File (react-semaphor) | Last Synced |
 |------------|------------------------------|-------------|
-| `format-utils/types.ts` | `src/shared/format-utils/types/format-types.ts` | 2026-01-03 |
-| `format-utils/date-formatter.ts` | `src/shared/format-utils/formatters/date-formatter.ts` | 2026-01-03 |
-| `format-utils/number-formatter.ts` | `src/shared/format-utils/formatters/number-formatter.ts` | 2026-01-03 |
-| `format-utils/cell-formatter.ts` | `src/shared/format-utils/formatters/cell-formatter.ts` | 2026-01-03 |
-| `format-utils/index.ts` | `src/shared/format-utils/index.ts` (subset) | 2026-01-03 |
+| `format-utils/types.ts` | `src/shared/format-utils/types/format-types.ts` | 2026-03-05 |
+| `format-utils/date-formatter.ts` | `src/shared/format-utils/formatters/date-formatter.ts` | 2026-03-05 |
+| `format-utils/number-formatter.ts` | `src/shared/format-utils/formatters/number-formatter.ts` | 2026-03-05 |
+| `format-utils/cell-formatter.ts` | `src/shared/format-utils/formatters/cell-formatter.ts` | 2026-03-05 |
+| `format-utils/index.ts` | `src/shared/format-utils/index.ts` (subset) | 2026-03-05 |
 
 ## Key Functions
 
@@ -45,11 +45,10 @@ Instead, we maintain exact copies of the formatting utilities here inside `chunk
 
 ## Local Modifications
 
-These changes differ from the react-semaphor source and must be preserved after syncing:
+No local modifications are currently required in `shared/format-utils`.
 
-| File | Change | Reason |
-|------|--------|--------|
-| `types.ts` | `locale?: string` (optional) | Allows fallback to export config's locale when column settings don't specify one |
+Note: fallback behavior for missing number-format locale is handled in
+`chunk-processor/lib/formatter.ts` when adapting local column settings.
 
 ## Syncing Process
 
@@ -86,7 +85,7 @@ const formatted = formatCellValue(value, columnSettings, {
 });
 
 // Format a date directly
-const dateStr = formatDate('2026-01-03T10:30:00Z', 'MM/dd/yyyy', 'America/Chicago');
+const dateStr = formatDate('2026-03-03T10:30:00Z', 'MM/dd/yyyy', 'America/Chicago');
 ```
 
 ## Testing Alignment
