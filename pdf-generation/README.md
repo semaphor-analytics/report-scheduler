@@ -50,6 +50,13 @@ cd pdf-generation
 npm install
 ```
 
+For encrypted PDF work with the Node-based local harness, install `qpdf` on your
+machine:
+
+```bash
+brew install qpdf
+```
+
 ### Automated Tests
 
 ```bash
@@ -71,6 +78,14 @@ Manual smoke/performance scripts are kept under `scripts/manual/`:
 npm run manual:test-validation
 npm run manual:test-performance -- <url> <iterations>
 ```
+
+### Encrypted PDFs
+
+Password-protected PDFs use `qpdf` by default.
+
+For local development, install `qpdf` once with `brew install qpdf`.
+If `qpdf` is on your shell `PATH`, no extra environment variables are needed.
+Use `PDF_ENCRYPTION_BACKEND=pdf-lib` only if you need to force the legacy fallback.
 
 ### End-to-End Local (Frontend -> semaphor-app -> Local PDF Function)
 
@@ -121,6 +136,36 @@ $TMPDIR/semaphor-pdf-local-function
 Override this location by setting `LOCAL_PDF_OUTPUT_DIR=/your/path`.
 
 The emulator returns a downloadable URL (`/files/...`) with the same response shape as Lambda (`{ url, layoutApplied? }`), including fast-path `POST` and URL-based `GET`.
+
+Recommended local encrypted-PDF workflow:
+
+```bash
+brew install qpdf
+cd /Users/rohit/code/semaphor/semaphor-report-scheduler/pdf-generation
+npm run local:function-url
+```
+
+If `qpdf` is not on your shell `PATH`, use:
+
+```bash
+QPDF_BIN="$(which qpdf)" npm run local:function-url
+```
+
+If you need to force the legacy fallback:
+
+```bash
+PDF_ENCRYPTION_BACKEND=pdf-lib npm run local:function-url
+```
+
+Then in `semaphor-app`:
+
+```bash
+# /Users/rohit/code/semaphor/semaphor-app/.env.development
+PDF_FUNCTION_URL=http://127.0.0.1:3002
+```
+
+Restart `semaphor-app`, trigger an encrypted PDF export from the UI, and inspect
+the generated file in Chrome PDF viewer and macOS Preview.
 
 ### Command Line Interface
 
@@ -235,7 +280,8 @@ node test-local.js --url "https://example.com/visual?isPdfRender=true" --visual 
 
 - Works with dashboard, visual, and table PDFs
 - Generated PDFs require password to open, print, or copy content
-- Uses 128-bit AES encryption
+- Uses `qpdf` by default
+- Legacy fallback: `PDF_ENCRYPTION_BACKEND=pdf-lib`
 
 ## SAM Deployment
 

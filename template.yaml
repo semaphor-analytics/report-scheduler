@@ -35,6 +35,14 @@ Parameters:
       - SES
       - EXTERNAL
 
+  PdfEncryptionBackend:
+    Type: String
+    Description: Encryption backend for password-protected PDFs
+    Default: qpdf
+    AllowedValues:
+      - pdf-lib
+      - qpdf
+
   SesRegion:
     Type: String
     Description: AWS region for SES client calls
@@ -166,6 +174,17 @@ Resources:
                   - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/pdfs/*'
                   - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/emails/*'
 
+  QpdfLayer:
+    Type: AWS::Serverless::LayerVersion
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      LayerName: !Sub 'semaphor-qpdf-${AWS::StackName}'
+      ContentUri: ./pdf-generation/layers/qpdf
+      CompatibleRuntimes:
+        - nodejs18.x
+      Description: qpdf binary and shared libraries for encrypted PDF post-processing
+
   # Lambda Function for PDF Generation
   GeneratePdfFunction:
     Type: AWS::Serverless::Function
@@ -174,6 +193,8 @@ Resources:
       CodeUri: ./pdf-generation # Directory for PDF generation code
       MemorySize: 4096
       Role: !GetAtt GeneratePdfFunctionRole.Arn
+      Layers:
+        - !Ref QpdfLayer
       FunctionUrlConfig:
         AuthType: NONE
         Cors:
@@ -182,6 +203,9 @@ Resources:
       Environment:
         Variables:
           S3_BUCKET_NAME: !Ref PdfBucket
+          PDF_ENCRYPTION_BACKEND: !Ref PdfEncryptionBackend
+          QPDF_BIN: /opt/bin/qpdf
+          LD_LIBRARY_PATH: /opt/lib:/var/lang/lib:/lib64:/usr/lib64
 
   # IAM Role for EmailSenderFunction
   EmailSenderFunctionRole:

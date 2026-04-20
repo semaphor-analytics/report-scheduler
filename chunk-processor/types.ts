@@ -26,6 +26,10 @@ export interface CardConfig {
   connectionId?: string;
   dataModelId?: string;
   sql?: string;
+  controlValues?: Record<string, unknown>;
+  controlDefinitions?: unknown[];
+  cardControlDefinitions?: unknown[];
+  controlBindings?: unknown[];
   columns?: ColumnInfo[];
   filters?: Record<string, unknown>;
   [key: string]: unknown;

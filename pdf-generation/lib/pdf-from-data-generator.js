@@ -78,7 +78,11 @@ export async function generatePdfFromData(payload, options = {}) {
 
     if (payload.password) {
       console.log('Applying password protection');
-      pdfBuffer = await encryptPdfBuffer(pdfBuffer, payload.password);
+      pdfBuffer = await encryptPdfBuffer(pdfBuffer, payload.password, {
+        metadata: {
+          title: payload.reportTitle,
+        },
+      });
     } else {
       pdfBuffer = await applyPdfMetadata(pdfBuffer, {
         title: payload.reportTitle,

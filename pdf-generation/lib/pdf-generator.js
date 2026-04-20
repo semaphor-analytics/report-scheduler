@@ -304,7 +304,11 @@ export async function generatePdf(url, options = {}) {
     // 7. Encrypt if password provided
     if (options.password) {
       console.log('Adding password protection to PDF...');
-      pdfBuffer = await encryptPdfBuffer(pdfBuffer, options.password);
+      pdfBuffer = await encryptPdfBuffer(pdfBuffer, options.password, {
+        metadata: {
+          title: options.reportTitle,
+        },
+      });
       console.log('PDF encrypted successfully');
     } else {
       pdfBuffer = await applyPdfMetadata(pdfBuffer, {
@@ -533,7 +537,12 @@ async function generateAllSheetsPdf(url, options = {}) {
       console.log('\n[Step 6/6] Encrypting PDF...');
       mergedPdfBuffer = await encryptPdfBuffer(
         mergedPdfBuffer,
-        options.password
+        options.password,
+        {
+          metadata: {
+            title: options.reportTitle,
+          },
+        }
       );
       console.log('  ✓ PDF encrypted');
     } else {

@@ -8,13 +8,23 @@ function normalizeMetadataValue(value) {
   return value.trim();
 }
 
-export async function applyPdfMetadata(pdfBuffer, metadata = {}) {
-  if (!pdfBuffer?.length) {
-    return pdfBuffer;
-  }
-
+export function applyPdfDocumentMetadata(pdfDocument, metadata = {}) {
   const title = normalizeMetadataValue(metadata.title);
   if (!title) {
+    return false;
+  }
+
+  pdfDocument.setTitle(title, {
+    showInWindowTitleBar: true,
+  });
+  pdfDocument.setCreator('Semaphor Report Scheduler');
+  pdfDocument.setProducer('Semaphor Report Scheduler');
+
+  return true;
+}
+
+export async function applyPdfMetadata(pdfBuffer, metadata = {}) {
+  if (!pdfBuffer?.length) {
     return pdfBuffer;
   }
 
@@ -22,9 +32,10 @@ export async function applyPdfMetadata(pdfBuffer, metadata = {}) {
     updateMetadata: false,
   });
 
-  pdfDocument.setTitle(title);
-  pdfDocument.setCreator('Semaphor Report Scheduler');
-  pdfDocument.setProducer('Semaphor Report Scheduler');
+  const metadataApplied = applyPdfDocumentMetadata(pdfDocument, metadata);
+  if (!metadataApplied) {
+    return pdfBuffer;
+  }
 
   const updatedBytes = await pdfDocument.save();
   const updatedBuffer = Buffer.from(updatedBytes);

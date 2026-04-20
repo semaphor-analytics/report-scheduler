@@ -79,6 +79,7 @@ PARAMETER_OVERRIDES=(
   "SesSenderEmail=${SES_SENDER_EMAIL}"
   "EmailProviderMode=${EMAIL_PROVIDER_MODE:-SES}"
   "SesRegion=${SES_REGION:-us-east-1}"
+  "PdfEncryptionBackend=${PDF_ENCRYPTION_BACKEND:-qpdf}"
 )
 
 if [ -n "${EMAIL_EXTERNAL_AUTH_SECRET:-}" ]; then
