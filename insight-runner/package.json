@@ -1,0 +1,43 @@
+{
+  "name": "@semaphor/insight-loop-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "insight-loop": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "insight-loop": "tsx src/cli.ts",
+    "dev": "tsx src/cli.ts dev",
+    "run": "tsx src/cli.ts run",
+    "serve": "tsx src/cli.ts serve",
+    "serve:watch": "tsx watch src/cli.ts serve",
+    "eval:grounding": "tsx scripts/grounding-eval/run.ts",
+    "smoke:grounding": "tsx scripts/grounding-smoke/run.ts",
+    "smoke:llm": "tsx scripts/llm-smoke/run.ts",
+    "report-doc:samples": "tsx scripts/generateReportDocumentSamples.ts",
+    "report-doc:screenshots": "npm run report-doc:samples && tsx scripts/screenshotReportDocumentSamples.ts",
+    "lint": "eslint src tests scripts ingress.ts worker.ts vitest.config.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-lambda": "3.699.0",
+    "@modelcontextprotocol/sdk": "^1.20.1",
+    "@openai/agents": "^0.8.5",
+    "dotenv": "^17.4.2",
+    "esbuild": "^0.27.7",
+    "mdast-util-from-markdown": "^2.0.2",
+    "mdast-util-to-string": "^4.0.0",
+    "zod": "^4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "eslint": "^9.39.1",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.48.1",
+    "vitest": "^3.1.2"
+  }
+}

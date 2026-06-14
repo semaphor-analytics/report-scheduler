@@ -17,6 +17,9 @@ install_dependencies() {
   echo "Installing email-sender dependencies..."
   (cd email-sender && npm ci)
 
+  echo "Installing insight-runner dependencies..."
+  (cd insight-runner && npm ci)
+
   echo "Installing chunk-processor dependencies..."
   (cd chunk-processor && npm ci)
 
@@ -42,6 +45,46 @@ ensure_esbuild() {
   echo "  export PATH=\"$(pwd)/node_modules/.bin:\$PATH\""
   echo "  esbuild --version"
   exit 1
+}
+
+resolve_stack_name() {
+  if [ -n "${SAM_STACK_NAME:-}" ]; then
+    echo "$SAM_STACK_NAME"
+    return
+  fi
+
+  if [ -n "${STACK_NAME:-}" ]; then
+    echo "$STACK_NAME"
+    return
+  fi
+
+  if [ -f samconfig.toml ]; then
+    awk -F= '
+      /^[[:space:]]*stack_name[[:space:]]*=/ {
+        value = $2
+        gsub(/[ "]/, "", value)
+        print value
+        exit
+      }
+    ' samconfig.toml
+  fi
+}
+
+print_stack_outputs() {
+  local stack_name
+  stack_name="$(resolve_stack_name)"
+
+  if [ -z "$stack_name" ]; then
+    echo "Deployment complete, but stack outputs were not printed because the stack name could not be resolved."
+    echo "Run: sam list stack-outputs --stack-name <your-stack-name>"
+    return
+  fi
+
+  echo "Deployment complete. Stack outputs for ${stack_name}:"
+  if ! sam list stack-outputs --stack-name "$stack_name"; then
+    echo "Warning: unable to print stack outputs."
+    echo "Run manually: sam list stack-outputs --stack-name ${stack_name}"
+  fi
 }
 
 # Load environment variables from .env file
@@ -94,10 +137,22 @@ if [ -n "${RESEND_SENDER_EMAIL:-}" ]; then
   PARAMETER_OVERRIDES+=("ResendSenderEmail=${RESEND_SENDER_EMAIL}")
 fi
 
+if [ -n "${INSIGHT_LOOP_MODEL_PROVIDER:-}" ]; then
+  PARAMETER_OVERRIDES+=("InsightLoopModelProvider=${INSIGHT_LOOP_MODEL_PROVIDER}")
+fi
+
+if [ -n "${INSIGHT_LOOP_MODEL:-}" ]; then
+  PARAMETER_OVERRIDES+=("InsightLoopModel=${INSIGHT_LOOP_MODEL}")
+fi
+
+if [ -n "${OPENAI_API_KEY:-}" ]; then
+  PARAMETER_OVERRIDES+=("OpenAiApiKey=${OPENAI_API_KEY}")
+fi
+
 # Deploy with parameter overrides from environment variables
 echo "Deploying with environment variables..."
 sam deploy \
   --parameter-overrides "${PARAMETER_OVERRIDES[@]}" \
   --no-confirm-changeset
 
-echo "Deployment complete!"
+print_stack_outputs

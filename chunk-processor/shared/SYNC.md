@@ -12,11 +12,12 @@ Instead, we maintain exact copies of the formatting utilities here inside `chunk
 
 | Local File | Source File (react-semaphor) | Last Synced |
 |------------|------------------------------|-------------|
-| `format-utils/types.ts` | `src/shared/format-utils/types/format-types.ts` | 2026-03-05 |
-| `format-utils/date-formatter.ts` | `src/shared/format-utils/formatters/date-formatter.ts` | 2026-03-05 |
-| `format-utils/number-formatter.ts` | `src/shared/format-utils/formatters/number-formatter.ts` | 2026-03-05 |
-| `format-utils/cell-formatter.ts` | `src/shared/format-utils/formatters/cell-formatter.ts` | 2026-03-05 |
-| `format-utils/index.ts` | `src/shared/format-utils/index.ts` (subset) | 2026-03-05 |
+| `format-utils/types.ts` | `src/shared/format-utils/types/format-types.ts` | 2026-05-16 |
+| `format-utils/date-formatter.ts` | `src/shared/format-utils/formatters/date-formatter.ts` | 2026-05-16 |
+| `format-utils/number-formatter.ts` | `src/shared/format-utils/formatters/number-formatter.ts` | 2026-05-16 |
+| `format-utils/duration-formatter.ts` | `src/shared/format-utils/formatters/duration-formatter.ts` | 2026-05-16 |
+| `format-utils/cell-formatter.ts` | `src/shared/format-utils/formatters/cell-formatter.ts` | 2026-05-16 |
+| `format-utils/index.ts` | `src/shared/format-utils/index.ts` (subset) | 2026-05-16 |
 
 ## Key Functions
 
@@ -32,6 +33,9 @@ Instead, we maintain exact copies of the formatting utilities here inside `chunk
 - `formatNumber(value, options)` - Basic number formatting
 - `formatCurrency(value, options)` - Currency formatting
 - `formatPercent(value, options)` - Percentage formatting
+
+### duration-formatter.ts
+- `formatDuration(value, options)` - Format numeric elapsed durations, e.g. `392` seconds as `6min 32s`
 
 ### cell-formatter.ts
 - `formatCellValue(value, columnSettings, config)` - Format any cell value
@@ -85,7 +89,7 @@ const formatted = formatCellValue(value, columnSettings, {
 });
 
 // Format a date directly
-const dateStr = formatDate('2026-03-03T10:30:00Z', 'MM/dd/yyyy', 'America/Chicago');
+const dateStr = formatDate('2026-05-16T10:30:00Z', 'MM/dd/yyyy', 'America/Chicago');
 ```
 
 ## Testing Alignment

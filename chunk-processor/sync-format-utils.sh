@@ -45,6 +45,11 @@ cp "$SOURCE_DIR/formatters/number-formatter.ts" "$TARGET_DIR/number-formatter.ts
 sed -i '' "s|from '../types'|from './types'|g" "$TARGET_DIR/number-formatter.ts"
 echo "  ✓ number-formatter.ts (imports fixed)"
 
+# Copy duration-formatter.ts and fix imports
+cp "$SOURCE_DIR/formatters/duration-formatter.ts" "$TARGET_DIR/duration-formatter.ts"
+sed -i '' "s|from '../types'|from './types'|g" "$TARGET_DIR/duration-formatter.ts"
+echo "  ✓ duration-formatter.ts (imports fixed)"
+
 # Copy cell-formatter.ts and fix imports
 cp "$SOURCE_DIR/formatters/cell-formatter.ts" "$TARGET_DIR/cell-formatter.ts"
 sed -i '' "s|from '../types'|from './types'|g" "$TARGET_DIR/cell-formatter.ts"

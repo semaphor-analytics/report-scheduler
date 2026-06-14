@@ -5,6 +5,7 @@ AWS SAM application that powers two core capabilities for Semaphor:
 1. **Scheduled Reports** - Automated PDF/CSV generation and email delivery on a recurring schedule
 2. **Async Exports** - Large dataset export processing using AWS Step Functions for parallel chunk-based CSV generation
 3. **Automation V2 Dispatch (optional)** - EventBridge-driven claim/start fanout for `AutomationRule` execution
+4. **Insight Runner** - Lambda-backed generated-analysis Briefing execution with the same local runner harness used in development
 
 ## Architecture
 
@@ -42,6 +43,18 @@ Pipeline 3: Automation V2 Dispatch (disabled by default)
        |--- POST /api/v1/automations/internal/runs + /start
        |--- POST configured executor endpoints (report/alert)
        |--- POST /api/v1/automations/internal/runs/:id/fail on dispatch errors
+
+Pipeline 4: Insight Runner
+  semaphor-app
+       |
+       |-- POST /internal/briefing-plans  --> InsightRunnerIngressFunction
+       |                                      |-- synchronous plan response
+       |
+       |-- POST /internal/briefing-runs   --> InsightRunnerIngressFunction
+                                              |-- async Invoke
+                                                  InsightRunnerWorkerFunction
+                                                     |-- MCP/model analysis
+                                                     |-- progress/complete/fail callbacks to semaphor-app
 ```
 
 ## Prerequisites
@@ -86,6 +99,12 @@ EMAIL_PROVIDER_MODE=SES
 # EMAIL_EXTERNAL_AUTH_SECRET=replace-with-secret
 # RESEND_API_KEY=re_xxx
 # RESEND_SENDER_EMAIL=reports@yourdomain.com
+
+# Optional: AI-generated Briefings through the Insight Loop runner Lambda
+INSIGHT_LOOP_MODEL_PROVIDER=openai
+INSIGHT_LOOP_MODEL=gpt-5.5
+INSIGHT_LOOP_REASONING_EFFORT=medium
+OPENAI_API_KEY=sk-...
 ```
 
 ### 3. Deploy to AWS
@@ -100,6 +119,7 @@ npm ci --include=dev
 cd pdf-generation && npm ci && cd ..
 cd schedule-processor && npm ci && cd ..
 cd email-sender && npm ci && cd ..
+cd insight-runner && npm ci && cd ..
 cd chunk-processor && npm ci && cd ..
 cd compaction-processor && npm ci && cd ..
 cd mark-failed && npm ci && cd ..
@@ -120,13 +140,41 @@ Then configure the following environment variables in your **semaphor-app** `.en
 | semaphor-app Variable | Value From Stack Output | Purpose |
 |---|---|---|
 | `LAMBDA_API_KEY` | Same value you set in step 2 | Authenticates Lambda-to-app API calls |
+| `BRIEFINGS_EMAIL_SENDER_URL` | `EmailSenderFunctionUrl` output | Enables Briefing Run now email delivery through the scheduler email sender |
+| `BRIEFINGS_RUNNER_URL` | `InsightRunnerIngressFunctionUrl` output | Enables AI-generated Briefing preview plans and runs through the Insight Loop runner Lambda |
 | `EXPORT_STATE_MACHINE_ARN` | `ExportStateMachineArn` output | Enables async export processing |
 | `S3_EXPORTS_BUCKET` | `S3BucketName` output | Allows download URL generation for completed exports |
 | `AWS_ACCESS_KEY_ID` | Your AWS credentials | Required for semaphor-app to invoke Step Functions and generate S3 presigned URLs |
 | `AWS_SECRET_ACCESS_KEY` | Your AWS credentials | Required for semaphor-app to invoke Step Functions and generate S3 presigned URLs |
 | `AWS_REGION` | e.g. `us-east-1` | AWS region where the stack is deployed |
 
-**Important**: The `LAMBDA_API_KEY` must be the same value in both the report scheduler `.env` and the semaphor-app `.env`. This key authenticates all Lambda-to-app API calls.
+**Important**: The `LAMBDA_API_KEY` must be the same value in both the report scheduler `.env` and the semaphor-app `.env`. This key authenticates Lambda-to-app API calls and signed Semaphor App calls to scheduler Function URLs such as `EmailSenderFunctionUrl`.
+
+### Local Insight Runner Development
+
+For local Semaphor App development, you do not need Lambda. Run the same runner
+code as a local HTTP service:
+
+```bash
+cd insight-runner
+npm ci
+npm run serve -- --provider openai --model gpt-5.5 --reasoning-effort medium
+```
+
+Then point semaphor-app at the local service:
+
+```bash
+BRIEFINGS_RUNNER_URL=http://127.0.0.1:4317
+LAMBDA_API_KEY=<same shared internal key used by semaphor-app and the local runner>
+```
+
+For hosted or self-hosted SAM deployments, set `BRIEFINGS_RUNNER_URL` to the
+`InsightRunnerIngressFunctionUrl` stack output instead. The Semaphor App
+dispatch contract is the same in both modes:
+
+- `POST /internal/briefing-plans` returns a synchronous preview plan.
+- `POST /internal/briefing-runs` returns `202 accepted`; the worker Lambda runs
+  asynchronously and reports progress/complete/fail through callbacks.
 
 ## Configuration
 
@@ -142,6 +190,10 @@ Then configure the following environment variables in your **semaphor-app** `.en
 | `EMAIL_EXTERNAL_AUTH_SECRET` | Shared secret for signed external provider requests (required when `EMAIL_PROVIDER_MODE=EXTERNAL`) | _(empty)_ |
 | `RESEND_API_KEY` | API key for same-stack `ResendProviderFunction` | _(empty)_ |
 | `RESEND_SENDER_EMAIL` | Sender email for same-stack Resend provider | `reports@yourdomain.com` |
+| `INSIGHT_LOOP_MODEL_PROVIDER` | Model provider for generated-analysis Briefings (`openai` or `fake`) | `openai` |
+| `INSIGHT_LOOP_MODEL` | Model name for generated-analysis Briefings | `gpt-5.5` |
+| `INSIGHT_LOOP_REASONING_EFFORT` | Reasoning effort for generated-analysis Briefings | `medium` |
+| `OPENAI_API_KEY` | OpenAI API key used by `INSIGHT_LOOP_MODEL_PROVIDER=openai` | _(empty)_ |
 
 ### Optional Automation V2 Dispatcher Variables
 
@@ -176,7 +228,7 @@ This produces a 64-character random string like `a1b2c3d4e5f6...`. Use this as y
 1. **Report scheduler** `.env` — so Lambda functions can send it in API requests
 2. **semaphor-app** `.env` — so the app can validate incoming requests
 
-When a Lambda function calls the Semaphor app API, it sends the key in an `X-API-Key` HTTP header. The app compares it against its own `LAMBDA_API_KEY` environment variable. If they don't match, the request is rejected with a 401 error.
+When a Lambda function calls the Semaphor app API, it sends the key in an `X-API-Key` HTTP header. The app compares it against its own `LAMBDA_API_KEY` environment variable. If they don't match, the request is rejected with a 401 error. Semaphor App uses the same `X-API-Key` value when it calls scheduler Function URLs such as the Briefings email sender.
 
 **Protected endpoints:**
 - `GET /api/v1/schedules/ready` — fetch schedules due for processing
@@ -188,6 +240,8 @@ When a Lambda function calls the Semaphor app API, it sends the key in an `X-API
 - `POST /api/v1/exports/internal/jobs/[jobId]/fail` — mark export failed
 - `POST /api/v1/automations/internal/claim-due` — claim due automation rules
 - `POST /api/v1/automations/internal/runs` — create run records
+- `EmailSenderFunctionUrl` — accepts signed `send_consolidated` requests from Semaphor App for Briefing email delivery
+- `InsightRunnerIngressFunctionUrl` — accepts signed runner plan/run requests from Semaphor App for generated-analysis Briefings
 - `POST /api/v1/automations/internal/runs/[id]/start` — mark run running
 - `POST /api/v1/automations/internal/runs/[id]/fail` — fail run on dispatch error
 
@@ -204,6 +258,8 @@ The deployment creates:
 | **GeneratePdfFunction** | Generates PDFs/CSVs using Puppeteer (has public Function URL) |
 | **EmailSenderFunction** | Sends one report email per recipient (`SES` or `EXTERNAL` mode) and updates schedule status |
 | **ResendProviderFunction** | External provider endpoint (Function URL) that sends email via Resend |
+| **InsightRunnerIngressFunction** | Function URL for Briefing preview plans and async run acceptance |
+| **InsightRunnerWorkerFunction** | Runs generated-analysis Briefings and calls Semaphor App progress/complete/fail callbacks |
 | **ChunkProcessorFunction** | Processes individual data chunks for large exports |
 | **CompactionProcessorFunction** | Merges chunks into final gzip-compressed CSV |
 | **MarkFailedFunction** | Marks failed export jobs with error details |
@@ -331,6 +387,7 @@ After deployment, these outputs are available:
 | `S3BucketName` | Name of the S3 bucket |
 | `S3BucketArn` | ARN of the S3 bucket |
 | `EmailSenderFunctionArn` | ARN of Email Sender function |
+| `EmailSenderFunctionUrl` | Function URL for signed Briefing email delivery requests |
 | `ResendProviderFunctionUrl` | Function URL for same-stack Resend provider |
 | `ResendProviderFunctionArn` | ARN of same-stack Resend provider |
 | `ScheduleProcessorFunctionArn` | ARN of Schedule Processor function |

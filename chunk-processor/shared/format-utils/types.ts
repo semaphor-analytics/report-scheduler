@@ -33,6 +33,33 @@ export interface NumberFormatOptions {
 }
 
 // ============================================================
+// DURATION FORMATTING
+// ============================================================
+
+export type DurationUnit = 'millisecond' | 'second' | 'minute' | 'hour' | 'day';
+
+export type DurationDisplayStyle = 'compact' | 'digital' | 'long';
+
+export interface DurationFormatOptions {
+  /** Unit represented by the raw numeric value. */
+  inputUnit?: DurationUnit;
+  /** Display style, e.g. "6min 32s", "06:32", or "6 minutes 32 seconds". */
+  outputStyle?: DurationDisplayStyle;
+  /** Largest unit to show. Defaults to day. */
+  largestUnit?: DurationUnit;
+  /** Smallest unit to show. Defaults to second. */
+  smallestUnit?: DurationUnit;
+  /** Maximum non-zero unit parts to show for compact/long output. */
+  maxUnits?: number;
+  /** Add prefix string before the formatted duration. */
+  prefix?: string;
+  /** Add suffix string after the formatted duration. */
+  suffix?: string;
+  /** Show negative durations in parentheses instead of a minus sign. */
+  negativeInParentheses?: boolean;
+}
+
+// ============================================================
 // DATE FORMATTING
 // ============================================================
 
@@ -238,4 +265,9 @@ export interface FormatOptions {
   suffix?: string;
   negativeInParentheses?: boolean;
   multiplyBy?: number;
+  inputUnit?: DurationUnit;
+  outputStyle?: DurationDisplayStyle;
+  largestUnit?: DurationUnit;
+  smallestUnit?: DurationUnit;
+  maxUnits?: number;
 }

@@ -1,0 +1,2094 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Insight Runner, Illustrated</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #fafafa;
+    --surface: #ffffff;
+    --ink: #18181b;
+    --ink-2: #3f3f46;
+    --muted: #71717a;
+    --line: #e4e4e7;
+    --line-strong: #d4d4d8;
+    --tint: #f4f4f5;
+    --brand: hsl(217 91% 53%);
+    --brand-soft: hsl(217 91% 96%);
+    --brand-ink: hsl(217 91% 28%);
+    --warm: #c2410c;
+    --warm-soft: #fff7ed;
+    --green: #15803d;
+    --green-soft: #f0fdf4;
+    --red: #b91c1c;
+    --red-soft: #fef2f2;
+    --purple: #6d28d9;
+    --purple-soft: #f5f3ff;
+    --radius: 6px;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Open Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--brand-ink); text-decoration: none; border-bottom: 1px dotted var(--brand); }
+  a:hover { color: var(--brand); }
+  code, .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.86em; }
+  pre {
+    background: #0f172a;
+    color: #e2e8f0;
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    border: 1px solid #1e293b;
+  }
+  pre .k { color: #93c5fd; }
+  pre .s { color: #fde68a; }
+  pre .n { color: #fca5a5; }
+  pre .c { color: #64748b; font-style: italic; }
+  pre .p { color: #cbd5e1; }
+  pre .b { color: #c4b5fd; }
+
+  header.page { border-bottom: 1px solid var(--line); background: var(--surface); }
+  .container { max-width: 1180px; margin: 0 auto; padding: 0 28px; }
+  header.page .container { padding-top: 28px; padding-bottom: 32px; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--muted); font-weight: 600;
+  }
+  .eyebrow .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--brand); }
+  h1 { font-size: 36px; line-height: 1.15; margin: 12px 0 8px; letter-spacing: -0.01em; font-weight: 700; }
+  h2 { font-size: 22px; margin: 56px 0 12px; letter-spacing: -0.005em; font-weight: 700; }
+  h3 { font-size: 15px; margin: 24px 0 8px; font-weight: 700; }
+  h4 { font-size: 13px; margin: 18px 0 6px; font-weight: 700; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.06em; }
+  .lede { color: var(--ink-2); font-size: 17px; max-width: 780px; line-height: 1.55; margin: 0; }
+  .meta { color: var(--muted); font-size: 13px; margin-top: 18px; }
+  .meta .sep { margin: 0 8px; color: var(--line-strong); }
+  .meta a { border-bottom: 1px solid var(--line); }
+
+  section { padding: 12px 0 8px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; }
+  .card h3 { margin-top: 0; }
+  .card.tinted { background: var(--tint); }
+  .card.brand  { background: var(--brand-soft); border-color: hsl(217 91% 88%); }
+  .card.warm   { background: var(--warm-soft); border-color: #fed7aa; }
+  .card.green  { background: var(--green-soft); border-color: #bbf7d0; }
+  .card.red    { background: var(--red-soft); border-color: #fecaca; }
+  .card.purple { background: var(--purple-soft); border-color: #ddd6fe; }
+  .card .tag { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+
+  .figure { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; margin: 24px 0; }
+  .figure svg { display: block; width: 100%; height: auto; }
+  .caption { color: var(--muted); font-size: 12.5px; margin-top: 12px; text-align: center; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line-strong); }
+  tr td:first-child { font-weight: 600; }
+  table.bicolor td { color: var(--ink-2); }
+  table.bicolor tr:hover { background: var(--tint); }
+
+  ul.clean { margin: 8px 0 0; padding-left: 18px; }
+  ul.clean li { margin: 4px 0; color: var(--ink-2); }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; padding: 3px 8px; border-radius: 999px;
+    background: var(--tint); color: var(--ink-2);
+    border: 1px solid var(--line); font-weight: 500;
+  }
+  .pill.brand  { background: var(--brand-soft); color: var(--brand-ink); border-color: hsl(217 91% 86%); }
+  .pill.warm   { background: var(--warm-soft); color: var(--warm); border-color: #fed7aa; }
+  .pill.green  { background: var(--green-soft); color: var(--green); border-color: #bbf7d0; }
+  .pill.red    { background: var(--red-soft); color: var(--red); border-color: #fecaca; }
+  .pill.purple { background: var(--purple-soft); color: var(--purple); border-color: #ddd6fe; }
+
+  .toc {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 14px 18px; font-size: 13px; columns: 2; column-gap: 36px;
+  }
+  .toc a { display: block; padding: 3px 0; border-bottom: none; color: var(--ink-2); }
+  .toc a:hover { color: var(--brand); }
+  .toc .num { display: inline-block; width: 22px; color: var(--muted); }
+
+  svg text { font-family: "Open Sans", sans-serif; }
+  svg .label { font-size: 12px; fill: var(--ink); }
+  svg .sublabel { font-size: 10.5px; fill: var(--muted); }
+  svg .tiny { font-size: 9.5px; fill: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; }
+  svg .heading { font-size: 13px; fill: var(--ink); font-weight: 600; }
+  svg .arrow { stroke: var(--ink); stroke-width: 1.2; fill: none; }
+  svg .arrow-soft { stroke: var(--line-strong); stroke-width: 1.2; fill: none; }
+  svg .arrow-brand { stroke: hsl(217 91% 53%); stroke-width: 1.4; fill: none; }
+
+  .callout {
+    border-left: 3px solid var(--brand); background: var(--brand-soft);
+    padding: 12px 16px; border-radius: 0 var(--radius) var(--radius) 0;
+    color: var(--brand-ink); font-size: 13.5px; margin: 16px 0;
+  }
+  .callout.warm { border-left-color: var(--warm); background: var(--warm-soft); color: #7c2d12; }
+  .callout.red  { border-left-color: var(--red); background: var(--red-soft); color: #7f1d1d; }
+  .callout.green { border-left-color: var(--green); background: var(--green-soft); color: #14532d; }
+
+  .terminal {
+    background: #0f172a; color: #e2e8f0; border-radius: var(--radius);
+    padding: 14px 18px; font-family: "JetBrains Mono", monospace;
+    font-size: 12.5px; border: 1px solid #1e293b; overflow-x: auto;
+  }
+  .terminal .prompt { color: #34d399; }
+  .terminal .flag   { color: #fbbf24; }
+  .terminal .ok     { color: #34d399; }
+  .terminal .fail   { color: #f87171; }
+  .terminal .info   { color: #93c5fd; }
+  .terminal .muted  { color: #64748b; }
+  .terminal .path   { color: #c4b5fd; }
+  .terminal .key    { color: #f9a8d4; }
+
+  .file-tree {
+    background: #0f172a; color: #e2e8f0; border-radius: var(--radius);
+    padding: 14px 18px; font-family: "JetBrains Mono", monospace;
+    font-size: 12.5px; border: 1px solid #1e293b; overflow-x: auto;
+    line-height: 1.6;
+  }
+  .file-tree .dir { color: #93c5fd; font-weight: 600; }
+  .file-tree .file { color: #e2e8f0; }
+  .file-tree .note { color: #64748b; font-style: italic; }
+  .file-tree .hi { color: #fde68a; }
+
+  .phase-row {
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    gap: 16px;
+    padding: 18px 0;
+    border-top: 1px solid var(--line);
+  }
+  .phase-row:first-child { border-top: none; }
+  .phase-row .num {
+    width: 40px; height: 40px;
+    border-radius: 8px;
+    background: var(--ink); color: var(--surface);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px;
+  }
+  .phase-row .num.brand { background: var(--brand); }
+  .phase-row .num.warm  { background: var(--warm); }
+  .phase-row .num.green { background: var(--green); }
+  .phase-row .body h3 { margin: 4px 0 6px; font-size: 15.5px; }
+  .phase-row .body p  { margin: 0 0 8px; color: var(--ink-2); }
+  .phase-row .body .meta-line { color: var(--muted); font-size: 12px; margin-top: 6px; }
+
+  .badge {
+    display: inline-block; font-size: 10px; padding: 2px 7px;
+    border-radius: 3px; font-weight: 600; letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .badge.answered { background: var(--green-soft); color: var(--green); border: 1px solid #bbf7d0; }
+  .badge.partial  { background: var(--warm-soft); color: var(--warm); border: 1px solid #fed7aa; }
+  .badge.failed   { background: var(--red-soft); color: var(--red); border: 1px solid #fecaca; }
+  .badge.ms       { background: var(--tint); color: var(--muted); border: 1px solid var(--line); }
+
+  footer.page {
+    margin-top: 80px; padding: 32px 0 56px;
+    border-top: 1px solid var(--line); color: var(--muted); font-size: 13px;
+  }
+  footer.page .container { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+
+  @media (max-width: 880px) {
+    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    .toc { columns: 1; }
+    h1 { font-size: 28px; }
+    .phase-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header class="page">
+  <div class="container">
+    <span class="eyebrow"><span class="dot"></span> Semaphor Architecture, Illustrated</span>
+    <h1>The Insight Runner</h1>
+    <p class="lede">
+      A typed analysis agent that converts a Markdown briefing into a
+      grounded, evidence-backed report. Plans tool calls, executes governed
+      MCP queries, recovers missing answers, renders to Markdown / HTML /
+      PDF, and delivers across Slack and email. Lives in
+      <code>semaphor-report-scheduler/insight-runner</code>.
+    </p>
+    <p class="meta">
+      Repo: <code>semaphor-report-scheduler/insight-runner/</code>
+      <span class="sep">|</span>
+      Entry: <code>src/runtime/runInsightLoop.ts</code>
+      <span class="sep">|</span>
+      Eval cmd: <code>npm run eval:grounding</code>
+      <span class="sep">|</span>
+      Updated 2026-05-21
+    </p>
+  </div>
+</header>
+
+<main class="container">
+
+  <!-- TOC -->
+  <section>
+    <div class="toc">
+      <a href="#mental-model"><span class="num">01</span> Mental model</a>
+      <a href="#entry"><span class="num">02</span> Entry points &amp; lifecycle</a>
+      <a href="#tree"><span class="num">03</span> Source tree at a glance</a>
+      <a href="#phases"><span class="num">04</span> The eleven phases</a>
+      <a href="#contracts"><span class="num">05</span> Answer &amp; Briefing contracts</a>
+      <a href="#loop"><span class="num">06</span> The insight loop</a>
+      <a href="#policy"><span class="num">07</span> Tool call policy</a>
+      <a href="#recovery"><span class="num">08</span> Answer contract recovery</a>
+      <a href="#evidence"><span class="num">09</span> Evidence ledger</a>
+      <a href="#tracing"><span class="num">10</span> Tracing &amp; diagnostics</a>
+      <a href="#artifacts"><span class="num">11</span> Report blocks &amp; rendering</a>
+      <a href="#delivery"><span class="num">12</span> Delivery</a>
+      <a href="#model"><span class="num">13</span> Model interaction</a>
+      <a href="#outputs"><span class="num">14</span> Output files</a>
+      <a href="#terminal"><span class="num">15</span> Terminal status &amp; failure</a>
+      <a href="#server-side"><span class="num">16</span> Server-side counterpart</a>
+    </div>
+  </section>
+
+  <!-- 01 Mental model -->
+  <section id="mental-model">
+    <h2>01. Mental model</h2>
+    <p style="max-width: 800px; color: var(--ink-2);">
+      The insight runner is an agentic loop with a typed, repairable spine.
+      A user (or scheduler) submits a Markdown briefing definition; the
+      runner converts it into typed slots, lets a model plan governed MCP
+      tool calls, watches which slots are answered by evidence, runs a
+      bounded recovery pass for the unanswered ones, then synthesizes,
+      renders, and delivers a report.
+    </p>
+
+    <div class="figure" style="background: #0f172a; border-color: #1e293b;">
+      <div style="text-align:center; padding: 28px 20px;">
+        <div style="color:#93c5fd; font-size: 11px; letter-spacing: 0.16em; font-weight: 600; text-transform: uppercase;">In One Sentence</div>
+        <div style="color:#f1f5f9; font-size: 20px; line-height: 1.45; max-width: 800px; margin: 16px auto 0; font-weight: 500;">
+          A Briefing is a set of <span style="color:#fde68a;">typed answer slots</span>.
+          The runner uses a <span style="color:#fde68a;">model</span> to plan
+          <span style="color:#fde68a;">governed MCP tool calls</span> against Semaphor,
+          collects results into an <span style="color:#fde68a;">evidence ledger</span>,
+          loops <span style="color:#fde68a;">recovery</span> for unanswered slots,
+          then <span style="color:#fde68a;">synthesizes, renders, and delivers</span> a report.
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-3" style="margin-top: 24px;">
+      <div class="card brand">
+        <div class="tag">Contracts first</div>
+        <h3>Slots are the truth</h3>
+        <p style="color: var(--ink-2); margin: 6px 0 0;">Coverage flows through typed <code>AnswerSlotExecutionResult</code>, not from prose or the evidence ledger. The ledger is audit data.</p>
+      </div>
+      <div class="card green">
+        <div class="tag">Governed</div>
+        <h3>Through MCP, not raw SQL</h3>
+        <p style="color: var(--ink-2); margin: 6px 0 0;">All queries go through Semaphor MCP: <code>semaphor_analyze</code> by default, <code>semaphor_query_sql_advanced</code> when bounded SQL is justified.</p>
+      </div>
+      <div class="card warm">
+        <div class="tag">Bounded</div>
+        <h3>Budget &amp; policy</h3>
+        <p style="color: var(--ink-2); margin: 6px 0 0;">Every iteration enforces a tool whitelist, SQL bounds (<code>LIMIT</code> required), briefing scope policy, and a finite <code>maxToolCalls</code>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 02 Entry points -->
+  <section id="entry">
+    <h2>02. Entry points &amp; lifecycle</h2>
+    <p style="max-width: 780px; color: var(--ink-2);">
+      Four entry pathways, one runtime. The Lambda ingress fans out to the
+      worker for production scheduling; the HTTP server handles local
+      Semaphor App dispatches; the CLI handles batch and dev shell;
+      everything terminates in <code>runInsightLoop()</code>.
+    </p>
+
+    <div class="figure">
+      <svg viewBox="0 0 1100 360" role="img" aria-label="Four entry points converge on runInsightLoop">
+        <defs>
+          <marker id="arrEntry" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#18181b"/>
+          </marker>
+        </defs>
+
+        <!-- Four entry boxes -->
+        <g>
+          <rect x="20" y="40" width="220" height="100" rx="6" fill="hsl(217 91% 96%)" stroke="hsl(217 91% 70%)"/>
+          <text x="130" y="64" text-anchor="middle" class="tiny" fill="hsl(217 91% 28%)">PRODUCTION SCHEDULER</text>
+          <text x="130" y="86" text-anchor="middle" font-size="13" font-weight="700" fill="hsl(217 91% 22%)">Lambda ingress</text>
+          <text x="130" y="104" text-anchor="middle" font-size="11" fill="hsl(217 91% 28%)">POST /internal/briefing-runs</text>
+          <text x="130" y="120" text-anchor="middle" font-size="11" fill="hsl(217 91% 28%)">async invoke → worker</text>
+          <text x="130" y="134" text-anchor="middle" font-size="10.5" fill="hsl(217 91% 28%)" font-family="JetBrains Mono">src/lambda/ingress.ts</text>
+
+          <rect x="260" y="40" width="220" height="100" rx="6" fill="hsl(217 91% 96%)" stroke="hsl(217 91% 70%)"/>
+          <text x="370" y="64" text-anchor="middle" class="tiny" fill="hsl(217 91% 28%)">PRODUCTION WORKER</text>
+          <text x="370" y="86" text-anchor="middle" font-size="13" font-weight="700" fill="hsl(217 91% 22%)">Lambda worker</text>
+          <text x="370" y="104" text-anchor="middle" font-size="11" fill="hsl(217 91% 28%)">consumes SQS / async invoke</text>
+          <text x="370" y="120" text-anchor="middle" font-size="11" fill="hsl(217 91% 28%)">→ executeBriefingRun()</text>
+          <text x="370" y="134" text-anchor="middle" font-size="10.5" fill="hsl(217 91% 28%)" font-family="JetBrains Mono">src/lambda/worker.ts</text>
+
+          <rect x="500" y="40" width="220" height="100" rx="6" fill="#fff7ed" stroke="#fdba74"/>
+          <text x="610" y="64" text-anchor="middle" class="tiny" fill="#c2410c">LOCAL DEV HOST</text>
+          <text x="610" y="86" text-anchor="middle" font-size="13" font-weight="700" fill="#7c2d12">HTTP server</text>
+          <text x="610" y="104" text-anchor="middle" font-size="11" fill="#9a3412">127.0.0.1:4317 default</text>
+          <text x="610" y="120" text-anchor="middle" font-size="11" fill="#9a3412">Semaphor App dispatches here</text>
+          <text x="610" y="134" text-anchor="middle" font-size="10.5" fill="#9a3412" font-family="JetBrains Mono">startBriefingRunServer.ts</text>
+
+          <rect x="740" y="40" width="340" height="100" rx="6" fill="#f0fdf4" stroke="#86efac"/>
+          <text x="910" y="64" text-anchor="middle" class="tiny" fill="#15803d">DEVELOPER / EVAL HARNESS</text>
+          <text x="910" y="86" text-anchor="middle" font-size="13" font-weight="700" fill="#14532d">CLI</text>
+          <text x="910" y="104" text-anchor="middle" font-size="11" fill="#166534" font-family="JetBrains Mono">insight-loop run | serve | dev | smoke</text>
+          <text x="910" y="120" text-anchor="middle" font-size="11" fill="#166534">--fake provider for evals</text>
+          <text x="910" y="134" text-anchor="middle" font-size="10.5" fill="#166534" font-family="JetBrains Mono">src/cli.ts</text>
+        </g>
+
+        <!-- Arrows down -->
+        <path d="M130,140 L130,200 C130,210 540,215 540,225" class="arrow" marker-end="url(#arrEntry)"/>
+        <path d="M370,140 L370,225" class="arrow" marker-end="url(#arrEntry)"/>
+        <path d="M610,140 L610,200 C610,210 560,215 555,225" class="arrow" marker-end="url(#arrEntry)"/>
+        <path d="M910,140 L910,200 C910,210 565,215 560,225" class="arrow" marker-end="url(#arrEntry)"/>
+
+        <!-- Convergence to runInsightLoop -->
+        <rect x="400" y="225" width="320" height="60" rx="6" fill="#0f172a" stroke="#1e293b"/>
+        <text x="560" y="248" text-anchor="middle" font-size="11" letter-spacing="0.12em" font-weight="600" fill="#93c5fd">SINGLE RUNTIME ENTRY</text>
+        <text x="560" y="268" text-anchor="middle" font-size="14" font-weight="700" fill="#f1f5f9" font-family="JetBrains Mono">runInsightLoop()</text>
+
+        <!-- Down to output -->
+        <path d="M560,285 L560,318" class="arrow" marker-end="url(#arrEntry)"/>
+
+        <!-- Output -->
+        <rect x="380" y="318" width="360" height="32" rx="6" fill="#fff" stroke="#18181b"/>
+        <text x="560" y="338" text-anchor="middle" font-size="12" font-weight="600">InsightLoopRunResult → write artifacts or callback</text>
+      </svg>
+      <p class="caption">Four entry pathways, one orchestrator. The same <code>runInsightLoop()</code> backs production, local dev, evals, and ad-hoc CLI runs.</p>
+    </div>
+
+    <div class="card" style="margin-top: 8px; padding: 0;">
+      <table>
+        <thead>
+          <tr><th>Entry</th><th>File</th><th>Used for</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Lambda ingress</td><td><code>src/lambda/ingress.ts</code></td><td>Scheduler invokes; routes to async worker; sync preview-plan responses</td></tr>
+          <tr><td>Lambda worker</td><td><code>src/lambda/worker.ts</code></td><td>Executes the run; returns <code>{ ok, runId }</code></td></tr>
+          <tr><td>HTTP server</td><td><code>src/briefings/startBriefingRunServer.ts</code></td><td>Local <code>semaphor-app</code> talks to the runner during dev</td></tr>
+          <tr><td>CLI</td><td><code>src/cli.ts</code></td><td><code>run</code> (batch), <code>serve</code>, <code>dev</code> (interactive), <code>smoke</code> commands</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 03 Source tree -->
+  <section id="tree">
+    <h2>03. Source tree at a glance</h2>
+    <p style="color: var(--ink-2); margin: 6px 0 14px;">
+      Each top-level folder owns one phase or one boundary. Read it as
+      contract → runtime → IO.
+    </p>
+    <div class="file-tree">
+<span class="dir">insight-runner/</span>
+├── <span class="dir">src/</span>
+│   ├── <span class="hi">cli.ts</span>                            <span class="note"># CLI: run / serve / dev / smoke commands</span>
+│   ├── <span class="hi">index.ts</span>                          <span class="note"># Public re-exports</span>
+│   ├── <span class="dir">definition/</span>                      <span class="note"># Parse + validate the Markdown briefing</span>
+│   │   ├── parseInsightLoopMarkdown.ts
+│   │   ├── validateInsightLoopDefinition.ts
+│   │   └── types.ts
+│   ├── <span class="dir">briefings/</span>                       <span class="note"># Briefing-specific contracts + grounding</span>
+│   │   ├── answerContract.ts            <span class="note"># slots: trend / record_list / driver_analysis / ...</span>
+│   │   ├── answerRecovery.ts            <span class="note"># temp adapter: recovery call generation</span>
+│   │   ├── briefingContract.ts          <span class="note"># presentation + delivery + quality gates</span>
+│   │   ├── briefingGrounding.ts         <span class="note"># project / dashboard scope discovery</span>
+│   │   ├── briefingRunnerPayload.ts
+│   │   ├── briefingRunnerResult.ts
+│   │   ├── executeBriefingRun.ts
+│   │   ├── briefingCallbackClient.ts
+│   │   └── startBriefingRunServer.ts
+│   ├── <span class="dir">analytics/</span>                       <span class="note"># Field-role inference helpers</span>
+│   │   └── dataTypes.ts
+│   ├── <span class="dir">semaphor/</span>                        <span class="note"># MCP client (real + fake)</span>
+│   │   ├── createSemaphorMcpClient.ts
+│   │   ├── sdkSemaphorMcpClient.ts
+│   │   ├── fakeSemaphorMcpClient.ts
+│   │   └── semaphorToolTypes.ts
+│   ├── <span class="dir">model/</span>                           <span class="note"># LLM client (fake + OpenAI)</span>
+│   │   ├── insightLoopModelClient.ts
+│   │   ├── openAiInsightLoopModelClient.ts
+│   │   └── fakeInsightLoopModelClient.ts
+│   ├── <span class="dir">runtime/</span>                         <span class="note"># Orchestration + policy</span>
+│   │   ├── <span class="hi">runInsightLoop.ts</span>             <span class="note"># THE main loop (~950 lines)</span>
+│   │   ├── runState.ts
+│   │   ├── toolCallPolicy.ts            <span class="note"># whitelist, SQL bounds, scope</span>
+│   │   ├── mcpContractPreflight.ts
+│   │   └── writeRunOutputs.ts
+│   ├── <span class="dir">evidence/</span>                        <span class="note"># Audit ledger of tool calls + queries</span>
+│   │   └── evidenceLedger.ts
+│   ├── <span class="dir">tracing/</span>                         <span class="note"># Trace events + diagnostics</span>
+│   │   └── runTrace.ts
+│   ├── <span class="dir">artifacts/</span>                       <span class="note"># Report blocks + rendering</span>
+│   │   ├── reportBlocks.ts
+│   │   ├── reportDocument.ts
+│   │   ├── renderMarkdownArtifact.ts
+│   │   ├── renderHtmlArtifact.ts
+│   │   └── renderPdfArtifact.ts         <span class="note"># Puppeteer</span>
+│   ├── <span class="dir">delivery/</span>                        <span class="note"># Slack / email channel adapters</span>
+│   │   └── deliveryPlan.ts
+│   ├── <span class="dir">config/</span>                          <span class="note"># env loading</span>
+│   ├── <span class="dir">dev-shell/</span>                       <span class="note"># Interactive dev REPL</span>
+│   └── <span class="dir">lambda/</span>
+│       ├── ingress.ts
+│       └── worker.ts
+├── <span class="dir">tests/</span>                               <span class="note"># Vitest contract + runner tests</span>
+├── <span class="dir">scripts/</span>                             <span class="note"># grounding-eval, smoke harnesses</span>
+├── <span class="dir">out/</span>                                 <span class="note"># Eval/smoke artifacts (gitignored)</span>
+├── <span class="dir">examples/</span>                            <span class="note"># Sample briefing .md files</span>
+└── README.md
+    </div>
+  </section>
+
+  <!-- 04 The eleven phases -->
+  <section id="phases">
+    <h2>04. The eleven phases of a run</h2>
+    <p style="max-width: 800px; color: var(--ink-2);">
+      A request flows through the same eleven phases regardless of entry
+      point. Each phase emits trace events and may push entries into the
+      evidence ledger.
+    </p>
+
+    <div class="figure">
+      <svg viewBox="0 0 1140 720" role="img" aria-label="End-to-end eleven-phase lifecycle of a Briefing run">
+        <defs>
+          <marker id="arrLife" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#18181b"/>
+          </marker>
+          <marker id="arrLifeBrand" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="hsl(217 91% 53%)"/>
+          </marker>
+        </defs>
+
+        <!-- column lanes -->
+        <text x="20"  y="22" class="tiny">SETUP</text>
+        <text x="320" y="22" class="tiny">GROUNDING</text>
+        <text x="620" y="22" class="tiny">PLAN / EXECUTE / RECOVER</text>
+        <text x="920" y="22" class="tiny">SYNTHESIZE / RENDER / DELIVER</text>
+
+        <!-- Phase boxes -->
+        <g>
+          <rect x="20" y="40" width="260" height="60" rx="6" fill="#fff" stroke="#18181b"/>
+          <text x="30" y="60" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#71717a">PHASE 1</text>
+          <text x="30" y="78" font-size="13" font-weight="700">Definition parsed</text>
+          <text x="30" y="93" font-size="10.5" fill="#71717a" font-family="JetBrains Mono">parseInsightLoopMarkdown.ts</text>
+
+          <rect x="20" y="120" width="260" height="60" rx="6" fill="#fff" stroke="#18181b"/>
+          <text x="30" y="140" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#71717a">PHASE 2</text>
+          <text x="30" y="158" font-size="13" font-weight="700">Validated</text>
+          <text x="30" y="173" font-size="10.5" fill="#71717a" font-family="JetBrains Mono">validateInsightLoopDefinition.ts</text>
+
+          <rect x="20" y="200" width="260" height="60" rx="6" fill="hsl(217 91% 96%)" stroke="hsl(217 91% 60%)"/>
+          <text x="30" y="220" font-size="11" letter-spacing="0.08em" font-weight="700" fill="hsl(217 91% 28%)">PHASE 3 · MODEL CALL</text>
+          <text x="30" y="238" font-size="13" font-weight="700" fill="hsl(217 91% 22%)">Intent normalized</text>
+          <text x="30" y="253" font-size="10.5" fill="hsl(217 91% 28%)" font-family="JetBrains Mono">model.normalizeIntent()</text>
+
+          <rect x="20" y="280" width="260" height="60" rx="6" fill="#fff" stroke="#18181b"/>
+          <text x="30" y="300" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#71717a">PHASE 4</text>
+          <text x="30" y="318" font-size="13" font-weight="700">Contracts built</text>
+          <text x="30" y="333" font-size="10.5" fill="#71717a">AnswerContract + BriefingContract</text>
+        </g>
+
+        <g>
+          <rect x="320" y="40" width="260" height="60" rx="6" fill="#fef2f2" stroke="#fecaca"/>
+          <text x="330" y="58" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#b91c1c">PHASE 5 · FAIL-FAST GATE</text>
+          <text x="330" y="76" font-size="13" font-weight="700">MCP preflight</text>
+          <text x="330" y="90" font-size="10.5" fill="#9a3412">listTools must advertise query_spec</text>
+          <text x="330" y="100" font-size="10.5" fill="#9a3412">+ plan_analytics_recovery</text>
+
+          <rect x="320" y="120" width="260" height="120" rx="6" fill="#fff" stroke="#18181b"/>
+          <text x="330" y="140" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#71717a">PHASE 6</text>
+          <text x="330" y="158" font-size="13" font-weight="700">Briefing grounding</text>
+          <text x="330" y="174" font-size="11" fill="var(--ink-2)">project → semantic domains</text>
+          <text x="330" y="190" font-size="11" fill="var(--ink-2)">dashboard → cards + query seeds</text>
+          <text x="330" y="206" font-size="11" fill="var(--ink-2)">fail-fast on empty grounding</text>
+          <text x="330" y="226" font-size="10.5" fill="#71717a" font-family="JetBrains Mono">briefingGrounding.ts</text>
+
+          <rect x="320" y="260" width="260" height="60" rx="6" fill="#fff" stroke="#18181b"/>
+          <text x="330" y="280" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#71717a">PHASE 7 · DETERMINISTIC</text>
+          <text x="330" y="298" font-size="13" font-weight="700">Preflight tool calls</text>
+          <text x="330" y="313" font-size="10.5" fill="#71717a">dashboard analysis + domain discovery</text>
+        </g>
+
+        <g>
+          <rect x="620" y="40" width="260" height="200" rx="6" fill="hsl(217 91% 96%)" stroke="hsl(217 91% 60%)" stroke-width="1.5"/>
+          <text x="630" y="60" font-size="11" letter-spacing="0.08em" font-weight="700" fill="hsl(217 91% 28%)">PHASE 8 · ITERATIVE</text>
+          <text x="630" y="78" font-size="13" font-weight="700" fill="hsl(217 91% 22%)">Planning &amp; execution loop</text>
+          <text x="630" y="98" font-size="11" fill="hsl(217 91% 28%)">FOR iter 1..maxPlanningIterations:</text>
+          <text x="640" y="114" font-size="11" fill="hsl(217 91% 28%)">1. assess coverage</text>
+          <text x="640" y="130" font-size="11" fill="hsl(217 91% 28%)">2. model.createPlan()</text>
+          <text x="640" y="146" font-size="11" fill="hsl(217 91% 28%)">3. apply tool policy</text>
+          <text x="640" y="162" font-size="11" fill="hsl(217 91% 28%)">4. execute via MCP</text>
+          <text x="640" y="178" font-size="11" fill="hsl(217 91% 28%)">5. record evidence</text>
+          <text x="640" y="194" font-size="11" fill="hsl(217 91% 28%)">6. exit if done / stalled</text>
+          <text x="630" y="220" font-size="10.5" fill="hsl(217 91% 28%)" font-family="JetBrains Mono">runInsightLoop.ts:510+</text>
+
+          <rect x="620" y="260" width="260" height="160" rx="6" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+          <text x="630" y="280" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#c2410c">PHASE 9 · KERNEL CLIENT</text>
+          <text x="630" y="298" font-size="13" font-weight="700" fill="#7c2d12">Answer recovery</text>
+          <text x="630" y="318" font-size="11" fill="#9a3412">FOR attempt 1..4:</text>
+          <text x="640" y="334" font-size="11" fill="#9a3412">- build OperationIntent</text>
+          <text x="640" y="350" font-size="11" fill="#9a3412">- call MCP plan_analytics_recovery</text>
+          <text x="640" y="366" font-size="11" fill="#9a3412">- execute returned plan</text>
+          <text x="640" y="382" font-size="11" fill="#9a3412">- break if no progress</text>
+          <text x="630" y="402" font-size="10.5" fill="#9a3412" font-family="JetBrains Mono">answerRecovery.ts (thin adapter)</text>
+        </g>
+
+        <g>
+          <rect x="920" y="40" width="200" height="60" rx="6" fill="hsl(217 91% 96%)" stroke="hsl(217 91% 60%)"/>
+          <text x="930" y="60" font-size="11" letter-spacing="0.08em" font-weight="700" fill="hsl(217 91% 28%)">PHASE 10 · MODEL CALL</text>
+          <text x="930" y="78" font-size="13" font-weight="700" fill="hsl(217 91% 22%)">Answer synthesis</text>
+          <text x="930" y="93" font-size="10.5" fill="hsl(217 91% 28%)" font-family="JetBrains Mono">model.synthesizeAnswer()</text>
+
+          <rect x="920" y="120" width="200" height="60" rx="6" fill="#fff" stroke="#18181b"/>
+          <text x="930" y="140" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#71717a">PHASE 11A</text>
+          <text x="930" y="158" font-size="13" font-weight="700">Report planning</text>
+          <text x="930" y="173" font-size="10.5" fill="#71717a">buildReportPlan() → blocks</text>
+
+          <rect x="920" y="200" width="200" height="60" rx="6" fill="#fff" stroke="#18181b"/>
+          <text x="930" y="220" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#71717a">PHASE 11B</text>
+          <text x="930" y="238" font-size="13" font-weight="700">Rendering</text>
+          <text x="930" y="253" font-size="10.5" fill="#71717a">.md / .html / .pdf</text>
+
+          <rect x="920" y="280" width="200" height="60" rx="6" fill="#f0fdf4" stroke="#86efac"/>
+          <text x="930" y="300" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#15803d">PHASE 11C</text>
+          <text x="930" y="318" font-size="13" font-weight="700" fill="#14532d">Delivery</text>
+          <text x="930" y="333" font-size="10.5" fill="#166534">Slack / email / dry-run</text>
+
+          <rect x="920" y="360" width="200" height="60" rx="6" fill="#fff" stroke="#18181b"/>
+          <text x="930" y="380" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#71717a">OUTPUT</text>
+          <text x="930" y="398" font-size="13" font-weight="700">writeRunOutputs()</text>
+          <text x="930" y="413" font-size="10.5" fill="#71717a">files or callback</text>
+        </g>
+
+        <!-- intra-column arrows -->
+        <g>
+          <path d="M150,100 L150,120" class="arrow" marker-end="url(#arrLife)"/>
+          <path d="M150,180 L150,200" class="arrow" marker-end="url(#arrLife)"/>
+          <path d="M150,260 L150,280" class="arrow" marker-end="url(#arrLife)"/>
+
+          <path d="M450,100 L450,120" class="arrow" marker-end="url(#arrLife)"/>
+          <path d="M450,240 L450,260" class="arrow" marker-end="url(#arrLife)"/>
+
+          <path d="M750,240 L750,260" class="arrow" marker-end="url(#arrLife)"/>
+
+          <path d="M1020,100 L1020,120" class="arrow" marker-end="url(#arrLife)"/>
+          <path d="M1020,180 L1020,200" class="arrow" marker-end="url(#arrLife)"/>
+          <path d="M1020,260 L1020,280" class="arrow" marker-end="url(#arrLife)"/>
+          <path d="M1020,340 L1020,360" class="arrow" marker-end="url(#arrLife)"/>
+        </g>
+
+        <!-- inter-column arrows -->
+        <g>
+          <path d="M280,310 C300,310 310,70 320,70" class="arrow" marker-end="url(#arrLife)"/>
+          <path d="M580,290 C600,290 610,420 620,420" class="arrow-brand" marker-end="url(#arrLifeBrand)"/>
+          <path d="M880,140 C900,140 910,70 920,70" class="arrow-brand" marker-end="url(#arrLifeBrand)"/>
+        </g>
+
+        <!-- Recovery feedback arrow -->
+        <g>
+          <path d="M620,340 C580,340 580,140 620,140" class="arrow-brand" stroke-dasharray="4 4" marker-end="url(#arrLifeBrand)"/>
+          <text x="540" y="240" font-size="10" fill="hsl(217 91% 28%)" font-style="italic">recovery may add more tool calls</text>
+        </g>
+
+        <!-- Caption rows -->
+        <g>
+          <text x="20" y="490" class="tiny">EVIDENCE LEDGER &amp; TRACE EVENTS ACCUMULATE THROUGHOUT</text>
+          <rect x="20" y="500" width="1100" height="50" rx="6" fill="#fafafa" stroke="#d4d4d8"/>
+          <text x="40" y="522" font-size="12" fill="var(--ink-2)">
+            Every tool call → <tspan font-family="JetBrains Mono" fill="hsl(217 91% 28%)">EvidenceLedger.recordToolCall()</tspan>;
+            every phase boundary → <tspan font-family="JetBrains Mono" fill="hsl(217 91% 28%)">RunTrace.add(event)</tspan>;
+            failures → <tspan font-family="JetBrains Mono" fill="hsl(217 91% 28%)">recordLimitation()</tspan> + RunFailureCategory.
+          </text>
+          <text x="40" y="540" font-size="12" fill="var(--ink-2)">
+            Trace diagnostics aggregate live: tool counts, query path counts, slot statuses, replay hints.
+          </text>
+        </g>
+
+        <!-- Terminal status -->
+        <g>
+          <rect x="20" y="580" width="350" height="120" rx="6" fill="#f0fdf4" stroke="#86efac"/>
+          <text x="40" y="604" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#15803d">TERMINAL · ANSWERED</text>
+          <text x="40" y="622" font-size="12" fill="#14532d">All required slots have answered execution results.</text>
+          <text x="40" y="640" font-size="12" fill="#14532d">Presentation blocks satisfied.</text>
+          <text x="40" y="658" font-size="12" fill="#14532d">No duplicate findings in canonical content.</text>
+          <text x="40" y="682" font-size="10.5" fill="#166534" font-family="JetBrains Mono">status: SUCCESS</text>
+
+          <rect x="390" y="580" width="350" height="120" rx="6" fill="#fff7ed" stroke="#fdba74"/>
+          <text x="410" y="604" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#c2410c">TERMINAL · PARTIAL</text>
+          <text x="410" y="622" font-size="12" fill="#7c2d12">Required answer slots satisfied,</text>
+          <text x="410" y="640" font-size="12" fill="#7c2d12">but some presentation slots missing</text>
+          <text x="410" y="658" font-size="12" fill="#7c2d12">(e.g., requested chart kind unavailable).</text>
+          <text x="410" y="682" font-size="10.5" fill="#9a3412" font-family="JetBrains Mono">status: PARTIAL</text>
+
+          <rect x="760" y="580" width="360" height="120" rx="6" fill="#fef2f2" stroke="#fecaca"/>
+          <text x="780" y="604" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#b91c1c">TERMINAL · FAILED</text>
+          <text x="780" y="622" font-size="12" fill="#7f1d1d">Required slot unsatisfied after recovery,</text>
+          <text x="780" y="640" font-size="12" fill="#7f1d1d">grounding empty, MCP preflight failed,</text>
+          <text x="780" y="658" font-size="12" fill="#7f1d1d">or model planning stalled.</text>
+          <text x="780" y="682" font-size="10.5" fill="#991b1b" font-family="JetBrains Mono">status: FAILURE + concise terminal artifact</text>
+        </g>
+      </svg>
+      <p class="caption">Eleven phases, four lanes. Three model calls (normalize, plan-per-iteration, synthesize) bracket the deterministic and policy-bounded work.</p>
+    </div>
+  </section>
+
+  <!-- 05 Answer & Briefing contracts -->
+  <section id="contracts">
+    <h2>05. The two contracts: Answer and Briefing</h2>
+    <p style="max-width: 800px; color: var(--ink-2);">
+      Phase 4 produces two typed contracts that the rest of the run is
+      measured against. AnswerContract owns <em>what the user asked for</em>
+      as data; BriefingContract owns <em>how it must be presented and
+      delivered</em>.
+    </p>
+
+    <div class="grid-2">
+      <div class="card brand">
+        <div class="tag">Data-shaped</div>
+        <h3 style="margin: 6px 0;">AnswerContract</h3>
+        <p style="color: var(--ink-2); margin: 0 0 10px;">Decomposes the briefing into typed slots with field candidates. Every slot is independently answerable, validated, and recoverable.</p>
+<pre style="font-size: 11.5px; margin: 0;">{
+  version: <span class="s">1</span>,
+  taskType: <span class="s">"mixed"</span>,
+  slots: [
+    {
+      id: <span class="s">"revenue_trend"</span>,
+      type: <span class="s">"trend"</span>,
+      subject: <span class="s">"revenue by month"</span>,
+      prompt: <span class="s">"Show revenue trend..."</span>,
+      entityCandidates: [<span class="s">"orders"</span>],
+      dateFieldCandidates: [<span class="s">"order_date"</span>],
+      displayFieldCandidates: [<span class="s">"revenue"</span>],
+      timeWindowMonths: <span class="s">12</span>,
+      required: <span class="k">true</span>
+    },
+    ...
+  ]
+}</pre>
+        <p style="font-size: 12px; color: var(--muted); margin-top: 10px;"><code>src/briefings/answerContract.ts</code></p>
+      </div>
+
+      <div class="card purple">
+        <div class="tag">Experience-shaped</div>
+        <h3 style="margin: 6px 0;">BriefingContract</h3>
+        <p style="color: var(--ink-2); margin: 0 0 10px;">Wraps the AnswerContract with presentation slots, artifact formats, delivery targets, channel profiles, and quality gates.</p>
+<pre style="font-size: 11.5px; margin: 0;">{
+  version: <span class="s">1</span>,
+  answerContract: { ... },
+  presentationSlots: [
+    {
+      id: <span class="s">"revenue_metric"</span>,
+      kind: <span class="s">"metric"</span>,
+      sourceAnswerSlotIds: [<span class="s">"revenue_trend"</span>],
+      required: <span class="k">true</span>
+    }
+  ],
+  artifactTargets: [<span class="s">"markdown"</span>, <span class="s">"html"</span>],
+  deliveryTargets: [
+    { channel: <span class="s">"slack"</span>, target: <span class="s">"#growth"</span> }
+  ],
+  channelProfiles: [...],
+  qualityGates: [...]
+}</pre>
+        <p style="font-size: 12px; color: var(--muted); margin-top: 10px;"><code>src/briefings/briefingContract.ts</code></p>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 32px;">Answer task types</h3>
+    <div class="card" style="margin-top: 8px; padding: 0;">
+      <table>
+        <thead>
+          <tr><th>type</th><th>What it represents</th><th>Typical query path</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>record_list</code></td><td>SELECT ... ORDER BY ... LIMIT N</td><td>query_spec records, or SQL</td></tr>
+          <tr><td><code>count</code></td><td>COUNT(*) over a filter</td><td>query_spec metric</td></tr>
+          <tr><td><code>trend</code></td><td>Metric grouped by a time grain</td><td>query_spec with dateField + timeGrain</td></tr>
+          <tr><td><code>comparison</code></td><td>Current period vs previous</td><td>query_spec with <code>comparison</code></td></tr>
+          <tr><td><code>driver_analysis</code></td><td>Which dimensions drove a change</td><td>query_spec with <code>driverMode</code></td></tr>
+          <tr><td><code>metric_summary</code></td><td>KPI panel</td><td>query_spec metric(s)</td></tr>
+          <tr><td><code>analysis_table</code></td><td>Multi-dimensional detail</td><td>query_spec records</td></tr>
+          <tr><td><code>lookup</code></td><td>Find a specific entity</td><td>query_spec or SQL</td></tr>
+          <tr><td><code>mixed</code></td><td>Several different tasks</td><td>per-slot decision</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 06 The insight loop -->
+  <section id="loop">
+    <h2>06. The insight loop &mdash; why it iterates</h2>
+    <p style="max-width: 820px; color: var(--ink-2);">
+      The single most important question about this runner is: why is
+      planning a loop, not a single model call? The short answer is that
+      the model cannot plan everything up front, because most of the
+      information it needs to plan does not exist yet. Each iteration
+      gives the model a fresh, richer view of reality and asks for the
+      next small batch of moves.
+    </p>
+
+    <div class="callout">
+      <strong>Mental model:</strong> this is a bounded ReAct loop. The model
+      acts as a planner, not an executor. It proposes a small batch of
+      tool calls, the runner executes them through policy, evidence and
+      coverage update, and the loop hands the model the new state for the
+      next batch. Five iterations + a budget of tool calls give meaningful
+      depth without unbounded cost.
+    </div>
+
+    <h3>What the model doesn't know on iteration 1</h3>
+    <p style="color: var(--ink-2); margin: 6px 0 14px;">
+      Briefings start from a Markdown definition and a project token. The
+      planner doesn't yet know any of this:
+    </p>
+    <div class="grid-2">
+      <ul class="clean">
+        <li>Which semantic datasets exist in the project</li>
+        <li>What fields they have, what role each field plays</li>
+        <li>Whether a candidate dataset name in a slot actually resolves</li>
+        <li>Whether requested metric/dimension fields exist or are calculated</li>
+      </ul>
+      <ul class="clean">
+        <li>What the real time-window of available data is</li>
+        <li>Whether <code>previous_period</code> comparison returns rows</li>
+        <li>Whether a query will succeed, partially succeed, or error with a recovery hint</li>
+        <li>How many tool calls are left in the budget</li>
+      </ul>
+    </div>
+
+    <h3 style="margin-top: 24px;">What changes between iterations</h3>
+    <p style="color: var(--ink-2); margin: 6px 0 14px;">
+      These five inputs to <code>model.createPlan()</code> all change as the
+      loop progresses. That is the leverage iterations buy.
+    </p>
+    <div class="card" style="margin-top: 8px; padding: 0;">
+      <table>
+        <thead><tr><th>Input</th><th>How it evolves</th></tr></thead>
+        <tbody>
+          <tr><td><code>evidence</code></td><td>Each successful tool call adds an entry: schema, query result samples, query path decisions. The model can now reference real field names.</td></tr>
+          <tr><td><code>answerCoverage</code></td><td>Recomputed at the top of every iteration. Slots transition from <code>missing_schema</code> &rarr; <code>missing_query</code> &rarr; <code>partial</code> &rarr; <code>answered</code>. Tells the model what is still missing.</td></tr>
+          <tr><td><code>remainingToolCalls</code></td><td>Decreases monotonically. Tells the model how aggressive to be: do a careful schema pass when there's budget; commit to the best guess when there's not.</td></tr>
+          <tr><td>policy violations</td><td>If the previous batch had calls rejected (bad SQL, out-of-scope, duplicate), the violations show up in evidence as limitations. The model gets one chance to correct.</td></tr>
+          <tr><td>recovery hints</td><td>Failed query results often carry <code>{ invalidField, candidates: [...] }</code>. Stored in evidence; the next plan can use the candidate instead of guessing again.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="margin-top: 24px;">A concrete example: one briefing, three iterations</h3>
+    <div class="grid-3">
+      <div class="card brand">
+        <div class="tag">Iteration 1</div>
+        <h3 style="margin: 6px 0;">Discovery</h3>
+        <p style="color: var(--ink-2); margin: 0 0 8px;">Coverage: all slots <code>missing_schema</code>. Model sees only the briefing intent.</p>
+        <p style="color: var(--ink-2); margin: 0 0 8px;"><strong>Plans:</strong></p>
+        <ul class="clean">
+          <li><code>list_semantic_domains</code></li>
+          <li><code>list_datasets(domainId)</code></li>
+          <li><code>get_dataset_schema(orders)</code></li>
+        </ul>
+        <p style="color: var(--ink-2); font-size: 12.5px; margin: 8px 0 0;"><strong>Evidence after:</strong> real field names + roles known.</p>
+      </div>
+      <div class="card brand">
+        <div class="tag">Iteration 2</div>
+        <h3 style="margin: 6px 0;">First query attempt</h3>
+        <p style="color: var(--ink-2); margin: 0 0 8px;">Coverage: <code>missing_query</code>. Model has schema; tries a query.</p>
+        <p style="color: var(--ink-2); margin: 0 0 8px;"><strong>Plans:</strong></p>
+        <ul class="clean">
+          <li><code>semaphor_analyze(domainId: "sales", datasetName: "orders", metrics: [{name: "revenue", datasetName: "orders"}], dateField: "order_dt")</code></li>
+        </ul>
+        <p style="color: var(--ink-2); font-size: 12.5px; margin: 8px 0 0;"><strong>Result:</strong> error with <code>recoveryHints: { candidates: ["order_date"] }</code>. Evidence grows. Coverage still missing.</p>
+      </div>
+      <div class="card brand">
+        <div class="tag">Iteration 3</div>
+        <h3 style="margin: 6px 0;">Correction</h3>
+        <p style="color: var(--ink-2); margin: 0 0 8px;">Coverage: <code>missing_query</code>. Model sees the recovery hint in evidence.</p>
+        <p style="color: var(--ink-2); margin: 0 0 8px;"><strong>Plans:</strong></p>
+        <ul class="clean">
+          <li><code>semaphor_analyze(domainId: "sales", datasetName: "orders", metrics: [{name: "revenue", datasetName: "orders"}], dateField: "order_date")</code></li>
+        </ul>
+        <p style="color: var(--ink-2); font-size: 12.5px; margin: 8px 0 0;"><strong>Result:</strong> 12 rows. Slot <code>answered</code>. Model plans zero next calls &rarr; <code>planning_complete</code>.</p>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 28px;">A single iteration, in detail</h3>
+
+    <div class="figure">
+      <svg viewBox="0 0 1100 560" role="img" aria-label="One planning iteration of the insight loop in detail">
+        <defs>
+          <marker id="arrLoop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#18181b"/>
+          </marker>
+          <marker id="arrLoopBrand" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="hsl(217 91% 53%)"/>
+          </marker>
+        </defs>
+
+        <!-- Iteration box -->
+        <rect x="40" y="20" width="1020" height="440" rx="8" fill="#fafafa" stroke="#d4d4d8" stroke-dasharray="4 4"/>
+        <text x="60" y="44" font-size="11" letter-spacing="0.12em" font-weight="700" fill="#71717a">PLANNING ITERATION  N  OF  maxPlanningIterations  (default 5)</text>
+
+        <!-- Step 1 -->
+        <rect x="80" y="80" width="200" height="80" rx="6" fill="#fff" stroke="#18181b"/>
+        <text x="180" y="102" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#71717a">STEP 1</text>
+        <text x="180" y="122" text-anchor="middle" font-size="13" font-weight="700">Assess coverage</text>
+        <text x="180" y="140" text-anchor="middle" font-size="10.5" fill="#71717a">assessAnswerCoverage()</text>
+        <text x="180" y="154" text-anchor="middle" font-size="10.5" fill="#71717a">which slots already answered?</text>
+
+        <!-- Step 2 -->
+        <rect x="320" y="80" width="200" height="80" rx="6" fill="hsl(217 91% 96%)" stroke="hsl(217 91% 60%)"/>
+        <text x="420" y="102" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="hsl(217 91% 28%)">STEP 2 · MODEL CALL</text>
+        <text x="420" y="122" text-anchor="middle" font-size="13" font-weight="700" fill="hsl(217 91% 22%)">createPlan()</text>
+        <text x="420" y="140" text-anchor="middle" font-size="10.5" fill="hsl(217 91% 28%)">recommendedQueryPath +</text>
+        <text x="420" y="154" text-anchor="middle" font-size="10.5" fill="hsl(217 91% 28%)">plannedToolCalls[]</text>
+
+        <!-- Step 3 -->
+        <rect x="560" y="80" width="200" height="80" rx="6" fill="#fff7ed" stroke="#fdba74"/>
+        <text x="660" y="102" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#c2410c">STEP 3 · POLICY</text>
+        <text x="660" y="122" text-anchor="middle" font-size="13" font-weight="700" fill="#7c2d12">Apply policy</text>
+        <text x="660" y="140" text-anchor="middle" font-size="10.5" fill="#9a3412">whitelist · SQL bounds · scope</text>
+        <text x="660" y="154" text-anchor="middle" font-size="10.5" fill="#9a3412">filtered calls + violations</text>
+
+        <!-- Step 4 -->
+        <rect x="800" y="80" width="200" height="80" rx="6" fill="#fff" stroke="#18181b"/>
+        <text x="900" y="102" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#71717a">STEP 4</text>
+        <text x="900" y="122" text-anchor="middle" font-size="13" font-weight="700">Execute via MCP</text>
+        <text x="900" y="140" text-anchor="middle" font-size="10.5" fill="#71717a">semaphor.callTool()</text>
+        <text x="900" y="154" text-anchor="middle" font-size="10.5" fill="#71717a">skip duplicates</text>
+
+        <!-- arrows row 1 -->
+        <path d="M280,120 L320,120" class="arrow" marker-end="url(#arrLoop)"/>
+        <path d="M520,120 L560,120" class="arrow" marker-end="url(#arrLoop)"/>
+        <path d="M760,120 L800,120" class="arrow" marker-end="url(#arrLoop)"/>
+
+        <!-- Step 5 -->
+        <rect x="640" y="220" width="280" height="80" rx="6" fill="#f0fdf4" stroke="#86efac"/>
+        <text x="780" y="242" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#15803d">STEP 5 · TWO LEDGERS</text>
+        <text x="780" y="262" text-anchor="middle" font-size="13" font-weight="700" fill="#14532d">Record evidence + trace</text>
+        <text x="780" y="280" text-anchor="middle" font-size="10.5" fill="#166534">EvidenceLedger.recordToolCall()</text>
+        <text x="780" y="294" text-anchor="middle" font-size="10.5" fill="#166534">RunTrace.add(event)</text>
+
+        <!-- Step 6 -->
+        <rect x="180" y="220" width="380" height="80" rx="6" fill="#fff" stroke="#18181b"/>
+        <text x="370" y="242" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#71717a">STEP 6 · EXIT CONDITIONS</text>
+        <text x="370" y="262" text-anchor="middle" font-size="13" font-weight="700">Break or continue?</text>
+        <text x="370" y="280" text-anchor="middle" font-size="10.5" fill="#71717a">no planned calls · budget exhausted ·</text>
+        <text x="370" y="294" text-anchor="middle" font-size="10.5" fill="#71717a">no progress + repeated feedback (stalled)</text>
+
+        <!-- arrows down + loop -->
+        <path d="M900,160 C900,190 800,190 780,220" class="arrow" marker-end="url(#arrLoop)"/>
+        <path d="M640,260 L560,260" class="arrow" marker-end="url(#arrLoop)"/>
+        <path d="M180,260 C140,260 130,180 180,140 L180,120" class="arrow-brand" stroke-dasharray="3 3" marker-end="url(#arrLoopBrand)"/>
+        <text x="80" y="180" font-size="10.5" fill="hsl(217 91% 28%)" font-style="italic">loop to next iter</text>
+
+        <!-- State tracked across iterations -->
+        <rect x="80" y="340" width="920" height="100" rx="6" fill="#0f172a" stroke="#1e293b"/>
+        <text x="100" y="364" font-size="11" letter-spacing="0.12em" font-weight="700" fill="#93c5fd">STATE CARRIED BETWEEN ITERATIONS</text>
+        <g font-family="JetBrains Mono" font-size="11.5" fill="#e2e8f0">
+          <text x="100" y="386">executedToolCalls         <tspan fill="#64748b">// counter, bounded by maxToolCalls</tspan></text>
+          <text x="100" y="402">executedCallKeys          <tspan fill="#64748b">// Set&lt;string&gt; prevents duplicate calls</tspan></text>
+          <text x="100" y="418">lastSuccessfulQueryPath   <tspan fill="#64748b">// "query_spec" | "sql" | "sql_python" | "none"</tspan></text>
+          <text x="100" y="434">consecutiveFeedbackOnlyIterations  <tspan fill="#64748b">// stall detector</tspan></text>
+        </g>
+
+        <!-- Caption -->
+        <text x="80" y="490" font-size="11" fill="var(--muted)" letter-spacing="0.08em" font-weight="600">ALL DEFINED IN  runInsightLoop.ts  lines 510-721</text>
+        <text x="80" y="508" font-size="12" fill="var(--ink-2)">The model never executes a tool directly. It plans; policy filters; the runner executes; evidence accumulates.</text>
+      </svg>
+      <p class="caption">Six steps per iteration. The model proposes; policy gates; the runner executes; evidence and trace persist across iterations.</p>
+    </div>
+
+    <h3>What a model plan looks like</h3>
+<pre>{
+  <span class="n">summary</span>: <span class="s">"Discover sales domain, then query monthly revenue trend"</span>,
+  <span class="n">rationale</span>: <span class="s">"Need schema before issuing a metric query"</span>,
+  <span class="n">recommendedQueryPath</span>: <span class="s">"query_spec"</span>,
+  <span class="n">plannedToolCalls</span>: [
+    {
+      <span class="n">name</span>: <span class="s">"semaphor_list_datasets"</span>,
+      <span class="n">arguments</span>: { <span class="n">domainId</span>: <span class="s">"sales"</span> },
+      <span class="n">purpose</span>: <span class="s">"[slot:revenue_trend] discover orders dataset"</span>
+    },
+    {
+      <span class="n">name</span>: <span class="s">"semaphor_analyze"</span>,
+      <span class="n">arguments</span>: {
+        <span class="n">domainId</span>: <span class="s">"sales"</span>,
+        <span class="n">datasetName</span>: <span class="s">"orders"</span>,
+        <span class="n">metrics</span>: [{ <span class="n">name</span>: <span class="s">"revenue"</span>, <span class="n">datasetName</span>: <span class="s">"orders"</span> }],
+        <span class="n">dateField</span>: <span class="s">"order_date"</span>,
+        <span class="n">timeGrain</span>: <span class="s">"month"</span>,
+        <span class="n">comparison</span>: <span class="s">"previous_period"</span>
+      },
+      <span class="n">purpose</span>: <span class="s">"[slot:revenue_trend] monthly revenue with YoY comparison"</span>
+    }
+  ]
+}</pre>
+    <p style="color: var(--muted); font-size: 13px; margin-top: 6px;">
+      The <code>[slot:X]</code> tag in <code>purpose</code> is what coverage assessment uses to attribute evidence back to answer slots.
+    </p>
+
+    <h3 style="margin-top: 32px;">The five exit conditions, in priority order</h3>
+    <p style="color: var(--ink-2); margin: 6px 0 14px;">
+      The loop has more ways to terminate than it has ways to continue.
+      Understanding each one is how you debug a Briefing that "ran but
+      didn't answer."
+    </p>
+    <div class="card" style="padding: 0;">
+      <table>
+        <thead>
+          <tr><th style="width: 30%;">Trace event</th><th>Condition (checked in this order)</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>tool_budget_exhausted</code></td>
+            <td>At the top of the iteration, <code>remainingToolCalls &le; 0</code>. The hard ceiling. <code>maxToolCalls</code> defaults to a finite value per run.</td>
+          </tr>
+          <tr>
+            <td><code>planning_paused_for_answer_recovery</code></td>
+            <td>If the AnswerContract has slots, the loop reserves <strong>6 tool calls</strong> for the kernel recovery phase. Once <code>remainingToolCalls &le; 6</code> on iteration 2+ AND coverage is incomplete, planning yields its remaining budget to recovery.</td>
+          </tr>
+          <tr>
+            <td><code>planning_complete</code></td>
+            <td>The model returned <code>plannedToolCalls: []</code>. That's the agentic "I'm done" signal. Coverage may or may not be satisfied; if not, recovery still runs.</td>
+          </tr>
+          <tr>
+            <td><code>planning_stalled</code> (no-progress)</td>
+            <td><code>executedThisIteration === 0 && !feedbackThisIteration</code>. Every planned call was a duplicate, but no policy violation triggered either. Loop bails immediately.</td>
+          </tr>
+          <tr>
+            <td><code>planning_stalled</code> (feedback-only)</td>
+            <td>Two consecutive iterations where the only output was policy feedback (<code>consecutiveFeedbackOnlyIterations &ge; 2</code>). The model got one chance to course-correct; it didn't. Bail.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="margin-top: 24px;">The stall detector, mechanically</h3>
+    <p style="color: var(--ink-2); margin: 6px 0 12px;">
+      A subtle but important state machine. Two flags interact:
+      <code>executedThisIteration</code> (did anything actually run?) and
+      <code>feedbackThisIteration</code> (did the policy reject at least
+      one call, OR did execution skip a duplicate?). They produce four
+      cases:
+    </p>
+    <div class="figure" style="padding: 12px 24px;">
+      <svg viewBox="0 0 1040 280" role="img" aria-label="Four-case truth table for stall detection">
+        <g font-family="Open Sans">
+          <text x="220" y="42" text-anchor="middle" font-size="12" font-weight="700" fill="#71717a">feedbackThisIteration = false</text>
+          <text x="660" y="42" text-anchor="middle" font-size="12" font-weight="700" fill="#71717a">feedbackThisIteration = true</text>
+
+          <text x="40" y="124" text-anchor="end" font-size="12" font-weight="700" fill="#71717a">executed &gt; 0</text>
+          <text x="40" y="220" text-anchor="end" font-size="12" font-weight="700" fill="#71717a">executed = 0</text>
+
+          <rect x="60" y="60" width="340" height="120" rx="6" fill="#f0fdf4" stroke="#86efac"/>
+          <text x="230" y="86" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#15803d">HEALTHY PROGRESS</text>
+          <text x="230" y="108" text-anchor="middle" font-size="12" fill="#14532d">Reset consecutiveFeedbackOnly to 0</text>
+          <text x="230" y="126" text-anchor="middle" font-size="12" fill="#14532d">Continue to next iteration</text>
+          <text x="230" y="146" text-anchor="middle" font-size="11" fill="#166534">most iterations land here</text>
+
+          <rect x="500" y="60" width="340" height="120" rx="6" fill="#fff7ed" stroke="#fdba74"/>
+          <text x="670" y="86" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#c2410c">MIXED PROGRESS</text>
+          <text x="670" y="108" text-anchor="middle" font-size="12" fill="#7c2d12">Some calls rejected, some ran</text>
+          <text x="670" y="126" text-anchor="middle" font-size="12" fill="#7c2d12">Reset counter, continue</text>
+          <text x="670" y="146" text-anchor="middle" font-size="11" fill="#9a3412">feedback rides into next plan via evidence</text>
+
+          <rect x="60" y="190" width="340" height="80" rx="6" fill="#fef2f2" stroke="#fecaca"/>
+          <text x="230" y="216" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#b91c1c">STALLED IMMEDIATELY</text>
+          <text x="230" y="236" text-anchor="middle" font-size="12" fill="#7f1d1d">Model planned only duplicates and no</text>
+          <text x="230" y="252" text-anchor="middle" font-size="12" fill="#7f1d1d">policy fired &rarr; break right away</text>
+
+          <rect x="500" y="190" width="340" height="80" rx="6" fill="hsl(217 91% 96%)" stroke="hsl(217 91% 60%)"/>
+          <text x="670" y="216" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="hsl(217 91% 28%)">ONE CHANCE TO CORRECT</text>
+          <text x="670" y="234" text-anchor="middle" font-size="12" fill="hsl(217 91% 22%)">consecutiveFeedbackOnly++ ; continue</text>
+          <text x="670" y="252" text-anchor="middle" font-size="12" fill="hsl(217 91% 22%)">break only when counter reaches 2</text>
+        </g>
+      </svg>
+      <p class="caption">The two-iteration grace period exists because the model deserves exactly one chance to fix policy-rejected calls after seeing the violation. Repeated feedback-only iterations mean the model can't recover.</p>
+    </div>
+
+    <h3 style="margin-top: 24px;">Budget reservation, illustrated</h3>
+    <p style="color: var(--ink-2); margin: 6px 0 12px;">
+      Why does planning yield 6 tool calls to recovery? Because the
+      recovery phase itself spends one tool call to ask the kernel for a
+      plan, then executes up to ~5 returned recovery calls. Without the
+      reservation, an over-eager planner could leave recovery with nothing
+      to spend.
+    </p>
+    <div class="figure" style="padding: 12px 24px;">
+      <svg viewBox="0 0 1040 160" role="img" aria-label="Tool budget split between planning and recovery">
+        <g>
+          <rect x="40" y="60" width="960" height="48" rx="4" fill="#e4e4e7"/>
+          <rect x="40" y="60" width="720" height="48" rx="4 0 0 4" fill="hsl(217 91% 53%)"/>
+          <rect x="760" y="60" width="240" height="48" fill="#c2410c"/>
+          <text x="400" y="90" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">PLANNING (consumes until remaining ≤ 6)</text>
+          <text x="880" y="90" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">RECOVERY RESERVE</text>
+          <text x="40" y="138" font-size="11" fill="#71717a">0</text>
+          <text x="1000" y="138" font-size="11" text-anchor="end" fill="#71717a">maxToolCalls</text>
+          <line x1="760" y1="108" x2="760" y2="124" stroke="#71717a" stroke-width="1"/>
+          <text x="760" y="138" text-anchor="middle" font-size="11" fill="#71717a">recoveryReserve = 6</text>
+        </g>
+      </svg>
+      <p class="caption">Reservation only activates on iteration 2+ and only when coverage isn't already satisfied (no point reserving if there's nothing to recover).</p>
+    </div>
+  </section>
+
+  <!-- 07 Tool call policy -->
+  <section id="policy">
+    <h2>07. Tool call policy &mdash; the safety gate</h2>
+    <p style="max-width: 800px; color: var(--ink-2);">
+      Between the model and MCP sits <code>applyPlannedToolCallPolicy()</code>.
+      It rejects calls that violate the read-only whitelist, lack required SQL
+      bounds, fall outside briefing scope, or duplicate a previous call.
+    </p>
+
+    <div class="figure">
+      <svg viewBox="0 0 1100 360" role="img" aria-label="The four filters of the tool call policy">
+        <defs>
+          <marker id="arrPol" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#18181b"/>
+          </marker>
+        </defs>
+
+        <!-- Input from model -->
+        <rect x="20" y="40" width="180" height="80" rx="6" fill="hsl(217 91% 96%)" stroke="hsl(217 91% 60%)"/>
+        <text x="110" y="64" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="hsl(217 91% 28%)">MODEL OUTPUT</text>
+        <text x="110" y="84" text-anchor="middle" font-size="13" font-weight="700" fill="hsl(217 91% 22%)">plannedToolCalls[]</text>
+        <text x="110" y="102" text-anchor="middle" font-size="10.5" fill="hsl(217 91% 28%)">untrusted, optimistic</text>
+
+        <path d="M200,80 L240,80" class="arrow" marker-end="url(#arrPol)"/>
+
+        <!-- Four filters stacked -->
+        <g>
+          <rect x="240" y="20" width="280" height="50" rx="6" fill="#fff7ed" stroke="#fdba74"/>
+          <text x="260" y="42" font-size="11" font-weight="700" fill="#7c2d12">FILTER 1 · WHITELIST</text>
+          <text x="260" y="60" font-size="10.5" fill="#9a3412">Only tools in READ_QUERY_TOOLS pass</text>
+
+          <rect x="240" y="80" width="280" height="50" rx="6" fill="#fff7ed" stroke="#fdba74"/>
+          <text x="260" y="102" font-size="11" font-weight="700" fill="#7c2d12">FILTER 2 · SQL BOUNDS</text>
+          <text x="260" y="120" font-size="10.5" fill="#9a3412">SELECT/WITH + explicit LIMIT, no placeholders</text>
+
+          <rect x="240" y="140" width="280" height="50" rx="6" fill="#fff7ed" stroke="#fdba74"/>
+          <text x="260" y="162" font-size="11" font-weight="700" fill="#7c2d12">FILTER 3 · BRIEFING SCOPE</text>
+          <text x="260" y="180" font-size="10.5" fill="#9a3412">dashboard mode rejects broad project scans</text>
+
+          <rect x="240" y="200" width="280" height="50" rx="6" fill="#fff7ed" stroke="#fdba74"/>
+          <text x="260" y="222" font-size="11" font-weight="700" fill="#7c2d12">FILTER 4 · DEDUPE</text>
+          <text x="260" y="240" font-size="10.5" fill="#9a3412">executedCallKeys Set prevents repeats</text>
+
+          <rect x="240" y="260" width="280" height="50" rx="6" fill="#fff7ed" stroke="#fdba74"/>
+          <text x="260" y="282" font-size="11" font-weight="700" fill="#7c2d12">FILTER 5 · BUDGET</text>
+          <text x="260" y="300" font-size="10.5" fill="#9a3412">stop when executedToolCalls ≥ maxToolCalls</text>
+        </g>
+
+        <path d="M520,160 L560,160" class="arrow" marker-end="url(#arrPol)"/>
+
+        <!-- Output -->
+        <rect x="560" y="80" width="200" height="160" rx="6" fill="#fff" stroke="#18181b"/>
+        <text x="660" y="104" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#71717a">POLICY OUTPUT</text>
+        <text x="660" y="128" text-anchor="middle" font-size="13" font-weight="700">filtered calls[]</text>
+        <text x="660" y="156" text-anchor="middle" font-size="11" fill="var(--ink-2)">+ violations[]</text>
+        <text x="660" y="180" text-anchor="middle" font-size="10.5" fill="var(--muted)">recorded as trace</text>
+        <text x="660" y="194" text-anchor="middle" font-size="10.5" fill="var(--muted)">tool_call_policy events</text>
+
+        <path d="M760,160 L800,160" class="arrow" marker-end="url(#arrPol)"/>
+
+        <!-- Execute -->
+        <rect x="800" y="80" width="280" height="160" rx="6" fill="#f0fdf4" stroke="#86efac"/>
+        <text x="940" y="104" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#15803d">EXECUTE THROUGH MCP</text>
+        <text x="940" y="128" text-anchor="middle" font-size="13" font-weight="700" fill="#14532d">semaphor.callTool()</text>
+        <text x="940" y="152" text-anchor="middle" font-size="11" fill="#166534">SemaphorMcpClient (real or fake)</text>
+        <text x="940" y="172" text-anchor="middle" font-size="11" fill="#166534">timing, errors, recovery hints</text>
+        <text x="940" y="192" text-anchor="middle" font-size="11" fill="#166534">→ EvidenceEntry + TraceEvent</text>
+        <text x="940" y="220" text-anchor="middle" font-size="10.5" fill="#166534" font-family="JetBrains Mono">executeTracedToolCall()</text>
+
+        <text x="20" y="340" font-size="11" fill="var(--muted)" letter-spacing="0.08em" font-weight="600">DEFINED IN  src/runtime/toolCallPolicy.ts</text>
+      </svg>
+      <p class="caption">Five filters between the model's wishes and MCP. Each violation becomes a trace event so debugging is contract-shaped, not log-archaeology.</p>
+    </div>
+
+    <h3>Read-only tool whitelist</h3>
+    <div class="grid-2">
+      <div class="card tinted">
+        <h4 style="margin-top: 0;">Discovery (metadata, no rows)</h4>
+        <ul class="clean">
+          <li><code>semaphor_get_analysis_context</code></li>
+          <li><code>semaphor_list_semantic_domains</code></li>
+          <li><code>semaphor_list_datasets</code></li>
+          <li><code>semaphor_get_dataset_schema</code></li>
+          <li><code>semaphor_list_connections</code></li>
+          <li><code>semaphor_list_databases / _schemas / _tables</code></li>
+          <li><code>semaphor_get_dashboard_analysis_context</code></li>
+        </ul>
+      </div>
+      <div class="card brand">
+        <h4 style="margin-top: 0;">Query execution (returns rows)</h4>
+        <ul class="clean">
+          <li><code>semaphor_analyze</code> &mdash; governed analytics; the default path</li>
+          <li><code>semaphor_query_sql_advanced</code> &mdash; bounded read-only SQL; must include explicit <code>LIMIT</code></li>
+        </ul>
+        <h4 style="margin-top: 16px;">Recovery kernel</h4>
+        <ul class="clean">
+          <li><code>semaphor_plan_analytics_recovery</code> &mdash; the recovery-planning seam (see section 08)</li>
+        </ul>
+        <p style="color: var(--ink-2); font-size: 12.5px; margin-top: 12px;">
+          No write tools, no schema mutations, no dashboard editors. Anything outside this list is silently filtered.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 08 Recovery -->
+  <section id="recovery">
+    <h2>08. Answer contract recovery &mdash; the kernel-call pattern</h2>
+    <p style="max-width: 820px; color: var(--ink-2);">
+      When the planning loop exits with required slots still unanswered,
+      recovery kicks in. Recovery planning is a shared MCP kernel tool
+      <code>semaphor_plan_analytics_recovery</code> hosted in Semaphor
+      App; the runner is a thin client. Field matching, dimension
+      selection, period-change semantics, and dialect handling live in
+      one place that MCP, App Builder, and dashboard assistants all reach.
+    </p>
+
+    <div class="callout">
+      <strong>Two MCP calls per attempt at minimum.</strong> First the runner
+      asks the kernel for a plan (the kernel call itself counts toward
+      the tool budget). Then it executes each call the kernel returns.
+      Budget is reserved during planning &mdash; see the "Budget reservation"
+      illustration in section 06.
+    </div>
+
+    <div class="figure">
+      <svg viewBox="0 0 1100 380" role="img" aria-label="Answer contract recovery flow">
+        <defs>
+          <marker id="arrRec" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#18181b"/>
+          </marker>
+          <marker id="arrRecBr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="hsl(217 91% 53%)"/>
+          </marker>
+        </defs>
+
+        <!-- Decision: any required slot missing? -->
+        <polygon points="80,80 200,40 320,80 200,120" fill="#fff" stroke="#18181b"/>
+        <text x="200" y="76" text-anchor="middle" font-size="12" font-weight="700">Any required slot</text>
+        <text x="200" y="92" text-anchor="middle" font-size="12" font-weight="700">missing answer?</text>
+
+        <!-- yes branch -->
+        <text x="340" y="78" font-size="11" font-weight="600" fill="#7c2d12">YES</text>
+        <path d="M320,80 L380,80" class="arrow" marker-end="url(#arrRec)"/>
+
+        <!-- attempts box -->
+        <rect x="380" y="20" width="700" height="240" rx="6" fill="#fff7ed" stroke="#fdba74"/>
+        <text x="400" y="44" font-size="11" letter-spacing="0.12em" font-weight="700" fill="#c2410c">FOR ATTEMPT 1..4  (default cap)</text>
+
+        <!-- attempt step 1 -->
+        <rect x="400" y="60" width="200" height="60" rx="6" fill="#fff" stroke="#18181b"/>
+        <text x="500" y="80" text-anchor="middle" font-size="11" font-weight="700">1. Find missing slots</text>
+        <text x="500" y="98" text-anchor="middle" font-size="10.5" fill="#71717a">re-assess coverage; pick</text>
+        <text x="500" y="112" text-anchor="middle" font-size="10.5" fill="#71717a">required slots not yet answered</text>
+
+        <!-- attempt step 2 -->
+        <rect x="620" y="60" width="200" height="60" rx="6" fill="#fff" stroke="#18181b"/>
+        <text x="720" y="80" text-anchor="middle" font-size="11" font-weight="700">2. Plan targeted calls</text>
+        <text x="720" y="98" text-anchor="middle" font-size="10.5" fill="#71717a">semaphor_plan_</text>
+        <text x="720" y="112" text-anchor="middle" font-size="10.5" fill="#71717a">analytics_recovery</text>
+
+        <!-- attempt step 3 -->
+        <rect x="840" y="60" width="220" height="60" rx="6" fill="#fff" stroke="#18181b"/>
+        <text x="950" y="80" text-anchor="middle" font-size="11" font-weight="700">3. Execute (isolated budget)</text>
+        <text x="950" y="98" text-anchor="middle" font-size="10.5" fill="#71717a">schema discovery →</text>
+        <text x="950" y="112" text-anchor="middle" font-size="10.5" fill="#71717a">query_spec / SQL when explicit</text>
+
+        <!-- arrows -->
+        <path d="M600,90 L620,90" class="arrow" marker-end="url(#arrRec)"/>
+        <path d="M820,90 L840,90" class="arrow" marker-end="url(#arrRec)"/>
+
+        <!-- Re-assess -->
+        <rect x="400" y="160" width="660" height="76" rx="6" fill="#fff" stroke="#18181b"/>
+        <text x="730" y="186" text-anchor="middle" font-size="12" font-weight="700">4. Re-assess answer coverage</text>
+        <text x="730" y="206" text-anchor="middle" font-size="11" fill="var(--ink-2)">if all required slots answered → BREAK</text>
+        <text x="730" y="222" text-anchor="middle" font-size="11" fill="var(--ink-2)">if budget exhausted → BREAK with partial</text>
+
+        <path d="M950,120 C950,140 730,140 730,160" class="arrow" marker-end="url(#arrRec)"/>
+        <path d="M400,200 C360,200 360,90 380,90" class="arrow-brand" stroke-dasharray="3 3" marker-end="url(#arrRecBr)"/>
+        <text x="320" y="160" font-size="10.5" fill="hsl(217 91% 28%)" font-style="italic">next attempt</text>
+
+        <!-- exit nodes -->
+        <rect x="80" y="280" width="240" height="60" rx="6" fill="#f0fdf4" stroke="#86efac"/>
+        <text x="200" y="306" text-anchor="middle" font-size="12" font-weight="700" fill="#14532d">All slots satisfied</text>
+        <text x="200" y="324" text-anchor="middle" font-size="11" fill="#166534">→ synthesis + ANSWERED</text>
+
+        <rect x="380" y="280" width="240" height="60" rx="6" fill="#fff7ed" stroke="#fdba74"/>
+        <text x="500" y="306" text-anchor="middle" font-size="12" font-weight="700" fill="#7c2d12">Some slots partial</text>
+        <text x="500" y="324" text-anchor="middle" font-size="11" fill="#9a3412">→ synthesis + PARTIAL</text>
+
+        <rect x="680" y="280" width="240" height="60" rx="6" fill="#fef2f2" stroke="#fecaca"/>
+        <text x="800" y="306" text-anchor="middle" font-size="12" font-weight="700" fill="#7f1d1d">Required slot unanswered</text>
+        <text x="800" y="324" text-anchor="middle" font-size="11" fill="#991b1b">→ FAILED + terminal artifact</text>
+
+        <!-- no branch from decision -->
+        <text x="200" y="160" font-size="11" font-weight="600" fill="#15803d">NO</text>
+        <path d="M200,120 C200,180 200,260 200,280" class="arrow" marker-end="url(#arrRec)"/>
+      </svg>
+      <p class="caption">Recovery is bounded and slot-targeted. The app-owned <code>semaphor_plan_analytics_recovery</code> kernel owns the planning seam; the runner adapter only builds typed operation intent and executes returned MCP calls.</p>
+    </div>
+
+    <h3>Coverage statuses per slot</h3>
+    <div class="card" style="margin-top: 8px; padding: 0;">
+      <table>
+        <thead>
+          <tr><th>status</th><th>Meaning</th><th>Recovery action</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><span class="badge answered">answered</span></td><td>Evidence matches required and display field candidates</td><td>none</td></tr>
+          <tr><td><span class="badge partial">partial</span></td><td>Query ran but is missing fields or has limit exceeded</td><td>retry with adjusted spec</td></tr>
+          <tr><td><span class="badge ms">missing_schema</span></td><td>No schema discovered for the slot's candidate entity</td><td>schema discovery</td></tr>
+          <tr><td><span class="badge ms">missing_query</span></td><td>Schema known but no query has hit it</td><td>generate query_spec</td></tr>
+          <tr><td><span class="badge failed">failed / unresolved</span></td><td>Cannot determine from evidence</td><td>kernel diagnostic or explicit SQL-first path</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="margin-top: 28px;">The typed handoff</h3>
+    <p style="color: var(--ink-2); margin: 6px 0 12px;">
+      The runner translates AnswerContract slots into a domain-neutral
+      <code>SemaphorOperationIntent</code> with <code>kind: "answer_obligations"</code>.
+      Nothing Briefing-specific leaks into the kernel.
+    </p>
+
+    <div class="grid-2">
+      <div>
+        <h4>Runner sends</h4>
+<pre>{
+  <span class="n">operationIntent</span>: {
+    <span class="n">version</span>: <span class="s">1</span>,
+    <span class="n">kind</span>: <span class="s">"answer_obligations"</span>,
+    <span class="n">obligations</span>: [
+      {
+        <span class="n">id</span>: <span class="s">"revenue_trend"</span>,
+        <span class="n">type</span>: <span class="s">"trend"</span>,
+        <span class="n">subject</span>: <span class="s">"monthly revenue"</span>,
+        <span class="n">prompt</span>: <span class="s">"Show revenue trend..."</span>,
+        <span class="n">metricCandidates</span>: [<span class="s">"revenue"</span>],
+        <span class="n">dateFieldCandidates</span>: [<span class="s">"order_date"</span>],
+        <span class="n">required</span>: <span class="k">true</span>
+      }
+    ],
+    <span class="n">context</span>: { <span class="n">surface</span>: <span class="s">"briefing"</span>, ... }
+  },
+  <span class="n">groundedSchemas</span>: [
+    { <span class="n">semanticDomainId</span>: <span class="s">"sales"</span>,
+      <span class="n">datasetName</span>: <span class="s">"orders"</span>,
+      <span class="n">metricFields</span>: [<span class="s">"revenue"</span>],
+      <span class="n">dateFields</span>: [<span class="s">"order_date"</span>] }
+  ],
+  <span class="n">semanticTargets</span>: [...],
+  <span class="n">physicalTargets</span>: [...],
+  <span class="n">remainingToolCalls</span>: <span class="s">5</span>
+}</pre>
+      </div>
+      <div>
+        <h4>Kernel returns</h4>
+<pre>{
+  <span class="n">version</span>: <span class="s">1</span>,
+  <span class="n">kind</span>: <span class="s">"analytics_recovery_plan"</span>,
+  <span class="n">operationIntent</span>: { ... },
+  <span class="n">plannedToolCalls</span>: [
+    {
+      <span class="n">name</span>: <span class="s">"semaphor_analyze"</span>,
+      <span class="n">arguments</span>: {
+        <span class="n">domainId</span>: <span class="s">"sales"</span>,
+        <span class="n">datasetName</span>: <span class="s">"orders"</span>,
+        <span class="n">metrics</span>: [{ <span class="n">name</span>: <span class="s">"revenue"</span>, <span class="n">datasetName</span>: <span class="s">"orders"</span> }],
+        <span class="n">dateField</span>: <span class="s">"order_date"</span>,
+        <span class="n">timeGrain</span>: <span class="s">"week"</span>,
+        <span class="n">limit</span>: <span class="s">25</span>
+      },
+      <span class="n">purpose</span>: <span class="s">"..."</span>,
+      <span class="n">obligationId</span>: <span class="s">"revenue_trend"</span>,
+      <span class="n">recoveryKind</span>: <span class="s">"query_spec"</span>
+    }
+  ],
+  <span class="n">diagnostics</span>: [
+    { <span class="n">code</span>: <span class="s">"missing_grounded_schema"</span>,
+      <span class="n">obligationId</span>: <span class="s">"..."</span>,
+      <span class="n">recommendedNextStep</span>: <span class="s">"..."</span> }
+  ]
+}</pre>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 28px;">Recovery-kind values returned by the kernel</h3>
+    <div class="card" style="padding: 0;">
+      <table>
+        <thead>
+          <tr><th><code>recoveryKind</code></th><th>What the call does</th><th>Tool name</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>schema_discovery</code></td><td>Obligation has no grounded schema yet; fetch it first</td><td><code>semaphor_get_dataset_schema</code></td></tr>
+          <tr><td><code>query_spec</code></td><td>Schema available; execute a governed analytic query</td><td><code>semaphor_analyze</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="margin-top: 24px;">Module ownership</h3>
+    <div class="grid-2">
+      <div class="card brand">
+        <span class="pill brand">Semaphor App</span>
+        <h3 style="margin: 6px 0;">analytics/recovery/planner.ts</h3>
+        <p style="color: var(--ink-2); margin: 6px 0 0;">Owns the recovery logic: field matching, dimension selection, period-change semantics, schema-discovery vs query-spec branching, diagnostic codes. Exposed as MCP <code>semaphor_plan_analytics_recovery</code>. Sits inside the broader analytics kernel (see section 16).</p>
+        <p style="font-size: 12px; color: var(--muted); margin: 10px 0 0;"><code>semaphor-app/src/lib/analytics/recovery/planner.ts</code></p>
+      </div>
+      <div class="card">
+        <span class="pill">Insight Runner</span>
+        <h3 style="margin: 6px 0;">briefings/answerRecovery.ts</h3>
+        <p style="color: var(--ink-2); margin: 6px 0 0;">A thin adapter. Three functions only: <code>buildAnswerOperationIntent()</code>, <code>buildAnswerRecoveryKernelCall()</code>, <code>readAnswerRecoveryKernelResult()</code>. No query-spec assembly, no field matching, no dialect awareness.</p>
+        <p style="font-size: 12px; color: var(--muted); margin: 10px 0 0;"><code>insight-runner/src/briefings/answerRecovery.ts</code></p>
+      </div>
+    </div>
+
+    <div class="callout warm" style="margin-top: 16px;">
+      <strong>Hard rule.</strong> Recovery planning, query-spec call assembly, dialect handling, SQL compilation, static field priorities, and prose parsing do not belong in the runner. New BI semantics belong in the kernel, then every consumer benefits.
+    </div>
+  </section>
+
+  <!-- 09 Evidence ledger -->
+  <section id="evidence">
+    <h2>09. Evidence ledger &mdash; the audit trail</h2>
+    <p style="max-width: 800px; color: var(--ink-2);">
+      Every tool call, query path decision, and limitation gets recorded in
+      <code>EvidenceLedger</code> as an <code>EvidenceEntry</code> with a
+      stable id (<code>ev_001</code>, <code>ev_002</code>, ...). This is
+      audit data, not the source of truth for coverage.
+    </p>
+
+    <div class="grid-2">
+      <div>
+        <h3>EvidenceEntry shape</h3>
+<pre>{
+  <span class="n">id</span>: <span class="s">"ev_004"</span>,
+  <span class="n">type</span>: <span class="s">"tool_call"</span>,
+  <span class="n">summary</span>: <span class="s">"Monthly revenue trend"</span>,
+  <span class="n">toolName</span>: <span class="s">"semaphor_analyze"</span>,
+  <span class="n">purpose</span>: <span class="s">"[slot:revenue_trend] ..."</span>,
+  <span class="n">call</span>: { ... },         <span class="c">// redacted</span>
+  <span class="n">resultSummary</span>: { ... },
+  <span class="n">recoveryHints</span>: {
+    <span class="n">invalidField</span>: <span class="s">"order_dt"</span>,
+    <span class="n">candidates</span>: [<span class="s">"order_date"</span>]
+  },
+  <span class="n">query</span>: {
+    <span class="n">queryPath</span>: <span class="s">"semaphor_analyze"</span>,
+    <span class="n">domainId</span>: <span class="s">"sales"</span>,
+    <span class="n">datasetName</span>: <span class="s">"orders"</span>,
+    <span class="n">rowCount</span>: <span class="s">12</span>,
+    <span class="n">analyticsIntent</span>: { ... },
+    <span class="n">analyticsExecutionResult</span>: { ... }  <span class="c">// typed SemaphorAnalyticsExecutionResult</span>
+  },
+  <span class="n">createdAt</span>: <span class="s">"2026-05-21T..."</span>
+}</pre>
+        <p style="color: var(--muted); font-size: 12px; margin-top: 8px;">
+          The <code>analyticsExecutionResult</code> field carries the
+          typed execution envelope (status, validation issues, result
+          shape) that AnswerCoverage reads as the source of truth.
+          Plain evidence text is a fallback only.
+        </p>
+      </div>
+      <div>
+        <h3>Three entry types</h3>
+        <div class="card tinted" style="margin-bottom: 12px;">
+          <span class="pill brand">tool_call</span>
+          <p style="color: var(--ink-2); margin: 8px 0 0; font-size: 13px;">Recorded by <code>recordToolCall({ call, result, purpose })</code>. Extracts recovery hints from errors (invalid field + valid candidates) and query evidence from the result body.</p>
+        </div>
+        <div class="card tinted" style="margin-bottom: 12px;">
+          <span class="pill warm">query_path_decision</span>
+          <p style="color: var(--ink-2); margin: 8px 0 0; font-size: 13px;">Model's explicit recommendation of which path to use next. <code>recordQueryPathDecision({ queryPath, rationale })</code>.</p>
+        </div>
+        <div class="card tinted">
+          <span class="pill red">limitation</span>
+          <p style="color: var(--ink-2); margin: 8px 0 0; font-size: 13px;">Constraints, errors, missing capabilities. <code>recordLimitation(summary)</code>.</p>
+        </div>
+      </div>
+    </div>
+
+    <h3>Snapshot &amp; redaction</h3>
+    <p style="color: var(--ink-2); margin: 6px 0 10px;">
+      <code>ledger.snapshot({ deliveryIntent })</code> returns an
+      immutable <code>EvidenceLedgerSnapshot</code>. Before any callback
+      to Semaphor App or external delivery, <code>redactSecrets()</code>
+      strips tokens, connection credentials, and unbounded raw rows.
+    </p>
+    <div class="callout">
+      <strong>Coverage rule:</strong> the AnswerSlotExecutionResult is the typed coverage boundary. The evidence ledger is durable audit data, not the basis for "did we answer the user."
+    </div>
+  </section>
+
+  <!-- 10 Tracing -->
+  <section id="tracing">
+    <h2>10. Tracing &amp; diagnostics</h2>
+    <p style="max-width: 800px; color: var(--ink-2);">
+      Parallel to evidence, every phase emits trace events with timestamps
+      into <code>RunTrace</code>. The snapshot includes a structured
+      <code>diagnostics</code> bag that summarizes tool counts, query path
+      distribution, slot statuses, failures, and replay hints.
+    </p>
+
+    <h3>Trace event types you'll see in <code>*.trace.json</code></h3>
+    <div class="grid-2">
+      <ul class="clean">
+        <li><code>run_started</code></li>
+        <li><code>definition_parsed</code></li>
+        <li><code>mcp_contract_preflight</code></li>
+        <li><code>intent_normalized</code></li>
+        <li><code>answer_contract_created</code></li>
+        <li><code>briefing_contract_created</code></li>
+        <li><code>planning_tools_loaded</code></li>
+        <li><code>briefing_grounding</code></li>
+        <li><code>tool_call_policy</code> (per violation)</li>
+        <li><code>tool_call_started</code> / <code>tool_call</code></li>
+      </ul>
+      <ul class="clean">
+        <li><code>planning_iteration</code></li>
+        <li><code>planning_complete</code></li>
+        <li><code>planning_paused_for_answer_recovery</code></li>
+        <li><code>planning_feedback_only</code> / <code>planning_stalled</code></li>
+        <li><code>tool_budget_exhausted</code></li>
+        <li><code>answer_contract_recovery_started</code></li>
+        <li><code>answer_contract_recovery_planning_started</code></li>
+        <li><code>answer_contract_recovery_planned</code></li>
+        <li><code>answer_coverage_checked</code></li>
+        <li><code>answer_synthesis</code> / <code>presentation_coverage_checked</code></li>
+        <li><code>report_planning</code></li>
+        <li><code>run_completed</code> / <code>run_failed</code></li>
+      </ul>
+    </div>
+
+    <h3 style="margin-top: 28px;">Diagnostics structure (the high-signal summary)</h3>
+<pre>{
+  <span class="n">status</span>: <span class="s">"completed"</span>,
+  <span class="n">queryPath</span>: <span class="s">"query_spec"</span>,
+  <span class="n">grounding</span>: {
+    <span class="n">semanticTargetCount</span>: <span class="s">2</span>,
+    <span class="n">physicalTargetCount</span>: <span class="s">0</span>,
+    <span class="n">querySeedCount</span>: <span class="s">3</span>,
+    <span class="n">limitations</span>: []
+  },
+  <span class="n">policy</span>: {
+    <span class="n">blockedToolCallCount</span>: <span class="s">2</span>,
+    <span class="n">blockedToolCalls</span>: [
+      { <span class="n">name</span>: <span class="s">"semaphor_list_tables"</span>, <span class="n">message</span>: <span class="s">"out of briefing scope"</span> }
+    ]
+  },
+  <span class="n">tools</span>: {
+    <span class="n">toolCallCount</span>: <span class="s">7</span>,
+    <span class="n">failedToolCallCount</span>: <span class="s">1</span>,
+    <span class="n">successfulAnalyticQueryCount</span>: <span class="s">3</span>,
+    <span class="n">callsByName</span>: {
+      <span class="n">semaphor_analyze</span>: <span class="s">3</span>,
+      <span class="n">semaphor_list_datasets</span>: <span class="s">2</span>,
+      <span class="n">semaphor_get_dataset_schema</span>: <span class="s">2</span>
+    }
+  },
+  <span class="n">analytics</span>: {
+    <span class="n">attemptedAnalyticQueryCount</span>: <span class="s">4</span>,
+    <span class="n">successfulAnalyticQueryCount</span>: <span class="s">3</span>,
+    <span class="n">failedAnalyticQueryCount</span>: <span class="s">1</span>,
+    <span class="n">attempts</span>: [...],
+    <span class="n">lastAttempt</span>: { ... },
+    <span class="n">lastFailedAttempt</span>: { ... }
+  },
+  <span class="n">answerContract</span>: {
+    <span class="n">answeredUserGoal</span>: <span class="k">true</span>,
+    <span class="n">slotCount</span>: <span class="s">3</span>,
+    <span class="n">statusCounts</span>: { <span class="n">answered</span>: <span class="s">2</span>, <span class="n">partial</span>: <span class="s">1</span> },
+    <span class="n">slots</span>: [
+      {
+        <span class="n">slotId</span>: <span class="s">"revenue_trend"</span>,
+        <span class="n">status</span>: <span class="s">"answered"</span>,
+        <span class="n">evidenceIds</span>: [<span class="s">"ev_003"</span>, <span class="s">"ev_004"</span>],
+        <span class="n">queryPath</span>: <span class="s">"query_spec"</span>,
+        <span class="n">validationCodes</span>: []
+      }
+    ]
+  },
+  <span class="n">failure</span>: { <span class="n">category</span>: <span class="s">"none"</span> },
+  <span class="n">replayHints</span>: []
+}</pre>
+
+    <h3>Run failure categories</h3>
+    <div class="grid-3">
+      <div class="card red" style="font-size: 13px;">
+        <span class="pill red">data_grounding</span>
+        <p style="color: var(--ink-2); margin: 8px 0 0;">Project has no semantic domains, dashboard has no queryable sources.</p>
+      </div>
+      <div class="card red" style="font-size: 13px;">
+        <span class="pill red">mcp_context / mcp_contract_incompatible</span>
+        <p style="color: var(--ink-2); margin: 8px 0 0;">MCP unreachable, or <code>listTools</code> did not advertise both <code>semaphor_analyze</code> and <code>semaphor_plan_analytics_recovery</code>. The runner refuses to start so a stale MCP cannot silently degrade Briefings.</p>
+      </div>
+      <div class="card red" style="font-size: 13px;">
+        <span class="pill red">tool_policy</span>
+        <p style="color: var(--ink-2); margin: 8px 0 0;">Repeated violations during planning, no progress.</p>
+      </div>
+      <div class="card red" style="font-size: 13px;">
+        <span class="pill red">query_spec_validation</span>
+        <p style="color: var(--ink-2); margin: 8px 0 0;">Invalid response from <code>semaphor_analyze</code>.</p>
+      </div>
+      <div class="card red" style="font-size: 13px;">
+        <span class="pill red">sql_policy</span>
+        <p style="color: var(--ink-2); margin: 8px 0 0;">SQL didn't meet bounds policy (no LIMIT, placeholders, etc).</p>
+      </div>
+      <div class="card red" style="font-size: 13px;">
+        <span class="pill red">model_planning / model_synthesis</span>
+        <p style="color: var(--ink-2); margin: 8px 0 0;">Model failed to plan or synthesize.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 11 Artifacts -->
+  <section id="artifacts">
+    <h2>11. Report blocks &amp; rendering</h2>
+    <p style="max-width: 800px; color: var(--ink-2);">
+      After synthesis, <code>buildReportPlan()</code> turns evidence +
+      findings into a typed sequence of <code>ReportBlock</code>s. Three
+      renderers consume the same plan: Markdown (canonical), HTML (themed),
+      and PDF (Puppeteer).
+    </p>
+
+    <div class="figure">
+      <svg viewBox="0 0 1100 360" role="img" aria-label="ReportPlan blocks rendered through three paths">
+        <defs>
+          <marker id="arrArt" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#18181b"/>
+          </marker>
+        </defs>
+
+        <!-- Evidence + answer -->
+        <rect x="20" y="40" width="180" height="80" rx="6" fill="#f0fdf4" stroke="#86efac"/>
+        <text x="110" y="64" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#15803d">INPUT</text>
+        <text x="110" y="84" text-anchor="middle" font-size="13" font-weight="700" fill="#14532d">Evidence ledger</text>
+        <text x="110" y="100" text-anchor="middle" font-size="11" fill="#166534">+ model answer</text>
+        <text x="110" y="114" text-anchor="middle" font-size="11" fill="#166534">+ briefing contract</text>
+
+        <path d="M200,80 L240,80" class="arrow" marker-end="url(#arrArt)"/>
+
+        <!-- buildReportPlan -->
+        <rect x="240" y="40" width="220" height="80" rx="6" fill="#0f172a" stroke="#1e293b"/>
+        <text x="350" y="64" text-anchor="middle" font-size="11" letter-spacing="0.12em" font-weight="700" fill="#93c5fd">PROCESS</text>
+        <text x="350" y="84" text-anchor="middle" font-size="13" font-weight="700" fill="#f1f5f9" font-family="JetBrains Mono">buildReportPlan()</text>
+        <text x="350" y="100" text-anchor="middle" font-size="11" fill="#94a3b8">queries → metric/table/chart</text>
+        <text x="350" y="114" text-anchor="middle" font-size="11" fill="#94a3b8">+ appendix blocks</text>
+
+        <path d="M460,80 L500,80" class="arrow" marker-end="url(#arrArt)"/>
+
+        <!-- ReportPlan -->
+        <rect x="500" y="40" width="220" height="80" rx="6" fill="hsl(217 91% 96%)" stroke="hsl(217 91% 60%)"/>
+        <text x="610" y="64" text-anchor="middle" font-size="11" letter-spacing="0.12em" font-weight="700" fill="hsl(217 91% 28%)">INTERMEDIATE</text>
+        <text x="610" y="84" text-anchor="middle" font-size="13" font-weight="700" fill="hsl(217 91% 22%)">ReportPlan</text>
+        <text x="610" y="100" text-anchor="middle" font-size="11" fill="hsl(217 91% 28%)">title + ordered blocks[]</text>
+        <text x="610" y="114" text-anchor="middle" font-size="11" fill="hsl(217 91% 28%)">(optional model re-order)</text>
+
+        <!-- Three renderers -->
+        <path d="M610,120 C610,150 280,180 280,200" class="arrow" marker-end="url(#arrArt)"/>
+        <path d="M610,120 L610,200" class="arrow" marker-end="url(#arrArt)"/>
+        <path d="M610,120 C610,150 940,180 940,200" class="arrow" marker-end="url(#arrArt)"/>
+
+        <rect x="160" y="200" width="240" height="80" rx="6" fill="#fff" stroke="#18181b"/>
+        <text x="280" y="220" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#71717a">RENDERER A</text>
+        <text x="280" y="240" text-anchor="middle" font-size="13" font-weight="700">Markdown (canonical)</text>
+        <text x="280" y="256" text-anchor="middle" font-size="10.5" fill="#71717a">renderMarkdownReportPlan()</text>
+        <text x="280" y="270" text-anchor="middle" font-size="11" fill="#71717a">→ .md (always written)</text>
+
+        <rect x="490" y="200" width="240" height="80" rx="6" fill="#fff" stroke="#18181b"/>
+        <text x="610" y="220" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#71717a">RENDERER B</text>
+        <text x="610" y="240" text-anchor="middle" font-size="13" font-weight="700">HTML (themed)</text>
+        <text x="610" y="256" text-anchor="middle" font-size="10.5" fill="#71717a">renderReportDocumentHtml()</text>
+        <text x="610" y="270" text-anchor="middle" font-size="11" fill="#71717a">→ .html (if requested)</text>
+
+        <rect x="820" y="200" width="240" height="80" rx="6" fill="#fff" stroke="#18181b"/>
+        <text x="940" y="220" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#71717a">RENDERER C</text>
+        <text x="940" y="240" text-anchor="middle" font-size="13" font-weight="700">PDF (Puppeteer)</text>
+        <text x="940" y="256" text-anchor="middle" font-size="10.5" fill="#71717a">writePdfArtifact()</text>
+        <text x="940" y="270" text-anchor="middle" font-size="11" fill="#71717a">→ .pdf (if requested)</text>
+
+        <text x="20" y="320" font-size="11" fill="var(--muted)" letter-spacing="0.08em" font-weight="600">FILES IN  src/artifacts/</text>
+      </svg>
+      <p class="caption">One typed ReportPlan; three renderers. Markdown is canonical; HTML and PDF derive from a typed ReportDocument intermediate.</p>
+    </div>
+
+    <h3>The eleven report block kinds</h3>
+    <div class="grid-3" style="margin-top: 8px;">
+      <div class="card tinted">
+        <span class="pill brand">findings</span>
+        <p style="color: var(--ink-2); font-size: 13px; margin: 8px 0 0;">Model-authored narrative with evidence refs.</p>
+      </div>
+      <div class="card tinted">
+        <span class="pill brand">evidence</span>
+        <p style="color: var(--ink-2); font-size: 13px; margin: 8px 0 0;">Audit-formatted entry list.</p>
+      </div>
+      <div class="card tinted">
+        <span class="pill brand">query_summary</span>
+        <p style="color: var(--ink-2); font-size: 13px; margin: 8px 0 0;">Query-shaped evidence with paths and parameters.</p>
+      </div>
+      <div class="card tinted">
+        <span class="pill brand">metric</span>
+        <p style="color: var(--ink-2); font-size: 13px; margin: 8px 0 0;">title, value, secondary, delta, sentiment.</p>
+      </div>
+      <div class="card tinted">
+        <span class="pill brand">chart</span>
+        <p style="color: var(--ink-2); font-size: 13px; margin: 8px 0 0;">Currently <code>bar</code>; data array of label/value.</p>
+      </div>
+      <div class="card tinted">
+        <span class="pill brand">progress</span>
+        <p style="color: var(--ink-2); font-size: 13px; margin: 8px 0 0;">title, value (0..1), label, detail.</p>
+      </div>
+      <div class="card tinted">
+        <span class="pill brand">table</span>
+        <p style="color: var(--ink-2); font-size: 13px; margin: 8px 0 0;">"business" or "evidence" presentation, columns + rows.</p>
+      </div>
+      <div class="card tinted">
+        <span class="pill brand">sql</span>
+        <p style="color: var(--ink-2); font-size: 13px; margin: 8px 0 0;">Rendered SQL with title (for transparency).</p>
+      </div>
+      <div class="card tinted">
+        <span class="pill warm">limitations</span>
+        <p style="color: var(--ink-2); font-size: 13px; margin: 8px 0 0;">Things the runner could not do.</p>
+      </div>
+      <div class="card tinted">
+        <span class="pill warm">next_actions</span>
+        <p style="color: var(--ink-2); font-size: 13px; margin: 8px 0 0;">Suggested follow-ups.</p>
+      </div>
+      <div class="card tinted">
+        <span class="pill warm">delivery_intent</span>
+        <p style="color: var(--ink-2); font-size: 13px; margin: 8px 0 0;">Free-text from the briefing definition.</p>
+      </div>
+      <div class="card tinted">
+        <span class="pill brand">kpi_grid</span>
+        <p style="color: var(--ink-2); font-size: 13px; margin: 8px 0 0;">Tile grid emitted for consecutive metrics; uses table + border-spacing for cross-client email support.</p>
+      </div>
+    </div>
+
+    <div class="callout">
+      <strong>Semaphor App owns the channel projection.</strong> The runner
+      emits a logical <code>BriefingContentDocument</code> of these blocks.
+      <code>semaphor-app/src/lib/briefings/content-renderer.ts</code> compiles it
+      into the Markdown / HTML / email bodies, and
+      <code>slack-message.ts</code> compiles it into Slack-supported primitives.
+      Both adapters handle every block kind above;
+      <code>evidence_appendix</code> and <code>sql</code> are gated by
+      <code>presentation.includeEvidence</code> / <code>includeSql</code> flags
+      on the briefing config.
+    </div>
+  </section>
+
+  <!-- 12 Delivery -->
+  <section id="delivery">
+    <h2>12. Delivery</h2>
+    <p style="max-width: 800px; color: var(--ink-2);">
+      The runner doesn't open SMTP or call Slack itself for production; it
+      produces a normalized delivery plan and either previews it (dry-run)
+      or hands it off. The delivery intent string from the briefing
+      definition is parsed for email addresses, Slack targets, and format
+      hints.
+    </p>
+
+    <div class="grid-2">
+      <div>
+        <h3>Normalized delivery plan</h3>
+<pre>{
+  <span class="n">channels</span>: [
+    {
+      <span class="n">channel</span>: <span class="s">"email"</span>,
+      <span class="n">target</span>: <span class="s">"team@acme.com"</span>,
+      <span class="n">mode</span>: <span class="s">"summary_and_pdf"</span>
+    },
+    {
+      <span class="n">channel</span>: <span class="s">"slack"</span>,
+      <span class="n">target</span>: <span class="s">"#growth"</span>,
+      <span class="n">mode</span>: <span class="s">"summary"</span>
+    }
+  ],
+  <span class="n">dryRun</span>: <span class="k">false</span>
+}</pre>
+        <p style="font-size: 12px; color: var(--muted); margin-top: 8px;"><code>src/delivery/deliveryPlan.ts</code></p>
+      </div>
+      <div>
+        <h3>Modes</h3>
+        <div class="card tinted">
+          <h4 style="margin-top: 0;">summary</h4>
+          <p style="color: var(--ink-2); margin: 4px 0 14px; font-size: 13px;">Short markdown body. Truncated to 1200 chars for previews.</p>
+          <h4>pdf</h4>
+          <p style="color: var(--ink-2); margin: 4px 0 14px; font-size: 13px;">PDF attachment only.</p>
+          <h4>summary_and_pdf</h4>
+          <p style="color: var(--ink-2); margin: 4px 0 0; font-size: 13px;">Both: inline summary with PDF attached.</p>
+        </div>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 28px;">Channel boundary rules</h3>
+    <div class="callout warm">
+      <strong>Duplicates first.</strong> The canonical content document must be free of duplicate findings <em>before</em> any channel-specific delivery adapter runs. Slack adapter formatting concerns (block kit compatibility, parent/thread split) are downstream of that. A coherent artifact + a duplicating delivery adapter is still a bug.
+    </div>
+    <div class="callout">
+      <strong>No provider blocks leak into content.</strong> Delivery projection compiles structured content into the channel's supported primitives. Emitting raw Slack block kit (or anything provider-specific) from the content pipeline is the failure mode behind <code>invalid_blocks</code> errors.
+    </div>
+    <div class="callout">
+      <strong>Evidence and SQL are artifact controls.</strong> <code>presentation.includeEvidence</code> adds a canonical evidence appendix block. <code>presentation.includeSql</code> adds canonical SQL blocks for query evidence. Markdown and HTML render those blocks; Slack intentionally omits them from the parent/thread body and links back to the briefing/artifact instead.
+    </div>
+  </section>
+
+  <!-- 13 Model interaction -->
+  <section id="model">
+    <h2>13. Model interaction</h2>
+    <p style="max-width: 800px; color: var(--ink-2);">
+      The model is invoked three (sometimes four) times per run, each
+      through a typed method on <code>InsightLoopModelClient</code>. Real
+      provider (<code>OpenAi...</code>) and fake provider
+      (<code>Fake...</code>) implement the same interface, which is how
+      evals can run deterministically.
+    </p>
+
+    <div class="figure">
+      <svg viewBox="0 0 1100 280" role="img" aria-label="Three model calls per run">
+        <defs>
+          <marker id="arrMod" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="hsl(217 91% 53%)"/>
+          </marker>
+        </defs>
+
+        <rect x="20" y="80" width="220" height="120" rx="6" fill="hsl(217 91% 96%)" stroke="hsl(217 91% 60%)"/>
+        <text x="130" y="106" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="hsl(217 91% 28%)">CALL 1 · ONCE</text>
+        <text x="130" y="126" text-anchor="middle" font-size="13" font-weight="700" fill="hsl(217 91% 22%)" font-family="JetBrains Mono">normalizeIntent()</text>
+        <text x="130" y="146" text-anchor="middle" font-size="11" fill="hsl(217 91% 28%)">definition →</text>
+        <text x="130" y="162" text-anchor="middle" font-size="11" fill="hsl(217 91% 28%)">NormalizedInsightIntent</text>
+        <text x="130" y="184" text-anchor="middle" font-size="10.5" fill="hsl(217 91% 28%)">decompose answer requests</text>
+
+        <path d="M240,140 L290,140" class="arrow" stroke="hsl(217 91% 53%)" marker-end="url(#arrMod)"/>
+
+        <rect x="290" y="40" width="240" height="200" rx="6" fill="hsl(217 91% 96%)" stroke="hsl(217 91% 60%)" stroke-width="1.5"/>
+        <text x="410" y="66" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="hsl(217 91% 28%)">CALL 2 · PER ITERATION</text>
+        <text x="410" y="86" text-anchor="middle" font-size="13" font-weight="700" fill="hsl(217 91% 22%)" font-family="JetBrains Mono">createPlan()</text>
+        <text x="410" y="108" text-anchor="middle" font-size="11" fill="hsl(217 91% 28%)">inputs:</text>
+        <text x="410" y="124" text-anchor="middle" font-size="10.5" fill="hsl(217 91% 28%)">intent + contract + grounding</text>
+        <text x="410" y="138" text-anchor="middle" font-size="10.5" fill="hsl(217 91% 28%)">+ evidence + coverage</text>
+        <text x="410" y="152" text-anchor="middle" font-size="10.5" fill="hsl(217 91% 28%)">+ remainingToolCalls budget</text>
+        <text x="410" y="174" text-anchor="middle" font-size="11" fill="hsl(217 91% 28%)">output:</text>
+        <text x="410" y="190" text-anchor="middle" font-size="10.5" fill="hsl(217 91% 28%)">InsightLoopModelPlan</text>
+        <text x="410" y="204" text-anchor="middle" font-size="10.5" fill="hsl(217 91% 28%)">recommendedQueryPath +</text>
+        <text x="410" y="218" text-anchor="middle" font-size="10.5" fill="hsl(217 91% 28%)">plannedToolCalls[]</text>
+
+        <path d="M530,140 L580,140" class="arrow" stroke="hsl(217 91% 53%)" marker-end="url(#arrMod)"/>
+
+        <rect x="580" y="80" width="240" height="120" rx="6" fill="hsl(217 91% 96%)" stroke="hsl(217 91% 60%)"/>
+        <text x="700" y="106" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="hsl(217 91% 28%)">CALL 3 · ONCE</text>
+        <text x="700" y="126" text-anchor="middle" font-size="13" font-weight="700" fill="hsl(217 91% 22%)" font-family="JetBrains Mono">synthesizeAnswer()</text>
+        <text x="700" y="146" text-anchor="middle" font-size="11" fill="hsl(217 91% 28%)">intent + evidence + coverage →</text>
+        <text x="700" y="162" text-anchor="middle" font-size="11" fill="hsl(217 91% 28%)">InsightLoopModelAnswer</text>
+        <text x="700" y="184" text-anchor="middle" font-size="10.5" fill="hsl(217 91% 28%)">findings, limitations, nextActions</text>
+
+        <path d="M820,140 L870,140" class="arrow" stroke="hsl(217 91% 53%)" marker-end="url(#arrMod)"/>
+
+        <rect x="870" y="80" width="220" height="120" rx="6" fill="#f4f4f5" stroke="#d4d4d8"/>
+        <text x="980" y="106" text-anchor="middle" font-size="11" letter-spacing="0.08em" font-weight="700" fill="#71717a">CALL 4 · OPTIONAL</text>
+        <text x="980" y="126" text-anchor="middle" font-size="13" font-weight="700" font-family="JetBrains Mono">composeReportPlan()</text>
+        <text x="980" y="146" text-anchor="middle" font-size="11" fill="#71717a">answer + basePlan →</text>
+        <text x="980" y="162" text-anchor="middle" font-size="11" fill="#71717a">ReportPlanComposition</text>
+        <text x="980" y="184" text-anchor="middle" font-size="10.5" fill="#71717a">re-order / select blocks</text>
+      </svg>
+      <p class="caption">Three required model calls, one optional. The planner is the only one that loops; the others run exactly once.</p>
+    </div>
+
+    <h3>Provider abstraction</h3>
+    <div class="grid-2">
+      <div class="card">
+        <span class="pill green">Fake</span>
+        <h3 style="margin: 6px 0;">FakeInsightLoopModelClient</h3>
+        <ul class="clean">
+          <li>Deterministic, no API calls</li>
+          <li>Used by all L1 evals and unit tests</li>
+          <li>Normalizes from title/questions, plans basic discovery, returns canned findings</li>
+        </ul>
+        <p style="font-size: 12px; color: var(--muted); margin: 10px 0 0;"><code>src/model/fakeInsightLoopModelClient.ts</code></p>
+      </div>
+      <div class="card">
+        <span class="pill brand">OpenAI</span>
+        <h3 style="margin: 6px 0;">OpenAiInsightLoopModelClient</h3>
+        <ul class="clean">
+          <li>OpenAI Agents API with tool_choice</li>
+          <li>Implements tool use loop for plan responses</li>
+          <li>Selected via <code>INSIGHT_LOOP_MODEL_PROVIDER=openai</code></li>
+        </ul>
+        <p style="font-size: 12px; color: var(--muted); margin: 10px 0 0;"><code>src/model/openAiInsightLoopModelClient.ts</code></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 14 Output files -->
+  <section id="outputs">
+    <h2>14. Output files</h2>
+    <p style="max-width: 800px; color: var(--ink-2);">
+      Where artifacts land depends on the run mode. Eval and smoke runs go
+      to <code>insight-runner/out/</code>. Localhost product Briefings go
+      to <code>semaphor-app/.briefings-artifacts/</code>. Production
+      Lambda runs write to the configured S3 bucket via the callback path.
+    </p>
+
+    <h3>Sibling artifact set (shared base name)</h3>
+    <div class="card" style="margin-top: 8px; padding: 0;">
+      <table>
+        <thead>
+          <tr><th>File</th><th>Purpose</th><th>Required?</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>{name}.md</code></td><td>Markdown report &mdash; canonical content</td><td>Always</td></tr>
+          <tr><td><code>{name}.html</code></td><td>Themed HTML rendering</td><td>If requested</td></tr>
+          <tr><td><code>{name}.pdf</code></td><td>Puppeteer-rendered PDF</td><td>If requested</td></tr>
+          <tr><td><code>{name}.evidence.json</code></td><td>Full evidence ledger (redacted)</td><td>Always</td></tr>
+          <tr><td><code>{name}.trace.json</code></td><td>Events + diagnostics + replay hints</td><td>Always</td></tr>
+          <tr><td><code>{name}.manifest.json</code></td><td>Run metadata: title, status, durations, file sizes</td><td>Always</td></tr>
+          <tr><td><code>{name}.delivery.json</code></td><td>Delivery preview</td><td>Dry-run only</td></tr>
+          <tr><td><code>{name}.llm-summary.json</code></td><td>High-level pass/fail + query path counts</td><td>LLM smoke only</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="margin-top: 28px;">Where to look</h3>
+    <div class="grid-2">
+      <div class="card green">
+        <span class="pill green">Eval &amp; smoke</span>
+        <h3 style="margin: 6px 0;">insight-runner/out/</h3>
+        <div class="terminal" style="margin-top: 8px;">
+<span class="path">out/grounding-eval/*.trace.json</span>
+<span class="path">out/grounding-smoke/*.trace.json</span>
+<span class="path">out/llm-smoke/*.trace.json</span>
+        </div>
+        <p style="color: var(--ink-2); font-size: 12.5px; margin: 10px 0 0;">
+          <code>grounding-eval</code> and <code>grounding-smoke</code> wipe their output on each run. The eval-hub runner keeps the newest 100 trace groups per dir (configurable via <code>SEMAPHOR_EVAL_MAX_TRACE_FILES</code>).
+        </p>
+      </div>
+      <div class="card warm">
+        <span class="pill warm">Localhost product</span>
+        <h3 style="margin: 6px 0;">semaphor-app/.briefings-artifacts/</h3>
+        <div class="terminal" style="margin-top: 8px;">
+<span class="path">briefings/{orgId}/{projectId}/</span>
+  <span class="path">{briefingId}/{runId}/package/</span>
+    <span class="path">trace-json.json</span>
+    <span class="path">body-markdown.md</span>
+    <span class="path">body-json.json</span>
+    <span class="path">evidence-json.json</span>
+        </div>
+        <p style="color: var(--ink-2); font-size: 12.5px; margin: 10px 0 0;">
+          Override local files with <code>BRIEFINGS_ARTIFACT_DIR</code>. In S3 mode the same key lives in <code>S3_EXPORTS_BUCKET</code>, accessed via the authorized Briefing artifact route. Localhost S3 runs are pruned by Semaphor App retention, keeping the newest <code>BRIEFINGS_LOCALHOST_S3_MAX_RUNS</code> run groups per briefing rule (default 100). Production S3 retention is still owned by bucket lifecycle policy.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 15 Terminal status -->
+  <section id="terminal">
+    <h2>15. Terminal status &amp; the final payload</h2>
+    <p style="max-width: 800px; color: var(--ink-2);">
+      Every run ends in one of two top-level statuses for the
+      <code>BriefingRunnerResultPayload</code> returned to Semaphor App,
+      and in one of three logical states for the user-facing artifact.
+    </p>
+
+    <div class="grid-3">
+      <div class="card green">
+        <div class="tag" style="color: var(--green);">ANSWERED</div>
+        <h3 style="margin: 6px 0;">SUCCESS · complete</h3>
+        <p style="color: var(--ink-2); margin: 0;">All required answer slots have answered execution results, presentation blocks satisfied, no duplicates. Payload status <code>SUCCESS</code>.</p>
+      </div>
+      <div class="card warm">
+        <div class="tag" style="color: var(--warm);">PARTIAL</div>
+        <p style="color: var(--ink-2); margin: 6px 0 0;">Required slots answered but some presentation slots missing (e.g., requested chart kind not supported by selected artifact format). Payload status <code>SUCCESS</code> with warnings.</p>
+      </div>
+      <div class="card red">
+        <div class="tag" style="color: var(--red);">FAILED</div>
+        <p style="color: var(--ink-2); margin: 6px 0 0;">Required slot unsatisfied after recovery, grounding empty, MCP preflight failed, or planning stalled. Payload status <code>FAILURE</code> with a <em>concise</em> terminal artifact, not a long limitations-heavy pseudo-report.</p>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 32px;">BriefingRunnerResultPayload shape</h3>
+<pre>{
+  <span class="n">status</span>: <span class="s">"SUCCESS"</span> | <span class="s">"FAILURE"</span>,
+  <span class="n">title</span>: <span class="s">"Q3 Revenue Briefing"</span>,
+  <span class="n">summary</span>: <span class="s">"Revenue grew 8% MoM driven by Enterprise..."</span>,
+  <span class="n">artifacts</span>: {
+    <span class="n">markdown</span>: <span class="s">"# Q3 Revenue ..."</span>,
+    <span class="n">html</span>: <span class="s">"&lt;article&gt;..."</span>
+  },
+  <span class="n">evidence</span>: { <span class="n">entries</span>: [...] },     <span class="c">// redacted</span>
+  <span class="n">trace</span>: { ... },                       <span class="c">// decoded token + events</span>
+  <span class="n">warnings</span>: [],
+  <span class="n">limits</span>: {
+    <span class="n">queryPath</span>: <span class="s">"query_spec"</span>,
+    <span class="n">bodyType</span>: <span class="s">"markdown"</span>,
+    <span class="n">maxToolCalls</span>: <span class="s">20</span>
+  }
+}</pre>
+
+    <div class="callout green" style="margin-top: 24px;">
+      <strong>The principle.</strong> Coverage flows through typed
+      <code>AnswerSlotExecutionResult</code>, not from prose or the
+      evidence ledger. The runner is allowed to fail loudly with a
+      concise terminal artifact; it is not allowed to ship a long
+      limitations-heavy report and call it success.
+    </div>
+
+    <p style="margin-top: 32px;">
+      Companion docs:
+      &nbsp;<a href="../../semaphor-app/docs/system-architecture/shared-analytics-protocol/ARCHITECTURE_EXPLAINER.html">Protocol Explainer</a>
+      &middot;
+      <a href="../../semaphor-app/docs/system-architecture/shared-analytics-protocol/EVAL_EXPLAINER.html">Eval Explainer</a>
+      &middot;
+      <a href="../../semaphor-app/docs/system-architecture/shared-analytics-protocol/MCP_EXPLAINER.html">MCP Explainer</a>
+    </p>
+  </section>
+
+  <!-- 16 Server-side counterpart -->
+  <section id="server-side">
+    <h2>16. Server-side counterpart &mdash; the analytics kernel</h2>
+    <p style="max-width: 820px; color: var(--ink-2);">
+      Every MCP call the runner makes lands in <code>semaphor-app</code>.
+      The MCP layer there is thin: tool definitions are per-domain
+      registrars, and the analytics logic those tools depend on lives in
+      a shared <code>src/lib/analytics/</code> kernel. The runner is one
+      client of that kernel; MCP is the surface it sees.
+    </p>
+
+    <div class="callout">
+      <strong>Why this matters for the runner:</strong> when the runner
+      asks <code>semaphor_analyze</code> or
+      <code>semaphor_plan_analytics_recovery</code> for something, that
+      logic is reusable. The same kernel backs the data-app SDK route,
+      dashboard assistants, and any other consumer that lands on MCP. A
+      runner bug fix that strengthens the kernel benefits all of them; a
+      runner-local hack benefits none.
+    </div>
+
+    <h3>MCP tool registrars (thin)</h3>
+    <p style="color: var(--ink-2); margin: 6px 0 10px;">
+      <code>src/app/api/mcp/tools.ts</code> is a small entrypoint that
+      registers five domain-specific tool groups, each exporting one
+      <code>register*Tools(server)</code> function.
+    </p>
+    <div class="card" style="padding: 0;">
+      <table>
+        <thead><tr><th>File</th><th>Lines</th><th>Owns</th></tr></thead>
+        <tbody>
+          <tr><td><code>tools/shared.ts</code></td><td>306</td><td>Common Zod schemas, ResponseFormat enum, workflow-guide builder, error helpers</td></tr>
+          <tr><td><code>tools/project-tools.ts</code></td><td>380</td><td>Project listing, session-scope binding, access context</td></tr>
+          <tr><td><code>tools/grounding-tools.ts</code></td><td>872</td><td>Analysis context, list domains/datasets/schemas/tables, dataset schemas, relationships</td></tr>
+          <tr><td><code>tools/dashboard-tools.ts</code></td><td>565</td><td>List dashboards, get dashboard analysis context</td></tr>
+          <tr><td><code>tools/dashboard-authoring-tools.ts</code></td><td>289</td><td>Plan / create / change dashboards</td></tr>
+          <tr><td><code>tools/query-tools.ts</code></td><td>386</td><td><code>semaphor_analyze</code>, <code>semaphor_query_sql_advanced</code>, <code>semaphor_plan_analytics_recovery</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="margin-top: 28px;">Analytics kernel (the reusable core)</h3>
+    <p style="color: var(--ink-2); margin: 6px 0 10px;">
+      <code>src/lib/analytics/</code> is the deep module the protocol
+      explainer talks about. The runner never imports from here directly;
+      it only sees the MCP boundary. But this is where every Briefing
+      tool call's real work happens.
+    </p>
+    <div class="grid-2">
+      <div class="card brand">
+        <span class="pill brand">kernel/</span>
+        <h3 style="margin: 6px 0;">Typed contracts and execution-result shapes</h3>
+        <ul class="clean">
+          <li><code>execution-result.ts</code> &mdash; <code>SemaphorAnalyticsExecutionResult</code> assembly</li>
+          <li><code>query-spec-agent-input.ts</code> &mdash; the agent-friendly query-spec adapter</li>
+        </ul>
+      </div>
+      <div class="card brand">
+        <span class="pill brand">grounding/</span>
+        <h3 style="margin: 6px 0;">Catalog and field grounding</h3>
+        <ul class="clean">
+          <li><code>service.ts</code> &mdash; grounding-context computation</li>
+          <li><code>adapters.ts</code> &mdash; bridges to semantic domain + physical catalog</li>
+          <li><code>types.ts</code> &mdash; shared grounding contract types</li>
+        </ul>
+      </div>
+      <div class="card brand">
+        <span class="pill brand">query/</span>
+        <h3 style="margin: 6px 0;">Governed execution</h3>
+        <ul class="clean">
+          <li><code>query-spec-service.ts</code> &mdash; compiles + runs governed analytics</li>
+          <li><code>field-resolution.ts</code> &mdash; metric / dimension / date resolution</li>
+          <li><code>sql-execution-service.ts</code> &mdash; bounded SQL path</li>
+        </ul>
+      </div>
+      <div class="card brand">
+        <span class="pill brand">recovery/</span>
+        <h3 style="margin: 6px 0;">Targeted repair planning</h3>
+        <ul class="clean">
+          <li><code>planner.ts</code> &mdash; the function behind <code>semaphor_plan_analytics_recovery</code></li>
+          <li><code>planner.test.ts</code> &mdash; deterministic L1 contract tests</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 28px;">MCP infrastructure</h3>
+    <p style="color: var(--ink-2); margin: 6px 0 10px;">
+      Shared plumbing under <code>src/lib/mcp/</code>:
+    </p>
+    <div class="card" style="padding: 0;">
+      <table>
+        <thead><tr><th>File</th><th>Lines</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td><code>token-cache.ts</code></td><td>228</td><td>Project-token resolution and cache</td></tr>
+          <tr><td><code>project-scoped-route.ts</code></td><td>68</td><td>Route helper for project-scoped MCP endpoints</td></tr>
+          <tr><td><code>session-scope.ts</code></td><td>67</td><td>MCP session binding (runner connects, gets bound to a project)</td></tr>
+          <tr><td><code>tool-response.ts</code></td><td>38</td><td>Common <code>formatMcpError()</code> and structured response helpers</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="margin-top: 28px;">What this means for runner contributors</h3>
+    <ul class="clean">
+      <li>Need a new shape of governed analytics? Extend <code>src/lib/analytics/kernel/</code> and the corresponding service, then expose it through a MCP tool registrar in <code>src/app/api/mcp/tools/</code>. Do not assemble it in the runner.</li>
+      <li>Need a new recovery shape (different obligation kind, different recovery branch)? Extend <code>src/lib/analytics/recovery/planner.ts</code> and its test. Runner just sends the new <code>SemaphorOperationIntent</code>.</li>
+      <li>Need a new MCP tool entirely? Pick the registrar file by domain (query, grounding, dashboard, etc.), or add a new registrar and wire it into <code>tools.ts</code>.</li>
+    </ul>
+    <div class="callout green" style="margin-top: 18px;">
+      <strong>The architectural shape the protocol explainer describes is now visible in code.</strong> MCP tools are adapters over a kernel; the kernel is one folder; the runner is an MCP client.
+    </div>
+  </section>
+
+</main>
+
+<footer class="page">
+  <div class="container">
+    <span>Source: <code>semaphor-report-scheduler/insight-runner/src/runtime/runInsightLoop.ts</code> + sibling modules</span>
+    <span>Companion: <a href="../../../semaphor-app/docs/system-architecture/shared-analytics-protocol/ARCHITECTURE_EXPLAINER.html">Protocol Explainer</a> &middot; <a href="../../../semaphor-app/docs/system-architecture/shared-analytics-protocol/EVAL_EXPLAINER.html">Eval Explainer</a> &middot; <a href="../../../semaphor-app/docs/system-architecture/shared-analytics-protocol/MCP_EXPLAINER.html">MCP Explainer</a></span>
+  </div>
+</footer>
+
+</body>
+</html>

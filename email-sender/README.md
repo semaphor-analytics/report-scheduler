@@ -4,7 +4,7 @@
 
 ## What it does
 
-1. Receives direct invocation payloads (`action: send_consolidated` or `action: update_status`) from Step Functions / scheduler.
+1. Receives direct invocation payloads (`action: send_consolidated` or `action: update_status`) from Step Functions / scheduler, and signed Function URL `send_consolidated` requests from Semaphor App Briefings.
 2. Resolves recipients + sender context (for scheduled reports via `GET /api/v1/schedules/{id}/internal`).
 3. Sends one email per recipient with the same attachment set.
 4. Applies the SES size guardrail once; if size is too large, sends secure download links instead of attachments.
@@ -14,6 +14,54 @@
 6. Updates status via `POST /api/v1/schedules/update-status` when invoked with `action: update_status`.
 
 ## Provider modes
+
+## Semaphor App Briefings Function URL
+
+`EmailSenderFunction` also exposes a Lambda Function URL so Semaphor App can
+send on-demand or scheduled Briefing email packages without embedding
+provider-specific email logic in Semaphor App.
+
+Configure the existing Lambda API key on both services:
+
+```bash
+# semaphor-report-scheduler SAM parameter / Lambda env
+LAMBDA_API_KEY=<shared-internal-api-key>
+
+# semaphor-app env
+BRIEFINGS_EMAIL_SENDER_URL=<EmailSenderFunctionUrl output>
+LAMBDA_API_KEY=<same-shared-internal-api-key>
+```
+
+Semaphor App calls the Function URL with:
+
+```http
+POST /
+X-API-Key: <shared-internal-api-key>
+Content-Type: application/json
+```
+
+```json
+{
+  "action": "send_consolidated",
+  "recipients": ["user@example.com"],
+  "subject": "Weekly KPI Report",
+  "message": "Hello, please find the report attached.",
+  "attachments": [
+    {
+      "attachmentName": "KPI Dashboard",
+      "format": "pdf",
+      "contentType": "application/pdf",
+      "s3Bucket": "semaphor-reports-...",
+      "s3Key": "emails/kpi-dashboard.pdf",
+      "sizeBytes": 12345
+    }
+  ]
+}
+```
+
+The Function URL supports only `send_consolidated`. `update_status` remains a
+direct Lambda invocation path for the existing scheduled-report Step Functions
+workflow.
 
 ### 1) SES mode (default)
 

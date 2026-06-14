@@ -112,10 +112,6 @@ function validatePayload(payload) {
   }
 
   const attachments = normalizePayloadAttachments(payload);
-  if (attachments.length === 0) {
-    return 'attachments[] with presignedUrl and name is required';
-  }
-
   const invalidAttachment = attachments.find(
     (attachment) =>
       !attachment ||

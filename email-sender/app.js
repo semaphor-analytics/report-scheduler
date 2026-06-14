@@ -1,4 +1,5 @@
 const AWS = require('aws-sdk');
+const crypto = require('crypto');
 const s3 = new AWS.S3();
 
 const { getEmailSenderConfig } = require('./lib/config');
@@ -95,6 +96,12 @@ function buildExternalPayloadAttachments(attachments, expiresInSeconds) {
   return attachments.map((attachment) => ({
     name: attachment.name,
     contentType: attachment.contentType,
+    presignedUrl: s3.getSignedUrl('getObject', {
+      Bucket: attachment.s3Bucket,
+      Key: attachment.s3Key,
+      Expires: expiresInSeconds,
+      ResponseContentDisposition: `attachment; filename="${attachment.name}"`,
+    }),
     s3Bucket: attachment.s3Bucket,
     s3Key: attachment.s3Key,
     expiresInSeconds,
@@ -227,6 +234,10 @@ async function buildScheduledEmailContext(scheduleId, payload, config) {
     emailSubject: payload?.subject || scheduleData.subject || 'Scheduled Report',
     emailMessage:
       payload?.message !== undefined ? payload.message : scheduleData.message || null,
+    emailTextMessage:
+      payload?.textMessage !== undefined ? payload.textMessage : null,
+    emailHtmlMessage:
+      payload?.htmlMessage !== undefined ? payload.htmlMessage : null,
     dashboardLink: scheduleData.dashboardLink || 'https://semaphor.cloud',
     companyName: scheduleData.companyName || 'Semaphor',
     supportEmail: scheduleData.supportEmail || 'support@semaphor.cloud',
@@ -244,6 +255,8 @@ function buildDirectEmailContext(payload, config) {
     recipientEmails,
     emailSubject: payload?.subject || 'Report',
     emailMessage: payload?.message || null,
+    emailTextMessage: payload?.textMessage || null,
+    emailHtmlMessage: payload?.htmlMessage || null,
     dashboardLink: payload?.dashboardLink || 'https://semaphor.cloud',
     companyName: payload?.companyName || 'Semaphor',
     supportEmail: payload?.supportEmail || 'support@semaphor.cloud',
@@ -279,6 +292,8 @@ async function prepareEmailDelivery({
 
   let emailBodies = buildEmailBodies({
     emailMessage: emailContext.emailMessage,
+    emailTextMessage: emailContext.emailTextMessage,
+    emailHtmlMessage: emailContext.emailHtmlMessage,
     dashboardLink: emailContext.dashboardLink,
     companyName: emailContext.companyName,
     supportEmail: emailContext.supportEmail,
@@ -309,6 +324,8 @@ async function prepareEmailDelivery({
       );
       emailBodies = buildEmailBodies({
         emailMessage: emailContext.emailMessage,
+        emailTextMessage: emailContext.emailTextMessage,
+        emailHtmlMessage: emailContext.emailHtmlMessage,
         dashboardLink: emailContext.dashboardLink,
         companyName: emailContext.companyName,
         supportEmail: emailContext.supportEmail,
@@ -416,10 +433,6 @@ function createSendConsolidated(deps = {}) {
     const artifacts = deps.normalizeArtifacts
       ? deps.normalizeArtifacts(payload?.attachments)
       : normalizeArtifacts(payload?.attachments);
-
-    if (artifacts.length === 0) {
-      throw new Error('At least one attachment is required');
-    }
 
     const emailContext = scheduleId
       ? await (deps.buildScheduledEmailContext || buildScheduledEmailContext)(
@@ -533,7 +546,110 @@ function createSendConsolidated(deps = {}) {
 
 const sendConsolidated = createSendConsolidated();
 
+function isHttpFunctionUrlEvent(event) {
+  return Boolean(event?.requestContext?.http || event?.rawPath);
+}
+
+function getHeader(headers, key) {
+  const normalizedKey = key.toLowerCase();
+  const entry = Object.entries(headers || {}).find(
+    ([headerKey]) => headerKey.toLowerCase() === normalizedKey
+  );
+  return entry ? String(entry[1] || '') : '';
+}
+
+function timingSafeEqualString(left, right) {
+  const leftBuffer = Buffer.from(String(left || ''), 'utf8');
+  const rightBuffer = Buffer.from(String(right || ''), 'utf8');
+  return (
+    leftBuffer.length === rightBuffer.length &&
+    crypto.timingSafeEqual(leftBuffer, rightBuffer)
+  );
+}
+
+function jsonResponse(statusCode, body) {
+  return {
+    statusCode,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  };
+}
+
+function parseHttpBody(event) {
+  if (typeof event?.body !== 'string' || event.body.trim().length === 0) {
+    return {};
+  }
+  const body = event.isBase64Encoded
+    ? Buffer.from(event.body, 'base64').toString('utf8')
+    : event.body;
+  return JSON.parse(body);
+}
+
+async function handleHttpFunctionUrlEvent(event) {
+  const configuredSecret = String(process.env.LAMBDA_API_KEY || '').trim();
+  if (!configuredSecret) {
+    return jsonResponse(503, {
+      success: false,
+      error: 'LAMBDA_API_KEY is not configured',
+    });
+  }
+
+  const providedSecret = getHeader(
+    event.headers,
+    'x-api-key'
+  ).trim();
+  if (
+    !providedSecret ||
+    !timingSafeEqualString(providedSecret, configuredSecret)
+  ) {
+    return jsonResponse(401, {
+      success: false,
+      error: 'Unauthorized',
+    });
+  }
+
+  if ((event.requestContext?.http?.method || event.httpMethod) !== 'POST') {
+    return jsonResponse(405, {
+      success: false,
+      error: 'Method not allowed',
+    });
+  }
+
+  let payload;
+  try {
+    payload = parseHttpBody(event);
+  } catch {
+    return jsonResponse(400, {
+      success: false,
+      error: 'Request body must be valid JSON',
+    });
+  }
+
+  if (payload?.action !== 'send_consolidated') {
+    return jsonResponse(400, {
+      success: false,
+      error: 'Only send_consolidated is supported over HTTP',
+    });
+  }
+
+  try {
+    const result = await sendConsolidated(payload);
+    return jsonResponse(200, result);
+  } catch (error) {
+    return jsonResponse(500, {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 exports.handler = async (event) => {
+  if (isHttpFunctionUrlEvent(event)) {
+    return handleHttpFunctionUrlEvent(event);
+  }
+
   if (event?.action === 'update_status') {
     if (!event?.scheduleId || !event?.status) {
       throw new Error('scheduleId and status are required for update_status');

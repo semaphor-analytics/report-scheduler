@@ -8,7 +8,8 @@ It is deployed in the same SAM stack and exposes a Lambda Function URL.
 
 1. Accepts signed webhook payload from `email-sender`.
 2. Verifies HMAC signature (`X-Semaphor-Timestamp`, `X-Semaphor-Signature`).
-3. Downloads each attachment from `attachments[].presignedUrl`.
+3. Downloads each attachment from `attachments[].presignedUrl` when
+   attachments are present.
 4. Sends email through Resend.
 5. Returns `{ success, providerMessageId?, error? }`.
 

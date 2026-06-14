@@ -136,10 +136,14 @@ async function handleGet(req, res, parsedUrl) {
   }
 
   const tableMode = bool(query.get('tableMode'));
-  const isVisualExport = targetUrl.includes('/visual/') && !tableMode;
+  const pdfMode = query.get('pdfMode') || '';
+  const isVisualExport =
+    targetUrl.includes('/visual/') && !tableMode && pdfMode !== 'document';
   const pdfBuffer = await generatePdf(targetUrl, {
     isLambda: false,
     tableMode,
+    pdfMode,
+    documentSheetId: query.get('documentSheetId') || undefined,
     pageSize: query.get('pageSize') || 'A4',
     orientation: query.get('orientation') || 'portrait',
     wideTableStrategy: query.get('wideTableStrategy') || 'auto',

@@ -459,9 +459,12 @@ export const handler = async (event) => {
     }
 
     const tableMode = event?.queryStringParameters?.tableMode === 'true';
+    const pdfMode =
+      event?.queryStringParameters?.pdfMode || reportParams?.pdfMode || '';
     // Detect if this is a single visual export (URL contains /visual/) unless explicitly in table mode
     // Visual exports support pageSize and orientation settings
-    const isVisualExport = url ? url.includes('/visual/') && !tableMode : false;
+    const isVisualExport =
+      url ? url.includes('/visual/') && !tableMode && pdfMode !== 'document' : false;
 
     // Parse watermark settings
     const watermarkEnabled =
@@ -478,6 +481,10 @@ export const handler = async (event) => {
     const options = {
       isLambda: true,
       tableMode: tableMode,
+      pdfMode: pdfMode,
+      documentSheetId:
+        event?.queryStringParameters?.documentSheetId ||
+        reportParams?.documentSheetId,
       pageSize: event?.queryStringParameters?.pageSize || 'A4',
       orientation: event?.queryStringParameters?.orientation || 'portrait',
       wideTableStrategy: event?.queryStringParameters?.wideTableStrategy || 'auto',
@@ -505,7 +512,9 @@ export const handler = async (event) => {
       'ScheduleId:',
       scheduleId || 'none',
       'IsVisualExport:',
-      isVisualExport
+      isVisualExport,
+      'PdfMode:',
+      pdfMode || 'default'
     );
     if (isVisualExport) {
       console.log('  Visual export - PageSize:', options.pageSize, 'Orientation:', options.orientation);

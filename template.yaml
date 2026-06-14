@@ -73,6 +73,37 @@ Parameters:
       - ENABLED
       - DISABLED
 
+  InsightLoopModelProvider:
+    Type: String
+    Description: Model provider for Insight Loop generated-analysis Briefings
+    Default: openai
+    AllowedValues:
+      - openai
+      - fake
+
+  InsightLoopModel:
+    Type: String
+    Description: Model name for Insight Loop generated-analysis Briefings
+    Default: gpt-5.5
+
+  InsightLoopReasoningEffort:
+    Type: String
+    Description: Reasoning effort for Insight Loop generated-analysis Briefings
+    Default: medium
+    AllowedValues:
+      - none
+      - minimal
+      - low
+      - medium
+      - high
+      - xhigh
+
+  OpenAiApiKey:
+    Type: String
+    Description: OpenAI API key used by the Insight Loop runner when provider is openai
+    Default: ''
+    NoEcho: true
+
 Resources:
   # S3 Bucket Resource
   PdfBucket:
@@ -127,6 +158,7 @@ Resources:
             Action:
               - s3:GetObject
             Resource:
+              - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/pdfs/*'
               - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/emails/*'
           - Sid: AllowChunkProcessorAccess
             Effect: Allow
@@ -228,7 +260,9 @@ Resources:
               - Effect: Allow
                 Action:
                   - s3:GetObject
-                Resource: !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/emails/*'
+                Resource:
+                  - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/pdfs/*'
+                  - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/emails/*'
               - Effect: Allow
                 Action:
                   - ses:SendRawEmail
@@ -249,6 +283,8 @@ Resources:
           SES_REGION: !Ref SesRegion
           EMAIL_EXTERNAL_WEBHOOK_URL: !GetAtt ResendProviderFunctionUrl.FunctionUrl
           EMAIL_EXTERNAL_AUTH_SECRET: !Ref EmailExternalAuthSecret
+      FunctionUrlConfig:
+        AuthType: NONE
 
   ResendProviderFunction:
     Type: AWS::Serverless::Function
@@ -351,6 +387,74 @@ Resources:
           AUTOMATION_EXECUTOR_PATH: '/api/v1/automations/internal/execute'
       PackageType: Zip
       CodeUri: ./automation-executor
+
+  InsightRunnerIngressFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Target: "es2022"
+        Sourcemap: true
+        EntryPoints:
+          - ingress.ts
+    Properties:
+      FunctionName: !Sub 'semaphor-insight-runner-ingress-${AWS::StackName}'
+      Handler: ingress.handler
+      CodeUri: ./insight-runner
+      Runtime: nodejs18.x
+      MemorySize: 512
+      Timeout: 60
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - LambdaInvokePolicy:
+            FunctionName: !Ref InsightRunnerWorkerFunction
+      Environment:
+        Variables:
+          LAMBDA_API_KEY: !Ref LambdaApiKey
+          INSIGHT_RUNNER_WORKER_FUNCTION_NAME: !Ref InsightRunnerWorkerFunction
+          INSIGHT_RUNNER_PLAN_TIMEOUT_MS: '15000'
+          INSIGHT_LOOP_MODEL_PROVIDER: !Ref InsightLoopModelProvider
+          INSIGHT_LOOP_MODEL: !Ref InsightLoopModel
+          INSIGHT_LOOP_REASONING_EFFORT: !Ref InsightLoopReasoningEffort
+          OPENAI_API_KEY: !Ref OpenAiApiKey
+      FunctionUrlConfig:
+        AuthType: NONE
+
+  InsightRunnerWorkerFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Target: "es2022"
+        Sourcemap: true
+        EntryPoints:
+          - worker.ts
+    Properties:
+      FunctionName: !Sub 'semaphor-insight-runner-worker-${AWS::StackName}'
+      Handler: worker.handler
+      CodeUri: ./insight-runner
+      Runtime: nodejs18.x
+      MemorySize: 1024
+      Timeout: 900
+      Policies:
+        - AWSLambdaBasicExecutionRole
+      Environment:
+        Variables:
+          LAMBDA_API_KEY: !Ref LambdaApiKey
+          INSIGHT_LOOP_MODEL_PROVIDER: !Ref InsightLoopModelProvider
+          INSIGHT_LOOP_MODEL: !Ref InsightLoopModel
+          INSIGHT_LOOP_REASONING_EFFORT: !Ref InsightLoopReasoningEffort
+          OPENAI_API_KEY: !Ref OpenAiApiKey
+
+  InsightRunnerWorkerAsyncInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref InsightRunnerWorkerFunction
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 0
+      MaximumEventAgeInSeconds: 3600
 
   # EventBridge Rule to trigger Automation V2 dispatcher every 5 minutes
   AutomationDispatchRule:
@@ -573,6 +677,12 @@ Outputs:
     Export:
       Name: EmailSenderFunctionArn
 
+  EmailSenderFunctionUrl:
+    Description: 'Function URL for direct signed Email Sender requests'
+    Value: !GetAtt EmailSenderFunctionUrl.FunctionUrl
+    Export:
+      Name: EmailSenderFunctionUrl
+
   ResendProviderFunctionUrl:
     Description: 'Function URL for same-stack Resend provider Lambda'
     Value: !GetAtt ResendProviderFunctionUrl.FunctionUrl
@@ -608,6 +718,24 @@ Outputs:
     Value: !GetAtt AutomationExecutorFunction.Arn
     Export:
       Name: AutomationExecutorFunctionArn
+
+  InsightRunnerIngressFunctionUrl:
+    Description: 'Function URL for Insight Loop Briefing runner ingress'
+    Value: !GetAtt InsightRunnerIngressFunctionUrl.FunctionUrl
+    Export:
+      Name: InsightRunnerIngressFunctionUrl
+
+  InsightRunnerIngressFunctionArn:
+    Description: 'ARN of the Insight Loop Briefing runner ingress Lambda'
+    Value: !GetAtt InsightRunnerIngressFunction.Arn
+    Export:
+      Name: InsightRunnerIngressFunctionArn
+
+  InsightRunnerWorkerFunctionArn:
+    Description: 'ARN of the Insight Loop Briefing runner worker Lambda'
+    Value: !GetAtt InsightRunnerWorkerFunction.Arn
+    Export:
+      Name: InsightRunnerWorkerFunctionArn
 
   AutomationStateMachineArn:
     Description: 'ARN of the Automation V2 State Machine'

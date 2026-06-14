@@ -17,4 +17,5 @@ export * from './types';
 // Formatters
 export * from './date-formatter';
 export * from './number-formatter';
+export * from './duration-formatter';
 export * from './cell-formatter';
