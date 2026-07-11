@@ -46,6 +46,7 @@ Content-Type: application/json
   "recipients": ["user@example.com"],
   "subject": "Weekly KPI Report",
   "message": "Hello, please find the report attached.",
+  "layout": "plain",
   "attachments": [
     {
       "attachmentName": "KPI Dashboard",

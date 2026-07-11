@@ -66,6 +66,19 @@ test('buildEmailBodies escapes custom plain-text messages before rendering HTML'
   assert.match(bodies.htmlBody, /max-width: 680px/);
 });
 
+test('plain report layout starts from the natural left edge', () => {
+  const bodies = buildEmailBodies({
+    emailMessage: 'Attached is the latest Admin Dashboard report.',
+    emailLayout: 'plain',
+  });
+
+  assert.match(
+    bodies.htmlBody,
+    /class="email-gutter" align="left" style="padding: 0;"/
+  );
+  assert.doesNotMatch(bodies.htmlBody, /max-width: 680px/);
+});
+
 test('buildEmailBodies preserves trusted briefing HTML documents with text fallback', () => {
   const htmlDocument =
     '<!doctype html><html><body><main><h1>Weekly Brief</h1></main></body></html>';

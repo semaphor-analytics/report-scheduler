@@ -29,7 +29,7 @@ function isFullHtmlDocument(html) {
   return /<html[\s>]/i.test(String(html || ''));
 }
 
-function wrapEmailHtml(innerHtml) {
+function wrapEmailHtml(innerHtml, layout = 'digest') {
   const content = String(innerHtml || '');
 
   if (isFullHtmlDocument(content)) {
@@ -48,6 +48,7 @@ function wrapEmailHtml(innerHtml) {
   // drops the whole `style` (which is why padding disappeared in Gmail web).
   const bodyFont =
     '&quot;Open Sans&quot;, Arial, &quot;Helvetica Neue&quot;, Helvetica, sans-serif';
+  const plainLayout = layout === 'plain';
   return [
     '<!doctype html>',
     '<html>',
@@ -88,8 +89,8 @@ function wrapEmailHtml(innerHtml) {
     '<body style="margin: 0; padding: 0; background: #ffffff; color: #202124; -webkit-text-size-adjust: 100%; text-size-adjust: 100%;">',
     '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width: 100%; border-collapse: collapse; background: #ffffff;">',
     '<tr>',
-    '<td class="email-gutter" align="center" style="padding: 0;">',
-    '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width: 100%; max-width: 680px; border-collapse: collapse; background: #ffffff;">',
+    `<td class="email-gutter" align="${plainLayout ? 'left' : 'center'}" style="padding: 0;">`,
+    `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width: 100%; ${plainLayout ? '' : 'max-width: 680px; '}border-collapse: collapse; background: #ffffff;">`,
     '<tr>',
     `<td class="email-content" style="padding: 28px 32px; font-family: ${bodyFont}; font-size: 16px; line-height: 1.6; color: #202124;">`,
     content,
@@ -131,6 +132,7 @@ function buildEmailBodies({
   companyName = 'Semaphor',
   supportEmail = 'support@semaphor.cloud',
   downloadLinks = [],
+  emailLayout = 'digest',
 }) {
   const hasLinks = Array.isArray(downloadLinks) && downloadLinks.length > 0;
 
@@ -165,7 +167,7 @@ function buildEmailBodies({
     const htmlMessage = appendHtmlBeforeBodyClose(emailHtmlMessage, linksHtml);
     return {
       textBody: `${textMessage}${linksText}`,
-      htmlBody: wrapEmailHtml(htmlMessage),
+      htmlBody: wrapEmailHtml(htmlMessage, emailLayout),
     };
   }
 
@@ -175,7 +177,8 @@ function buildEmailBodies({
     return {
       textBody: `${textMessage}${linksText}`,
       htmlBody: wrapEmailHtml(
-        `<div style="font-size: 16px; line-height: 1.6; color: #202124;">${escapedMessage}</div>${linksHtml}`
+        `<div style="font-size: 16px; line-height: 1.6; color: #202124;">${escapedMessage}</div>${linksHtml}`,
+        emailLayout
       ),
     };
   }
@@ -208,7 +211,8 @@ function buildEmailBodies({
         `<p style="font-size: 16px; line-height: 1.6; margin: 0 0 16px;">This is an automated email from a no-reply address. If you have any questions, please contact <a href="mailto:${safeSupportEmail}" style="color: #0b57d0; text-decoration: none;">${safeSupportEmailText}</a>.</p>`,
         linksHtml,
         `<p style="font-size: 16px; line-height: 1.6; margin: 16px 0 0;">Cheers,<br>${safeCompanyName} Team</p>`,
-      ].join('')
+      ].join(''),
+      emailLayout
     ),
   };
 }
