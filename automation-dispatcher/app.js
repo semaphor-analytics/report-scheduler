@@ -1,26 +1,11 @@
+const { InvokeCommand, LambdaClient } = require('@aws-sdk/client-lambda');
+const { SFNClient, StartExecutionCommand } = require('@aws-sdk/client-sfn');
+
 const DEFAULT_BATCH_SIZE = 60;
 const DEFAULT_LEASE_MINUTES = 5;
-const DEFAULT_KINDS = ['REPORT', 'ALERT', 'CACHE_REFRESH'];
 const DEFAULT_EXECUTOR_PATH = '/api/v1/automations/internal/execute';
-const AWS = require('aws-sdk');
-const stepFunctions = new AWS.StepFunctions();
-
-function parseBoolean(value, defaultValue = false) {
-  if (value === undefined || value === null || value === '') {
-    return defaultValue;
-  }
-
-  const normalized = String(value).trim().toLowerCase();
-  if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
-    return true;
-  }
-
-  if (normalized === 'false' || normalized === '0' || normalized === 'no') {
-    return false;
-  }
-
-  return defaultValue;
-}
+const FANOUT_CONCURRENCY = 10;
+const ORG_DISPATCH_EVENT_TYPE = 'automation-org-dispatch';
 
 function parseInteger(value, defaultValue) {
   const parsed = Number.parseInt(String(value), 10);
@@ -28,90 +13,6 @@ function parseInteger(value, defaultValue) {
     return defaultValue;
   }
   return parsed;
-}
-
-function parseCsvList(value) {
-  if (!value) return [];
-  return String(value)
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function unique(values) {
-  return [...new Set(values)];
-}
-
-function resolveOrgIds(event) {
-  const fromEvent = [];
-
-  if (event && typeof event === 'object') {
-    if (typeof event.orgId === 'string' && event.orgId.trim()) {
-      fromEvent.push(event.orgId.trim());
-    }
-
-    if (Array.isArray(event.orgIds)) {
-      fromEvent.push(...event.orgIds.filter((v) => typeof v === 'string').map((v) => v.trim()));
-    }
-
-    if (event.detail && typeof event.detail === 'object') {
-      if (typeof event.detail.orgId === 'string' && event.detail.orgId.trim()) {
-        fromEvent.push(event.detail.orgId.trim());
-      }
-
-      if (Array.isArray(event.detail.orgIds)) {
-        fromEvent.push(
-          ...event.detail.orgIds
-            .filter((v) => typeof v === 'string')
-            .map((v) => v.trim())
-        );
-      }
-    }
-  }
-
-  if (fromEvent.length > 0) {
-    return unique(fromEvent.filter(Boolean));
-  }
-
-  return unique(parseCsvList(process.env.AUTOMATION_DISPATCH_ORG_IDS));
-}
-
-function resolveKinds(event) {
-  const fromEvent = [];
-
-  if (event && typeof event === 'object') {
-    if (typeof event.kind === 'string' && event.kind.trim()) {
-      fromEvent.push(event.kind.trim().toUpperCase());
-    }
-
-    if (Array.isArray(event.kinds)) {
-      fromEvent.push(
-        ...event.kinds
-          .filter((v) => typeof v === 'string')
-          .map((v) => v.trim().toUpperCase())
-      );
-    }
-
-    if (event.detail && typeof event.detail === 'object') {
-      if (typeof event.detail.kind === 'string' && event.detail.kind.trim()) {
-        fromEvent.push(event.detail.kind.trim().toUpperCase());
-      }
-
-      if (Array.isArray(event.detail.kinds)) {
-        fromEvent.push(
-          ...event.detail.kinds
-            .filter((v) => typeof v === 'string')
-            .map((v) => v.trim().toUpperCase())
-        );
-      }
-    }
-  }
-
-  const configuredKinds = parseCsvList(process.env.AUTOMATION_DISPATCH_KINDS)
-    .map((k) => k.toUpperCase());
-
-  const values = fromEvent.length > 0 ? fromEvent : (configuredKinds.length > 0 ? configuredKinds : DEFAULT_KINDS);
-  return unique(values).filter((k) => DEFAULT_KINDS.includes(k));
 }
 
 function getExecutorPath(kind) {
@@ -173,6 +74,30 @@ async function postInternal(baseUrl, apiKey, path, body) {
   return payload;
 }
 
+async function fetchDispatchTargets(baseUrl, apiKey) {
+  const payload = await postInternal(
+    baseUrl,
+    apiKey,
+    '/api/v1/automations/internal/dispatch-targets',
+    {}
+  );
+  const orgIds = Array.isArray(payload?.orgIds)
+    ? payload.orgIds.filter((value) => typeof value === 'string' && value.trim())
+    : null;
+  const kinds = Array.isArray(payload?.kinds)
+    ? payload.kinds.filter((value) => typeof value === 'string' && value.trim())
+    : null;
+
+  if (!orgIds || !kinds || kinds.length === 0) {
+    throw new Error('Dispatch targets response is missing orgIds or kinds');
+  }
+
+  return {
+    orgIds: [...new Set(orgIds.map((value) => value.trim()))],
+    kinds: [...new Set(kinds.map((value) => value.trim().toUpperCase()))],
+  };
+}
+
 async function failRun(baseUrl, apiKey, runId, errorMessage) {
   try {
     await postInternal(baseUrl, apiKey, `/api/v1/automations/internal/runs/${runId}/fail`, {
@@ -195,13 +120,14 @@ async function dispatchRuleExecution(baseUrl, apiKey, kind, payload) {
       throw new Error('AUTOMATION_STATE_MACHINE_ARN is required for stepfunctions mode');
     }
 
-    const execution = await stepFunctions
-      .startExecution({
+    const stepFunctions = new SFNClient({});
+    const execution = await stepFunctions.send(
+      new StartExecutionCommand({
         stateMachineArn,
         name: buildExecutionName(payload.runId),
         input: JSON.stringify(payload),
       })
-      .promise();
+    );
 
     return {
       accepted: true,
@@ -386,100 +312,213 @@ async function processOrgKind({
   };
 }
 
-exports.handler = async (event = {}, context = {}) => {
-  const baseUrl = process.env.SEMAPHOR_APP_URL;
-  const apiKey = process.env.LAMBDA_API_KEY;
-  const enabled = parseBoolean(process.env.AUTOMATION_DISPATCH_ENABLED, false);
-
-  if (!baseUrl || !apiKey) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({
-        message: 'Missing required configuration',
-        required: ['SEMAPHOR_APP_URL', 'LAMBDA_API_KEY'],
-      }),
-    };
+function parseOrgDispatchEvent(event) {
+  if (
+    event?.type !== ORG_DISPATCH_EVENT_TYPE
+    || typeof event.orgId !== 'string'
+    || !event.orgId.trim()
+    || !Array.isArray(event.kinds)
+  ) {
+    return null;
   }
 
-  if (!enabled) {
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        message: 'Automation dispatcher disabled',
-        hint: 'Set AUTOMATION_DISPATCH_ENABLED=true to activate',
-      }),
-    };
-  }
-
-  const orgIds = resolveOrgIds(event);
-  if (orgIds.length === 0) {
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        message: 'No orgIds resolved for dispatch',
-        hint: 'Provide event.orgId/event.orgIds or AUTOMATION_DISPATCH_ORG_IDS',
-      }),
-    };
-  }
-
-  const kinds = resolveKinds(event);
+  const kinds = [...new Set(
+    event.kinds
+      .filter((value) => typeof value === 'string' && value.trim())
+      .map((value) => value.trim().toUpperCase())
+  )];
   if (kinds.length === 0) {
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        message: 'No enabled kinds to dispatch',
-      }),
-    };
-  }
-
-  const batchSize = parseInteger(process.env.AUTOMATION_BATCH_SIZE, DEFAULT_BATCH_SIZE);
-  const leaseMinutes = parseInteger(process.env.AUTOMATION_LEASE_MINUTES, DEFAULT_LEASE_MINUTES);
-  const invocationId = context.awsRequestId || `local-${Date.now()}`;
-
-  const summary = {
-    invocationId,
-    orgIds,
-    kinds,
-    orgResults: [],
-  };
-
-  for (const orgId of orgIds) {
-    for (const kind of kinds) {
-      try {
-        const result = await processOrgKind({
-          baseUrl,
-          apiKey,
-          orgId,
-          kind,
-          invocationId,
-          batchSize,
-          leaseMinutes,
-        });
-        summary.orgResults.push(result);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error('[automation-dispatcher] Org/kind dispatch failed', {
-          orgId,
-          kind,
-          error: message,
-        });
-
-        summary.orgResults.push({
-          orgId,
-          kind,
-          claimedCount: 0,
-          error: message,
-          results: [],
-        });
-      }
-    }
+    return null;
   }
 
   return {
-    statusCode: 200,
-    body: JSON.stringify({
-      message: 'Automation dispatch cycle complete',
-      summary,
-    }),
+    coordinatorInvocationId: typeof event.coordinatorInvocationId === 'string'
+      ? event.coordinatorInvocationId
+      : null,
+    orgId: event.orgId.trim(),
+    kinds,
   };
+}
+
+async function mapWithConcurrency(values, concurrency, worker) {
+  if (values.length === 0) {
+    return [];
+  }
+
+  const results = new Array(values.length);
+  let nextIndex = 0;
+
+  async function runWorker() {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await worker(values[index], index);
+    }
+  }
+
+  const workerCount = Math.min(Math.max(1, concurrency), values.length);
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  return results;
+}
+
+async function invokeOrgCycle(input, client = new LambdaClient({})) {
+  const response = await client.send(new InvokeCommand({
+    FunctionName: input.functionName,
+    InvocationType: 'Event',
+    Payload: Buffer.from(JSON.stringify({
+      type: ORG_DISPATCH_EVENT_TYPE,
+      coordinatorInvocationId: input.coordinatorInvocationId,
+      orgId: input.orgId,
+      kinds: input.kinds,
+    })),
+  }));
+
+  if (response.StatusCode !== 202) {
+    throw new Error(`Async invocation for organization ${input.orgId} returned ${response.StatusCode}`);
+  }
+
+  return { orgId: input.orgId, status: 'accepted' };
+}
+
+async function fanOutOrgCycles({ functionName, invocationId, orgIds, kinds, invokeOrg }) {
+  const results = await mapWithConcurrency(
+    orgIds,
+    FANOUT_CONCURRENCY,
+    async (orgId) => {
+      try {
+        return await invokeOrg({
+          functionName,
+          coordinatorInvocationId: invocationId,
+          orgId,
+          kinds,
+        });
+      } catch (error) {
+        return {
+          orgId,
+          status: 'failed',
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+  );
+
+  const failures = results.filter((result) => result.status === 'failed');
+  if (failures.length > 0) {
+    console.error('[automation-dispatcher] Organization fanout failed', { failures });
+    throw new Error(`Failed to invoke ${failures.length} organization dispatch cycle(s)`);
+  }
+
+  return results;
+}
+
+async function runOrgCycle({ baseUrl, apiKey, event, invocationId }) {
+  const batchSize = parseInteger(process.env.AUTOMATION_BATCH_SIZE, DEFAULT_BATCH_SIZE);
+  const leaseMinutes = parseInteger(process.env.AUTOMATION_LEASE_MINUTES, DEFAULT_LEASE_MINUTES);
+  const summary = {
+    invocationId,
+    coordinatorInvocationId: event.coordinatorInvocationId,
+    orgId: event.orgId,
+    kinds: event.kinds,
+    orgResults: [],
+  };
+
+  for (const kind of event.kinds) {
+    try {
+      summary.orgResults.push(await processOrgKind({
+        baseUrl,
+        apiKey,
+        orgId: event.orgId,
+        kind,
+        invocationId,
+        batchSize,
+        leaseMinutes,
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('[automation-dispatcher] Org/kind dispatch failed', {
+        orgId: event.orgId,
+        kind,
+        error: message,
+      });
+      summary.orgResults.push({
+        orgId: event.orgId,
+        kind,
+        claimedCount: 0,
+        error: message,
+        results: [],
+      });
+    }
+  }
+
+  return summary;
+}
+
+function createHandler({ invokeOrg = invokeOrgCycle } = {}) {
+  return async (event = {}, context = {}) => {
+    const baseUrl = process.env.SEMAPHOR_APP_URL;
+    const apiKey = process.env.LAMBDA_API_KEY;
+
+    if (!baseUrl || !apiKey) {
+      return {
+        statusCode: 500,
+        body: JSON.stringify({
+          message: 'Missing required configuration',
+          required: ['SEMAPHOR_APP_URL', 'LAMBDA_API_KEY'],
+        }),
+      };
+    }
+
+    const invocationId = context.awsRequestId || `local-${Date.now()}`;
+    const orgEvent = parseOrgDispatchEvent(event);
+    if (event?.type === ORG_DISPATCH_EVENT_TYPE && !orgEvent) {
+      throw new Error('Invalid organization dispatch event');
+    }
+    if (orgEvent) {
+      const summary = await runOrgCycle({
+        baseUrl,
+        apiKey,
+        event: orgEvent,
+        invocationId,
+      });
+      return {
+        statusCode: 200,
+        body: JSON.stringify({
+          message: 'Organization automation dispatch cycle complete',
+          summary,
+        }),
+      };
+    }
+
+    const { orgIds, kinds } = await fetchDispatchTargets(baseUrl, apiKey);
+    const functionName = context.invokedFunctionArn || process.env.AWS_LAMBDA_FUNCTION_NAME;
+    if (orgIds.length > 0 && !functionName) {
+      throw new Error('Unable to determine dispatcher function name for organization fanout');
+    }
+    const fanoutResults = await fanOutOrgCycles({
+      functionName,
+      invocationId,
+      orgIds,
+      kinds,
+      invokeOrg,
+    });
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        message: 'Automation organization fanout complete',
+        summary: { invocationId, orgIds, kinds, fanoutResults },
+      }),
+    };
+  };
+}
+
+exports.handler = createHandler();
+
+exports._private = {
+  FANOUT_CONCURRENCY,
+  createHandler,
+  fanOutOrgCycles,
+  fetchDispatchTargets,
+  mapWithConcurrency,
+  parseOrgDispatchEvent,
 };

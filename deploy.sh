@@ -106,14 +106,19 @@ ensure_esbuild
 echo "Building SAM application..."
 sam build --use-container --no-cached
 
-ARTIFACT_SDK_PATH=".aws-sam/build/GeneratePdfFunction/node_modules/aws-sdk/package.json"
-if [ ! -f "$ARTIFACT_SDK_PATH" ]; then
-  echo "Error: missing aws-sdk in GeneratePdfFunction build artifact:"
-  echo "  $ARTIFACT_SDK_PATH"
-  echo "This usually indicates npm registry/network issues or incomplete dependency install in the build environment."
-  echo "Verify internet/private registry access, then rerun ./deploy.sh."
-  exit 1
-fi
+ARTIFACT_SDK_PATHS=(
+  ".aws-sam/build/GeneratePdfFunction/node_modules/@aws-sdk/client-s3/package.json"
+  ".aws-sam/build/GeneratePdfFunction/node_modules/@aws-sdk/s3-request-presigner/package.json"
+)
+for artifact_sdk_path in "${ARTIFACT_SDK_PATHS[@]}"; do
+  if [ ! -f "$artifact_sdk_path" ]; then
+    echo "Error: missing an AWS SDK v3 package in GeneratePdfFunction build artifact:"
+    echo "  $artifact_sdk_path"
+    echo "This usually indicates npm registry/network issues or incomplete dependency install in the build environment."
+    echo "Verify internet/private registry access, then rerun ./deploy.sh."
+    exit 1
+  fi
+done
 
 # Build parameter overrides, only including optional values when provided.
 PARAMETER_OVERRIDES=(
@@ -123,6 +128,7 @@ PARAMETER_OVERRIDES=(
   "EmailProviderMode=${EMAIL_PROVIDER_MODE:-SES}"
   "SesRegion=${SES_REGION:-us-east-1}"
   "PdfEncryptionBackend=${PDF_ENCRYPTION_BACKEND:-qpdf}"
+  "AutomationDispatchRuleState=ENABLED"
 )
 
 if [ -n "${EMAIL_EXTERNAL_AUTH_SECRET:-}" ]; then

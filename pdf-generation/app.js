@@ -1,10 +1,15 @@
-import AWS from 'aws-sdk';
+import {
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { generatePdf } from './lib/pdf-generator.js';
 import { generateCsv } from './lib/csv-extractor.js';
 import { generatePdfFromData } from './lib/pdf-from-data-generator.js';
 
 // Initialize S3 client
-const s3 = new AWS.S3();
+const s3 = new S3Client({});
 
 function sanitizeFilenameBase(name, fallback = 'Report') {
   const safe = String(name || fallback)
@@ -126,14 +131,17 @@ async function uploadArtifactToS3({
     uploadParams.Tagging = tagging;
   }
 
-  await s3.putObject(uploadParams).promise();
+  await s3.send(new PutObjectCommand(uploadParams));
 
-  const presignedUrl = s3.getSignedUrl('getObject', {
-    Bucket: bucketName,
-    Key: fileKey,
-    Expires: 60 * 60,
-    ResponseContentDisposition: `attachment; filename="${outputFilename}"`,
-  });
+  const presignedUrl = await getSignedUrl(
+    s3,
+    new GetObjectCommand({
+      Bucket: bucketName,
+      Key: fileKey,
+      ResponseContentDisposition: `attachment; filename="${outputFilename}"`,
+    }),
+    { expiresIn: 60 * 60 }
+  );
 
   return {
     bucketName,
@@ -344,16 +352,19 @@ async function handleDataDirectRequest(event) {
       ACL: 'private',
     };
 
-    await s3.putObject(uploadParams).promise();
+    await s3.send(new PutObjectCommand(uploadParams));
     console.log('PDF uploaded to S3:', `${bucketName}/${fileKey}`);
 
     // Generate presigned URL
-    const presignedUrl = s3.getSignedUrl('getObject', {
-      Bucket: bucketName,
-      Key: fileKey,
-      Expires: 60 * 60, // 1 hour expiry
-      ResponseContentDisposition: `attachment; filename="${outputFilename}"`,
-    });
+    const presignedUrl = await getSignedUrl(
+      s3,
+      new GetObjectCommand({
+        Bucket: bucketName,
+        Key: fileKey,
+        ResponseContentDisposition: `attachment; filename="${outputFilename}"`,
+      }),
+      { expiresIn: 60 * 60 }
+    );
 
     console.log('Returning presigned URL');
     return {
@@ -615,18 +626,21 @@ export const handler = async (event) => {
     }
 
     console.log(`Uploading ${fileExtension.toUpperCase()} to S3...`);
-    await s3.putObject(uploadParams).promise();
+    await s3.send(new PutObjectCommand(uploadParams));
     console.log(
       `${fileExtension.toUpperCase()} uploaded to S3: ${bucketName}/${fileKey}`
     );
 
     // Generate presigned URL for download
-    const presignedUrl = s3.getSignedUrl('getObject', {
-      Bucket: bucketName,
-      Key: fileKey,
-      Expires: 60 * 60, // 1 hour expiry
-      ResponseContentDisposition: `attachment; filename="${outputFilename}"`,
-    });
+    const presignedUrl = await getSignedUrl(
+      s3,
+      new GetObjectCommand({
+        Bucket: bucketName,
+        Key: fileKey,
+        ResponseContentDisposition: `attachment; filename="${outputFilename}"`,
+      }),
+      { expiresIn: 60 * 60 }
+    );
 
     const layoutApplied = format === 'pdf' ? fileBuffer?.layoutApplied || null : null;
 

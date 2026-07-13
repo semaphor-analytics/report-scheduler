@@ -411,7 +411,7 @@ GeneratePdfFunction:
   Properties:
     CodeUri: pdf-generation/
     Handler: app.handler
-    Runtime: nodejs18.x
+    Runtime: nodejs22.x
     MemorySize: 4096 # Required for Puppeteer
     Timeout: 300 # 5 minutes for complex pages
     Environment:

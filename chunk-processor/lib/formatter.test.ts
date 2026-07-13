@@ -209,6 +209,47 @@ describe('formatter', () => {
       expect(result).toBe('Name,Age,City\nAlice,30,NYC\nBob,25,LA\n');
     });
 
+    it('uses canonical comparison column labels supplied by the query client', () => {
+      const formatting = {
+        ...defaultFormatting,
+        visibleColumns: ['Sales', 'comparison_sales'],
+        columnLabels: {
+          comparison_sales: 'Sales (Previous Period)',
+        },
+      };
+      const result = generateCSV(
+        [['120', '100']],
+        [],
+        formatting,
+        { includeHeaders: true },
+      );
+      expect(result).toBe('Sales,Sales (Previous Period)\n120,100\n');
+    });
+
+    it('uses only own string properties from a partial column-label map', () => {
+      const formatting: ExportFormattingConfig = {
+        ...defaultFormatting,
+        visibleColumns: ['constructor', 'toString', 'valueOf'],
+        columnLabels: {
+          toString: 'String value',
+        },
+      };
+      const columns: ColumnInfo[] = [
+        { field: 'constructor', headerName: 'Constructor value' },
+      ];
+
+      const result = generateCSV(
+        [['first', 'second', 'third']],
+        columns,
+        formatting,
+        { includeHeaders: true },
+      );
+
+      expect(result).toBe(
+        'Constructor value,String value,valueOf\nfirst,second,third\n',
+      );
+    });
+
     it('should generate CSV without headers', () => {
       const data = [
         ['Alice', '30', 'NYC'],

@@ -4,7 +4,7 @@ AWS SAM application that powers two core capabilities for Semaphor:
 
 1. **Scheduled Reports** - Automated PDF/CSV generation and email delivery on a recurring schedule
 2. **Async Exports** - Large dataset export processing using AWS Step Functions for parallel chunk-based CSV generation
-3. **Automation V2 Dispatch (optional)** - EventBridge-driven claim/start fanout for `AutomationRule` execution
+3. **Automation V2 Dispatch** - EventBridge-driven claim/start fanout for `AutomationRule` execution
 4. **Insight Runner** - Lambda-backed generated-analysis Briefing execution with the same local runner harness used in development
 
 ## Architecture
@@ -35,11 +35,13 @@ Pipeline 2: Async Exports (Step Functions)
        |
   On Error --> MarkFailed (marks export job as failed)
 
-Pipeline 3: Automation V2 Dispatch (disabled by default)
+Pipeline 3: Automation V2 Dispatch
   EventBridge (every 5 min)
        |
   AutomationDispatcher
-       |--- POST /api/v1/automations/internal/claim-due (REPORT, ALERT, CACHE_REFRESH)
+       |--- POST /api/v1/automations/internal/dispatch-targets
+       |--- async Lambda fanout (bounded, one invocation per due org)
+                 |--- POST /api/v1/automations/internal/claim-due per kind
        |--- POST /api/v1/automations/internal/runs + /start
        |--- POST configured executor endpoints (report/alert)
        |--- POST /api/v1/automations/internal/runs/:id/fail on dispatch errors
@@ -61,7 +63,7 @@ Pipeline 4: Insight Runner
 
 - AWS CLI configured with appropriate credentials
 - [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html) installed
-- Node.js 18.x or later
+- Node.js 22.x or later
 - Docker (for building Lambda functions)
 - Access to npm registry (public npmjs.org or your configured private mirror)
 - Either:
@@ -195,13 +197,10 @@ dispatch contract is the same in both modes:
 | `INSIGHT_LOOP_REASONING_EFFORT` | Reasoning effort for generated-analysis Briefings | `medium` |
 | `OPENAI_API_KEY` | OpenAI API key used by `INSIGHT_LOOP_MODEL_PROVIDER=openai` | _(empty)_ |
 
-### Optional Automation V2 Dispatcher Variables
+### Automation V2 Dispatcher Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `AUTOMATION_DISPATCH_ENABLED` | Enables Automation V2 dispatcher execution | `false` |
-| `AUTOMATION_DISPATCH_ORG_IDS` | Comma-separated org IDs to dispatch when event payload has no org IDs | _(empty)_ |
-| `AUTOMATION_DISPATCH_KINDS` | Comma-separated kinds to claim (`REPORT,ALERT,CACHE_REFRESH`) | `REPORT,ALERT,CACHE_REFRESH` |
 | `AUTOMATION_BATCH_SIZE` | Claim batch size per org/kind cycle | `60` |
 | `AUTOMATION_LEASE_MINUTES` | Lease duration for claimed rules | `5` |
 | `AUTOMATION_EXECUTOR_MODE` | Dispatch target mode: `http` or `stepfunctions` | `http` |
@@ -210,6 +209,12 @@ dispatch contract is the same in both modes:
 | `REPORT_EXECUTOR_PATH` | Legacy fallback route override for REPORT dispatch (only used if `AUTOMATION_EXECUTOR_PATH` is unset) | _(optional)_ |
 | `ALERT_EXECUTOR_PATH` | Legacy fallback route override for ALERT dispatch (only used if `AUTOMATION_EXECUTOR_PATH` is unset) | _(optional)_ |
 | `CACHE_REFRESH_EXECUTOR_PATH` | Legacy fallback route override for CACHE_REFRESH dispatch (only used if `AUTOMATION_EXECUTOR_PATH` is unset) | _(optional)_ |
+
+The dispatcher physical Lambda name is controlled by the
+`AutomationDispatcherFunctionName` CloudFormation parameter, defaults to
+`semaphor-auto-dispatch`, and is constrained to Lambda's 64-character limit.
+Use a distinct valid value when deploying more than one stack in the same AWS
+account and region.
 
 ### Generating the Lambda API Key
 
@@ -269,7 +274,7 @@ The deployment creates:
 | **ExportStateMachine** | Step Functions state machine orchestrating the export pipeline |
 | **S3 Bucket** | Stores generated reports (`pdfs/`, `emails/`) and export files (`exports/`) |
 | **EventBridge Rule** | Triggers schedule processing every 60 minutes |
-| **AutomationDispatchRule** | Triggers Automation V2 dispatcher every 5 minutes (state parameterized; default disabled) |
+| **AutomationDispatchRule** | Triggers Automation V2 dispatcher every 5 minutes (state parameterized; enabled by default) |
 | **IAM Roles** | Least-privilege roles for each function |
 
 ### Email Delivery Modes
@@ -349,14 +354,21 @@ You'll be prompted for:
 ./deploy.sh
 ```
 
-### Enable Automation V2 Dispatch
+### Automation V2 Dispatch
 
-Automation V2 is disabled by default. To enable it, pass the `AutomationDispatchRuleState` parameter:
+Automation V2 is enabled by default. The app-owned `dispatch-targets` endpoint
+discovers due organizations and returns the canonical scheduled kinds. The
+scheduled invocation is a lightweight coordinator: it asynchronously invokes
+one child cycle per organization with bounded concurrency, and each child claims
+only its organization's due work. To pause
+dispatch deliberately, deploy with `AutomationDispatchRuleState=DISABLED` or
+disable the EventBridge rule directly; no Lambda environment toggle is required.
 
 ```bash
 sam deploy \
     --parameter-overrides \
     AutomationDispatchRuleState=ENABLED \
+    AutomationDispatcherFunctionName=semaphor-auto-dispatch \
     SemaphorAppUrl=$SEMAPHOR_APP_URL \
     LambdaApiKey=$LAMBDA_API_KEY \
     SesSenderEmail=$SES_SENDER_EMAIL \
@@ -368,12 +380,12 @@ sam deploy \
     --no-confirm-changeset
 ```
 
-You must also ensure `AUTOMATION_DISPATCH_ENABLED` is set to `true` in the function environment and that org IDs are configured (via `AUTOMATION_DISPATCH_ORG_IDS` env var or EventBridge event payload).
-
 ### Custom Stack Name
 
 ```bash
-sam deploy --stack-name my-custom-stack
+sam deploy \
+    --stack-name my-custom-stack \
+    --parameter-overrides AutomationDispatcherFunctionName=my-custom-auto-dispatch
 ```
 
 ## CloudFormation Outputs
@@ -419,7 +431,9 @@ sam list stack-outputs --stack-name semaphor-report-scheduler
   - `esbuild --version`
   - `sam build --use-container --no-cached`
 - If `npm config get omit` prints `dev`, clear it for the build shell or use `NPM_CONFIG_OMIT=` inline as above.
-- If `./deploy.sh` fails with missing `.aws-sam/build/GeneratePdfFunction/node_modules/aws-sdk/package.json`, verify npm registry access and rerun.
+- If `./deploy.sh` reports a missing AWS SDK v3 package under
+  `.aws-sam/build/GeneratePdfFunction/node_modules/@aws-sdk/`, verify npm
+  registry access and rerun.
 
 **GeneratePdfFunction Error: `Cannot find package 'aws-sdk' imported from /var/task/app.js`**
 - This means the deployed Lambda artifact is missing function dependencies.
@@ -434,7 +448,8 @@ sam list stack-outputs --stack-name semaphor-report-scheduler
   cd compaction-processor && npm ci && cd ..
   cd mark-failed && npm ci && cd ..
   sam build --use-container --no-cached --debug
-  test -f .aws-sam/build/GeneratePdfFunction/node_modules/aws-sdk/package.json && echo "aws-sdk present" || echo "aws-sdk missing"
+  test -f .aws-sam/build/GeneratePdfFunction/node_modules/@aws-sdk/client-s3/package.json && echo "S3 client present" || echo "S3 client missing"
+  test -f .aws-sam/build/GeneratePdfFunction/node_modules/@aws-sdk/s3-request-presigner/package.json && echo "S3 presigner present" || echo "S3 presigner missing"
   sam deploy --no-confirm-changeset
   ```
 - If the check prints `aws-sdk missing`, treat it as a build environment issue (registry access/network/private mirror config).
@@ -450,8 +465,8 @@ sam list stack-outputs --stack-name semaphor-report-scheduler
 **Automation V2 Dispatcher Not Running**
 - Check CloudWatch Logs: `sam logs -n AutomationDispatcherFunction --stack-name semaphor-report-scheduler --tail`
 - Confirm `AutomationDispatchRuleState` is `ENABLED` in stack parameters
-- Confirm `AUTOMATION_DISPATCH_ENABLED=true` in the function environment
-- Ensure `AUTOMATION_DISPATCH_ORG_IDS` or event payload org IDs are provided
+- Confirm the authenticated `/api/v1/automations/internal/dispatch-targets` request succeeds
+- Confirm the app returns the expected canonical kinds and any organizations with due rules
 
 **Email Not Sending**
 - If `EMAIL_PROVIDER_MODE=SES`:

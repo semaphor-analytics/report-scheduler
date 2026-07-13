@@ -4,7 +4,7 @@ Description: SAM Template for Puppeteer PDF Generation, Email Sending, and Large
 
 Globals:
   Function:
-    Runtime: nodejs18.x
+    Runtime: nodejs22.x
     Timeout: 300
     Environment:
       Variables:
@@ -68,10 +68,19 @@ Parameters:
   AutomationDispatchRuleState:
     Type: String
     Description: Enable or disable the Automation V2 dispatcher EventBridge rule
-    Default: DISABLED
+    Default: ENABLED
     AllowedValues:
       - ENABLED
       - DISABLED
+
+  AutomationDispatcherFunctionName:
+    Type: String
+    Description: Bounded physical name for the self-invoking Automation V2 dispatcher Lambda
+    Default: semaphor-auto-dispatch
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '^[A-Za-z0-9-_]+$'
+    ConstraintDescription: Must be 1-64 characters using letters, numbers, hyphens, or underscores
 
   InsightLoopModelProvider:
     Type: String
@@ -214,7 +223,7 @@ Resources:
       LayerName: !Sub 'semaphor-qpdf-${AWS::StackName}'
       ContentUri: ./pdf-generation/layers/qpdf
       CompatibleRuntimes:
-        - nodejs18.x
+        - nodejs22.x
       Description: qpdf binary and shared libraries for encrypted PDF post-processing
 
   # Lambda Function for PDF Generation
@@ -290,7 +299,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       Handler: app.handler
-      Runtime: nodejs18.x
+      Runtime: nodejs22.x
       CodeUri: ./resend-provider
       MemorySize: 256
       Timeout: 60
@@ -309,7 +318,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       Handler: app.handler
-      Runtime: nodejs18.x
+      Runtime: nodejs22.x
       Timeout: 120 # 2 minutes timeout
       MemorySize: 256
       Policies:
@@ -349,8 +358,9 @@ Resources:
   AutomationDispatcherFunction:
     Type: AWS::Serverless::Function
     Properties:
+      FunctionName: !Ref AutomationDispatcherFunctionName
       Handler: app.handler
-      Runtime: nodejs18.x
+      Runtime: nodejs22.x
       Timeout: 120
       MemorySize: 256
       Policies:
@@ -360,12 +370,14 @@ Resources:
               Action:
                 - states:StartExecution
               Resource: !Ref AutomationStateMachine
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AutomationDispatcherFunctionName}'
       Environment:
         Variables:
-          AUTOMATION_DISPATCH_ENABLED: 'false'
           AUTOMATION_BATCH_SIZE: '60'
           AUTOMATION_LEASE_MINUTES: '5'
-          AUTOMATION_DISPATCH_KINDS: 'REPORT,ALERT,CACHE_REFRESH'
           AUTOMATION_EXECUTOR_MODE: 'http'
           AUTOMATION_STATE_MACHINE_ARN: !Ref AutomationStateMachine
           AUTOMATION_EXECUTOR_PATH: '/api/v1/automations/internal/execute'
@@ -377,7 +389,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       Handler: app.handler
-      Runtime: nodejs18.x
+      Runtime: nodejs22.x
       Timeout: 120
       MemorySize: 256
       Policies:
@@ -402,7 +414,7 @@ Resources:
       FunctionName: !Sub 'semaphor-insight-runner-ingress-${AWS::StackName}'
       Handler: ingress.handler
       CodeUri: ./insight-runner
-      Runtime: nodejs18.x
+      Runtime: nodejs22.x
       MemorySize: 512
       Timeout: 60
       Policies:
@@ -435,7 +447,7 @@ Resources:
       FunctionName: !Sub 'semaphor-insight-runner-worker-${AWS::StackName}'
       Handler: worker.handler
       CodeUri: ./insight-runner
-      Runtime: nodejs18.x
+      Runtime: nodejs22.x
       MemorySize: 1024
       Timeout: 900
       Policies:

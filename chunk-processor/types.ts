@@ -49,6 +49,7 @@ export interface ExportFormattingConfig {
   includeHeaders: boolean;
   columnSettings?: Record<string, ColumnSettings>;
   visibleColumns?: string[];
+  columnLabels?: Record<string, string>;
 }
 
 export interface ColumnSettings {

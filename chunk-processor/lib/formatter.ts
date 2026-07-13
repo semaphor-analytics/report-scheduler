@@ -187,6 +187,21 @@ function escapeCSVValue(value: string, delimiter: string): string {
   return value;
 }
 
+function getOwnColumnLabel(
+  columnLabels: Record<string, string> | undefined,
+  field: string
+): string | undefined {
+  if (
+    !columnLabels ||
+    !Object.prototype.hasOwnProperty.call(columnLabels, field)
+  ) {
+    return undefined;
+  }
+
+  const label = columnLabels[field];
+  return typeof label === 'string' && label.length > 0 ? label : undefined;
+}
+
 /**
  * Get visible columns with fallback to record keys if columns array is empty.
  */
@@ -258,7 +273,10 @@ export function generateCSV(
     const visibleColumns = getVisibleColumns(columns, formatting, rawRecords?.[0]);
     const headers = visibleColumns.map((field) => {
       const col = columns.find((c) => c.field === field);
-      const headerName = col?.headerName || field;
+      const headerName =
+        getOwnColumnLabel(formatting.columnLabels, field) ||
+        col?.headerName ||
+        field;
       return escapeCSVValue(headerName, delimiter);
     });
     lines.push(headers.join(delimiter));

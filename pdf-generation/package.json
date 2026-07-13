@@ -21,8 +21,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.957.0",
+    "@aws-sdk/s3-request-presigner": "^3.957.0",
     "@sparticuz/chromium": "^132.0.0",
-    "aws-sdk": "^2.1692.0",
     "pako": "^2.1.0",
     "pdf-lib": "^1.17.1",
     "pdf-lib-with-encrypt": "^1.2.1",
