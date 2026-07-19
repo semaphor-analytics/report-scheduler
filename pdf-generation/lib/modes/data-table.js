@@ -124,7 +124,8 @@ export function renderDataTableHtml(pages, options = {}) {
   const tableData = {
     headers: pages[0]?.headers || [],
     rows: pages.flatMap((page) => page.rows || []),
-    grandTotal: null,
+    grandTotal:
+      [...pages].reverse().find((page) => page.grandTotal)?.grandTotal || null,
     metadata: pages[0]?.metadata || {},
   };
 

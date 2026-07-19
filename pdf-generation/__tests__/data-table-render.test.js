@@ -2,6 +2,51 @@ import { describe, expect, it } from 'vitest';
 import { renderDataTableHtml } from '../lib/modes/data-table.js';
 
 describe('data table render', () => {
+  it('renders a preserved grand-total row after the data rows', () => {
+    const pages = [
+      {
+        headers: [
+          {
+            cells: [
+              { text: 'Region', columnId: 'region' },
+              { text: 'Profit', columnId: 'profit', isNumeric: true },
+            ],
+          },
+        ],
+        rows: [
+          {
+            cells: [
+              { text: 'East', columnId: 'region' },
+              { text: '$10.00', columnId: 'profit', isNumeric: true },
+            ],
+          },
+        ],
+        grandTotal: {
+          cells: [
+            { text: 'Total', columnId: 'region' },
+            {
+              text: '$9,000.00',
+              columnId: 'profit',
+              className: 'numeric',
+              isNumeric: true,
+            },
+          ],
+        },
+        metadata: { tableType: 'data', hasGrandTotal: true },
+      },
+    ];
+
+    const { html } = renderDataTableHtml(pages, {
+      pageSize: 'Letter',
+      orientation: 'portrait',
+      timezone: 'UTC',
+    });
+
+    expect(html).toContain('<tr class="grand-total">');
+    expect(html).toContain('Total');
+    expect(html).toContain('$9,000.00');
+  });
+
   it('hides truly empty columns and reports the optimization', () => {
     const pages = [
       {

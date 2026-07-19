@@ -43,23 +43,39 @@ export async function extractDataTableData(page) {
       });
     }
 
+    const tfootRow = table.querySelector('tfoot tr');
+    const grandTotal = tfootRow
+      ? {
+          cells: Array.from(tfootRow.querySelectorAll('td, th')).map(cell => ({
+            text: cell.textContent?.trim() || '',
+            colspan: cell.colSpan || 1,
+            rowspan: cell.rowSpan || 1,
+            className: cell.className,
+            columnId: cell.getAttribute('data-column-id'),
+            isHeader: cell.tagName === 'TH'
+          }))
+        }
+      : null;
+
     // Get table metadata
     const metadata = {
       totalRows: table.getAttribute('data-total-rows') || rows.length,
       totalColumns: table.getAttribute('data-total-columns'),
-      tableType: 'data'
+      tableType: 'data',
+      hasGrandTotal: Boolean(grandTotal)
     };
 
-    return { headers, rows, metadata };
+    return { headers, rows, grandTotal, metadata };
   });
 }
 
 export function paginateDataTable(data, options = {}) {
   if (!data) return [];
 
-  const { headers, rows, metadata } = data;
+  const { headers, rows, grandTotal, metadata } = data;
   const page = createNewPage(headers, 1, metadata);
   page.rows = rows;
+  page.grandTotal = grandTotal || null;
   page.totalPages = 1;
 
   // Vertical pagination is intentionally delegated to Chromium print layout.
