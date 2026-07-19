@@ -2,102 +2,30 @@ import type {
   BriefingRunnerPayload,
   BriefingTriggerSource,
 } from "./briefingRunnerPayload.js";
+import type {
+  BriefingContentBlock,
+  BriefingContentColumnAlign,
+  BriefingContentColumnKind,
+  BriefingContentDocument,
+  BriefingContentScalar,
+  BriefingContentSeverity,
+  BriefingContentTableBlock,
+  BriefingContentTableColumn,
+  BriefingKpiTile,
+} from "react-semaphor/briefings";
 
 export type BriefingRunnerResultStatus = "SUCCESS" | "PARTIAL" | "FAILED";
 
-export type BriefingContentScalar = string | number | boolean | null;
-
-export type BriefingContentSeverity =
-  | "info"
-  | "positive"
-  | "warning"
-  | "critical";
-
-export type BriefingContentColumnKind =
-  | "text"
-  | "number"
-  | "currency"
-  | "percent"
-  | "date"
-  | "boolean";
-
-export type BriefingContentColumnAlign = "left" | "center" | "right";
-
-export type BriefingContentTableColumn = {
-  key: string;
-  label: string;
-  kind?: BriefingContentColumnKind;
-  align?: BriefingContentColumnAlign;
-};
-
-export type BriefingContentTableBlock = {
-  type: "table";
-  id?: string;
-  title?: string;
-  columns: BriefingContentTableColumn[];
-  rows: Array<Record<string, BriefingContentScalar>>;
-  caption?: string;
-  totalRows?: number;
-  evidenceIds?: string[];
-};
-
-export type BriefingKpiTile = {
-  label: string;
-  value: string | number;
-  previousValue?: string | number | null;
-  delta?: string | number | null;
-  unit?: string;
-  evidenceIds?: string[];
-};
-
-export type BriefingContentBlock =
-  | { type: "heading"; text: string; level?: 2 | 3; evidenceIds?: string[] }
-  | { type: "paragraph"; text: string; evidenceIds?: string[] }
-  | {
-      type: "finding";
-      title?: string;
-      text: string;
-      severity?: BriefingContentSeverity;
-      evidenceIds: string[];
-    }
-  | { type: "bullets"; title?: string; items: string[]; evidenceIds?: string[] }
-  | {
-      type: "metric";
-      label: string;
-      value: string | number;
-      previousValue?: string | number | null;
-      delta?: string | number | null;
-      unit?: string;
-      evidenceIds?: string[];
-    }
-  | {
-      // Multiple metrics rendered as a visible tile grid (2-up in email,
-      // 1-up on mobile). Use when the user's intent is a snapshot of numbers
-      // ("show me the KPIs", "weekly metrics", "dashboard summary"). For a
-      // single number woven into prose, use `metric` instead.
-      type: "kpi_grid";
-      title?: string;
-      tiles: BriefingKpiTile[];
-      evidenceIds?: string[];
-    }
-  | {
-      type: "progress";
-      label: string;
-      value: number;
-      detail?: string;
-      evidenceIds?: string[];
-    }
-  | BriefingContentTableBlock
-  | { type: "actions"; title?: string; items: string[]; evidenceIds?: string[] }
-  | { type: "limitations"; title?: string; items: string[]; evidenceIds?: string[] }
-  | { type: "sql"; title?: string; sql: string; evidenceIds?: string[] }
-  | { type: "evidence_appendix"; title?: string; evidenceIds: string[] };
-
-export type BriefingContentDocument = {
-  version: 1;
-  title?: string;
-  summary?: string;
-  blocks: BriefingContentBlock[];
+export type {
+  BriefingContentBlock,
+  BriefingContentColumnAlign,
+  BriefingContentColumnKind,
+  BriefingContentDocument,
+  BriefingContentScalar,
+  BriefingContentSeverity,
+  BriefingContentTableBlock,
+  BriefingContentTableColumn,
+  BriefingKpiTile,
 };
 
 export type BriefingRunProgressStage =

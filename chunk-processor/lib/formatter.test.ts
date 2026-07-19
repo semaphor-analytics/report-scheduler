@@ -1,13 +1,57 @@
 import { formatRowsForExport, generateCSV } from './formatter';
-import type { ColumnInfo, ExportFormattingConfig } from '../types';
+import type {
+  ColumnInfo,
+  ExportFormattingConfig,
+} from '../types';
+import type { NumericCanonicalFormat } from 'react-semaphor/format-utils';
 
 describe('formatter', () => {
   const defaultFormatting: ExportFormattingConfig = {
     timezone: 'UTC',
-    locale: 'en-US',
+    reportContext: {
+      calendar: { tz: 'UTC', weekStart: 1, anchor: 'now' },
+      valueFormat: {
+        locale: 'en-US',
+        dateStyle: 'short',
+        dateTime: { dateStyle: 'short', timeStyle: 'short' },
+        defaultCurrency: 'USD',
+      },
+      preferenceSources: {
+        calendar: { tz: 'system_default', weekStart: 'system_default' },
+        valueFormat: {
+          locale: 'system_default',
+          dateStyle: 'system_default',
+          dateTime: {
+            dateStyle: 'system_default',
+            timeStyle: 'system_default',
+          },
+          defaultCurrency: 'system_default',
+        },
+      },
+    },
+    resolvedNumericFormats: [],
     delimiter: ',',
     includeHeaders: true,
   };
+
+  function withNumericFormat(
+    columnKey: string,
+    format: NumericCanonicalFormat,
+  ): ExportFormattingConfig {
+    return {
+      ...defaultFormatting,
+      resolvedNumericFormats: [
+        {
+          scope: {
+            dashboardId: 'dashboard-1',
+            cardId: 'card-1',
+          },
+          target: { kind: 'column', columnKey },
+          format,
+        },
+      ],
+    };
+  }
 
   describe('formatRowsForExport', () => {
     it('should format rows with columns from API', () => {
@@ -21,7 +65,16 @@ describe('formatter', () => {
         { field: 'city', headerName: 'City' },
       ];
 
-      const result = formatRowsForExport(data, columns, defaultFormatting);
+      const result = formatRowsForExport(
+        data,
+        columns,
+        withNumericFormat('value', {
+          type: 'number',
+          locale: 'en-US',
+          minimumFractionDigits: 3,
+          maximumFractionDigits: 3,
+        }),
+      );
 
       expect(result).toEqual([
         ['Alice', '30', 'NYC'],
@@ -92,97 +145,73 @@ describe('formatter', () => {
       expect(result).toEqual([]);
     });
 
-    it('should format numbers correctly', () => {
+    it('preserves raw numbers when no canonical format was carried', () => {
       const data = [{ value: 1234.5678 }];
       const columns: ColumnInfo[] = [{ field: 'value' }];
 
       const result = formatRowsForExport(data, columns, defaultFormatting);
 
-      // Intl.NumberFormat with en-US locale
-      expect(result[0][0]).toBe('1,234.568');
+      expect(result[0][0]).toBe('1234.5678');
     });
 
-    it('should format currency when columnSettings specify currency', () => {
+    it('formats currency only from the carried canonical column format', () => {
       const data = [{ price: 1234.5 }];
       const columns: ColumnInfo[] = [{ field: 'price' }];
-      const formatting: ExportFormattingConfig = {
-        ...defaultFormatting,
-        columnSettings: {
-          price: {
-            numberFormat: {
-              style: 'currency',
-              currency: 'USD',
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            },
-          },
-        },
-      };
+      const formatting = withNumericFormat('price', {
+        type: 'currency',
+        locale: 'en-US',
+        currency: 'USD',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
 
       const result = formatRowsForExport(data, columns, formatting);
 
       expect(result[0][0]).toBe('$1,234.50');
     });
 
-    it('should format percent when columnSettings specify percent', () => {
+    it('formats whole percents from the carried canonical column format', () => {
       const data = [{ rate: 75 }]; // 75%
       const columns: ColumnInfo[] = [{ field: 'rate' }];
-      const formatting: ExportFormattingConfig = {
-        ...defaultFormatting,
-        columnSettings: {
-          rate: {
-            numberFormat: {
-              style: 'percent',
-              minimumFractionDigits: 0,
-              maximumFractionDigits: 0,
-            },
-          },
-        },
-      };
+      const formatting = withNumericFormat('rate', {
+        type: 'percent',
+        locale: 'en-US',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+        percentValueMode: 'whole',
+      });
 
       const result = formatRowsForExport(data, columns, formatting);
 
       expect(result[0][0]).toBe('75%');
     });
 
-    it('should preserve percentValueMode=fraction from column settings', () => {
+    it('preserves percentValueMode=fraction from the carried format', () => {
       const data = [{ rate: 0.125 }]; // 12.5% when interpreted as fraction
       const columns: ColumnInfo[] = [{ field: 'rate' }];
-      const formatting: ExportFormattingConfig = {
-        ...defaultFormatting,
-        columnSettings: {
-          rate: {
-            numberFormat: {
-              style: 'percent',
-              minimumFractionDigits: 1,
-              maximumFractionDigits: 1,
-              percentValueMode: 'fraction',
-            },
-          },
-        },
-      };
+      const formatting = withNumericFormat('rate', {
+        type: 'percent',
+        locale: 'en-US',
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+        percentValueMode: 'fraction',
+      });
 
       const result = formatRowsForExport(data, columns, formatting);
 
       expect(result[0][0]).toBe('12.5%');
     });
 
-    it('should preserve useGrouping=false from column settings', () => {
+    it('preserves useGrouping=false from the carried format', () => {
       const data = [{ value: 12345.67 }];
       const columns: ColumnInfo[] = [{ field: 'value' }];
-      const formatting: ExportFormattingConfig = {
-        ...defaultFormatting,
-        columnSettings: {
-          value: {
-            numberFormat: {
-              style: 'decimal',
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-              useGrouping: false,
-            },
-          },
-        },
-      };
+      const formatting = withNumericFormat('value', {
+        type: 'number',
+        locale: 'en-US',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+        useGrouping: false,
+      });
 
       const result = formatRowsForExport(data, columns, formatting);
 

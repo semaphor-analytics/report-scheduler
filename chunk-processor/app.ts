@@ -12,6 +12,7 @@
 import type { ChunkInput, ChunkResult } from './types';
 import { queryData, fetchChunkStatus, updateChunkStatus } from './lib/api-client';
 import { formatRowsForExport, generateCSV } from './lib/formatter';
+import { parseExportFormattingConfig } from './lib/formatting-contract';
 import { uploadChunk } from './lib/s3-client';
 
 const SEMAPHOR_APP_URL = process.env.SEMAPHOR_APP_URL || 'https://semaphor.cloud';
@@ -26,12 +27,14 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
     jobId,
     exportToken,
     cardConfig,
-    formatting,
+    formatting: rawFormatting,
   } = event;
 
   console.log(`Processing chunk ${chunkNumber} for job ${jobId}`);
 
   try {
+    const formatting = parseExportFormattingConfig(rawFormatting);
+
     // 1. Check idempotency - skip if already completed
     const existingStatus = await fetchChunkStatus(
       chunkId,

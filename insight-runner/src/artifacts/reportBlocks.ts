@@ -2,6 +2,16 @@ import type {
   InsightLoopDefinition,
   NormalizedInsightIntent,
 } from "../definition/types.js";
+import {
+  semaphorAnalyticsExecutionResultSchema,
+  type SemaphorAnalyticsExecutionResult,
+  type SemaphorValueFormat,
+} from "react-semaphor/analytics-protocol";
+import type { BriefingNumericTarget } from "react-semaphor/briefings";
+import {
+  parseNumericCanonicalFormat,
+  type NumericCanonicalFormat,
+} from "react-semaphor/format-utils";
 import type {
   EvidenceEntry,
   EvidenceLedgerSnapshot,
@@ -21,6 +31,12 @@ export type ReportBlock =
       type: "metric";
       title: string;
       value: string;
+      rawValue?: number;
+      rawPreviousValue?: number;
+      rawDelta?: number;
+      rawPercentChange?: number;
+      target?: BriefingNumericTarget;
+      authoredFormat?: NumericCanonicalFormat;
       secondary?: string;
       delta?: string;
       percentChange?: string;
@@ -56,6 +72,7 @@ export type ReportBlock =
       evidenceIds: string[];
       columns: string[];
       rows: Array<Record<string, unknown>>;
+      columnFormats?: Record<string, NumericCanonicalFormat>;
     }
   | {
       id: string;
@@ -339,13 +356,27 @@ export function formatQuerySummary(
 
 function buildBusinessBlocks(entry: EvidenceEntry): ReportBlock[] {
   const blocks: ReportBlock[] = [];
+  const governedFormats = readGovernedNumericFormats(entry);
   const comparison = extractComparisonSummary(entry.resultSummary);
   if (comparison) {
+    const primaryColumnKey = governedFormats.primaryColumnKey;
     blocks.push({
       id: `metric:${entry.id}`,
       type: "metric",
       title: "Current Period Result",
       value: formatNumber(comparison.currentValue),
+      ...(primaryColumnKey
+        ? {
+            rawValue: comparison.currentValue,
+            rawPreviousValue: comparison.previousValue,
+            rawDelta: comparison.delta,
+            rawPercentChange: comparison.percentChange,
+            target: { kind: "column", columnKey: primaryColumnKey } as const,
+            ...(governedFormats.primaryMetricFormat
+              ? { authoredFormat: governedFormats.primaryMetricFormat }
+              : {}),
+          }
+        : {}),
       secondary: `Previous period: ${formatNumber(comparison.previousValue)}`,
       delta: formatSignedNumber(comparison.delta),
       percentChange: formatPercent(comparison.percentChange),
@@ -378,7 +409,7 @@ function buildBusinessBlocks(entry: EvidenceEntry): ReportBlock[] {
     });
   }
 
-  blocks.push(...extractAggregateMetricBlocks(entry));
+  blocks.push(...extractAggregateMetricBlocks(entry, governedFormats.byColumnKey));
 
   const sample = normalizeTableRows(entry.query?.resultSample);
   if (sample.rows.length) {
@@ -393,13 +424,20 @@ function buildBusinessBlocks(entry: EvidenceEntry): ReportBlock[] {
       evidenceIds: [entry.id],
       columns: sample.columns,
       rows: sample.rows,
+      columnFormats: selectColumnFormats(
+        sample.columns,
+        governedFormats.byColumnKey,
+      ),
     });
   }
 
   return blocks;
 }
 
-function extractAggregateMetricBlocks(entry: EvidenceEntry): ReportBlock[] {
+function extractAggregateMetricBlocks(
+  entry: EvidenceEntry,
+  columnFormats: Record<string, NumericCanonicalFormat>,
+): ReportBlock[] {
   const rows = readResultRows(entry.query?.resultSample);
   if (rows.length !== 1) {
     return [];
@@ -414,8 +452,138 @@ function extractAggregateMetricBlocks(entry: EvidenceEntry): ReportBlock[] {
       type: "metric" as const,
       title: formatMetricTitle(key),
       value: formatNumber(toNumber(value) ?? 0),
+      rawValue: toNumber(value) ?? 0,
+      target: { kind: "column" as const, columnKey: key },
+      authoredFormat: columnFormats[key],
       evidenceIds: [entry.id],
     }));
+}
+
+type GovernedNumericFormats = {
+  byColumnKey: Record<string, NumericCanonicalFormat>;
+  primaryColumnKey?: string;
+  primaryMetricFormat?: NumericCanonicalFormat;
+};
+
+function readGovernedNumericFormats(
+  entry: EvidenceEntry,
+): GovernedNumericFormats {
+  const parsed = semaphorAnalyticsExecutionResultSchema.safeParse(
+    entry.query?.analyticsExecutionResult,
+  );
+  if (!parsed.success) {
+    return { byColumnKey: {} };
+  }
+
+  const execution = parsed.data as SemaphorAnalyticsExecutionResult;
+  const byColumnKey: Record<string, NumericCanonicalFormat> = {};
+  const register = (
+    keys: Array<string | undefined>,
+    format: SemaphorValueFormat | undefined,
+  ) => {
+    const canonical = semanticNumericFormatToCanonical(format);
+    if (!canonical) {
+      return;
+    }
+    for (const key of keys) {
+      const normalized = key?.trim();
+      if (normalized) {
+        byColumnKey[normalized] = canonical;
+      }
+    }
+  };
+
+  const intents = [
+    execution.intent,
+    execution.compiledQuery?.analyticsIntent,
+    execution.result?.kind === "matrix" ? execution.result.intent : undefined,
+  ].filter((intent): intent is NonNullable<typeof intent> => Boolean(intent));
+
+  for (const intent of intents) {
+    if ("derivedFields" in intent) {
+      for (const field of intent.derivedFields ?? []) {
+        register([field.name], field.format);
+      }
+    }
+  }
+
+  for (const field of execution.fieldsUsed ?? []) {
+    register(
+      [field.name, field.derivedField?.name],
+      field.derivedField?.format,
+    );
+  }
+
+  const result = execution.result;
+  if (result?.kind === "records") {
+    for (const column of result.columns) {
+      register(
+        [column.key, column.name, column.derivedField?.name],
+        column.derivedField?.format,
+      );
+    }
+  } else if (result?.kind === "matrix") {
+    for (const measure of Object.values(result.measuresById)) {
+      register(
+        [
+          measure.instanceId,
+          measure.fieldKey,
+          measure.field.name,
+        ],
+        measure.format,
+      );
+    }
+  }
+
+  const metricIntent = intents.find((intent) => intent.kind === "metric");
+  const primaryColumnKey =
+    metricIntent?.kind === "metric"
+      ? metricIntent.primaryMeasure?.name ?? metricIntent.measures[0]?.name
+      : undefined;
+
+  return {
+    byColumnKey,
+    ...(primaryColumnKey ? { primaryColumnKey } : {}),
+    ...(primaryColumnKey && byColumnKey[primaryColumnKey]
+      ? { primaryMetricFormat: byColumnKey[primaryColumnKey] }
+      : {}),
+  };
+}
+
+function semanticNumericFormatToCanonical(
+  format: SemaphorValueFormat | undefined,
+): NumericCanonicalFormat | undefined {
+  if (
+    !format ||
+    (format.type !== "number" &&
+      format.type !== "currency" &&
+      format.type !== "percent" &&
+      format.type !== "percentage" &&
+      format.type !== "scientific")
+  ) {
+    return undefined;
+  }
+
+  const parsed = parseNumericCanonicalFormat({
+    ...format,
+    type: format.type === "percentage" ? "percent" : format.type,
+    ...(format.type === "percentage" && format.percentValueMode === undefined
+      ? { percentValueMode: "fraction" }
+      : {}),
+  });
+  return parsed.ok ? parsed.value : undefined;
+}
+
+function selectColumnFormats(
+  columns: string[],
+  formats: Record<string, NumericCanonicalFormat>,
+): Record<string, NumericCanonicalFormat> | undefined {
+  const selected = Object.fromEntries(
+    columns.flatMap((column) =>
+      formats[column] ? [[column, formats[column]]] : [],
+    ),
+  );
+  return Object.keys(selected).length ? selected : undefined;
 }
 
 function buildSqlBlocks(entry: EvidenceEntry): ReportBlock[] {

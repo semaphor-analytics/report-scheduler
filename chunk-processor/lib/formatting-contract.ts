@@ -1,0 +1,146 @@
+import {
+  parseNumericPresentationExecutionSnapshot,
+  validateCardExportNumericPresentationSnapshot,
+} from 'react-semaphor/format-utils';
+import type { ExportFormattingConfig } from '../types';
+
+const FORMATTING_KEYS = new Set([
+  'scope',
+  'useFormattedValues',
+  'timezone',
+  'reportContext',
+  'delimiter',
+  'includeHeaders',
+  'columnSettings',
+  'visibleColumns',
+  'columnLabels',
+  'resolvedNumericFormats',
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function optionalRecord(
+  value: unknown,
+  field: string,
+): Record<string, unknown> | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) {
+    throw new Error(`formatting.${field} must be an object`);
+  }
+  return value;
+}
+
+export function parseExportFormattingConfig(
+  input: unknown,
+): ExportFormattingConfig {
+  if (!isRecord(input)) {
+    throw new Error('formatting must be an object');
+  }
+  const unknownKey = Object.keys(input).find((key) => !FORMATTING_KEYS.has(key));
+  if (unknownKey) {
+    throw new Error(`formatting contains unknown property "${unknownKey}"`);
+  }
+
+  const timezone =
+    typeof input.timezone === 'string' ? input.timezone.trim() : '';
+  if (!timezone) {
+    throw new Error('formatting.timezone must be a non-empty string');
+  }
+  if (typeof input.delimiter !== 'string' || input.delimiter.length === 0) {
+    throw new Error('formatting.delimiter must be a non-empty string');
+  }
+  if (typeof input.includeHeaders !== 'boolean') {
+    throw new Error('formatting.includeHeaders must be a boolean');
+  }
+  if (
+    input.useFormattedValues !== undefined &&
+    typeof input.useFormattedValues !== 'boolean'
+  ) {
+    throw new Error('formatting.useFormattedValues must be a boolean');
+  }
+
+  const visibleColumns =
+    input.visibleColumns === undefined
+      ? undefined
+      : Array.isArray(input.visibleColumns) &&
+          input.visibleColumns.every((value) => typeof value === 'string')
+        ? input.visibleColumns
+        : undefined;
+  if (input.visibleColumns !== undefined && !visibleColumns) {
+    throw new Error('formatting.visibleColumns must be an array of strings');
+  }
+  const columnLabels = optionalRecord(input.columnLabels, 'columnLabels');
+  if (
+    columnLabels &&
+    Object.values(columnLabels).some((value) => typeof value !== 'string')
+  ) {
+    throw new Error('formatting.columnLabels values must be strings');
+  }
+  const columnSettings = optionalRecord(input.columnSettings, 'columnSettings');
+
+  const common = {
+    ...(input.useFormattedValues !== undefined
+      ? { useFormattedValues: input.useFormattedValues }
+      : {}),
+    timezone,
+    delimiter: input.delimiter,
+    includeHeaders: input.includeHeaders,
+    ...(columnSettings
+      ? {
+          columnSettings:
+            columnSettings as ExportFormattingConfig['columnSettings'],
+        }
+      : {}),
+    ...(visibleColumns ? { visibleColumns } : {}),
+    ...(columnLabels
+      ? { columnLabels: columnLabels as Record<string, string> }
+      : {}),
+  };
+
+  if (!isRecord(input.scope)) {
+    throw new Error('formatting.scope must be an object');
+  }
+  const dashboardId =
+    typeof input.scope.dashboardId === 'string'
+      ? input.scope.dashboardId.trim()
+      : '';
+  const cardId =
+    typeof input.scope.cardId === 'string' ? input.scope.cardId.trim() : '';
+  if (!dashboardId || !cardId) {
+    throw new Error(
+      'formatting.scope.dashboardId and formatting.scope.cardId must be non-empty strings',
+    );
+  }
+
+  const snapshot = parseNumericPresentationExecutionSnapshot({
+    reportContext: input.reportContext,
+    resolvedNumericFormats: input.resolvedNumericFormats,
+  });
+  if (timezone !== snapshot.reportContext.calendar.tz) {
+    throw new Error(
+      'formatting.timezone must equal reportContext.calendar.tz',
+    );
+  }
+  try {
+    validateCardExportNumericPresentationSnapshot({
+      entries: snapshot.resolvedNumericFormats,
+      expectedScope: { dashboardId, cardId },
+      visibleColumns,
+      useFormattedValues: input.useFormattedValues !== false,
+    });
+  } catch (error) {
+    throw new Error(
+      `formatting.${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  return {
+    ...common,
+    reportContext: snapshot.reportContext,
+    resolvedNumericFormats: snapshot.resolvedNumericFormats,
+  };
+}

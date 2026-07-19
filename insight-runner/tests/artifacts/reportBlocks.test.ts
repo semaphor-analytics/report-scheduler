@@ -99,6 +99,15 @@ describe("buildReportPlan", () => {
         evidenceIds: ["ev_001"],
       }),
     );
+    const comparisonMetric = plan.blocks.find(
+      (block) =>
+        block.type === "metric" && block.title === "Current Period Result",
+    );
+    expect(comparisonMetric).not.toHaveProperty("target");
+    expect(comparisonMetric).not.toHaveProperty("rawValue");
+    expect(comparisonMetric).not.toHaveProperty("rawPreviousValue");
+    expect(comparisonMetric).not.toHaveProperty("rawDelta");
+    expect(comparisonMetric).not.toHaveProperty("rawPercentChange");
     expect(plan.blocks).toContainEqual(
       expect.objectContaining({
         type: "chart",
@@ -201,6 +210,108 @@ describe("buildReportPlan", () => {
           "preferred_ship_mode",
           "delay_concentration_state",
         ]),
+      }),
+    );
+  });
+
+  it("carries explicit governed numeric formats into structured report blocks", () => {
+    const revenueDerivedField = {
+      kind: "derived_field" as const,
+      name: "revenue",
+      label: "Revenue",
+      resultRole: "measure" as const,
+      dataType: "number" as const,
+      computeStage: "aggregate" as const,
+      expression: "{{amount}}",
+      inputs: {},
+      format: {
+        type: "currency" as const,
+        currency: "EUR",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      },
+    };
+    const plan = buildReportPlan({
+      definition: parseInsightLoopMarkdown("# Revenue\n\nShow revenue."),
+      answer: {
+        title: "Revenue",
+        findings: [{ claim: "Revenue is available.", evidenceIds: ["ev_001"] }],
+        limitations: [],
+        nextActions: [],
+      },
+      evidence: {
+        runId: "run_test",
+        entries: [
+          {
+            id: "ev_001",
+            type: "tool_call",
+            summary: "Called query successfully.",
+            createdAt: "2026-05-05T00:00:00.000Z",
+            query: {
+              queryPath: "semaphor_analyze",
+              analyticsExecutionResult: {
+                status: "answered",
+                fieldsUsed: [
+                  {
+                    name: "revenue",
+                    role: "measure",
+                    dataType: "number",
+                    derivedField: revenueDerivedField,
+                  },
+                ],
+                result: {
+                  kind: "records",
+                  queryPath: "query_spec",
+                  columns: [
+                    {
+                      key: "revenue",
+                      name: "revenue",
+                      label: "Revenue",
+                      role: "measure",
+                      dataType: "number",
+                      derivedField: revenueDerivedField,
+                    },
+                  ],
+                  records: [{ revenue: 1234.5 }],
+                  rowCount: 1,
+                },
+                validation: {
+                  ok: true,
+                  errors: [],
+                  warnings: [],
+                  repairHints: [],
+                },
+              },
+              resultSample: [{ revenue: 1234.5 }],
+            },
+          },
+        ],
+      },
+    });
+
+    expect(plan.blocks).toContainEqual(
+      expect.objectContaining({
+        type: "metric",
+        target: { kind: "column", columnKey: "revenue" },
+        authoredFormat: {
+          type: "currency",
+          currency: "EUR",
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        },
+      }),
+    );
+    expect(plan.blocks).toContainEqual(
+      expect.objectContaining({
+        type: "table",
+        columnFormats: {
+          revenue: {
+            type: "currency",
+            currency: "EUR",
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          },
+        },
       }),
     );
   });

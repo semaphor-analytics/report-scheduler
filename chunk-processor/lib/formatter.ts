@@ -1,9 +1,6 @@
 /**
  * Formatter utilities for CSV export.
- * Uses shared format-utils (vendored from react-semaphor).
- *
- * SOURCE: shared/format-utils are vendored copies from react-semaphor
- * SYNC: See shared/SYNC.md for sync documentation
+ * Uses the published React-free react-semaphor formatter contract.
  */
 
 import type {
@@ -14,58 +11,9 @@ import type {
 
 import {
   formatDate,
-  formatNumberWithColumnSettings,
-  type ColumnSettings as SharedColumnSettings,
-} from '../shared/format-utils';
-
-/**
- * Adapt local ColumnSettings to shared ColumnSettings format.
- * The shared format expects a `type` field to determine formatting.
- */
-function adaptColumnSettings(
-  settings: ColumnSettings | undefined,
-  value: unknown,
-  fallbackLocale: string
-): SharedColumnSettings | undefined {
-  if (!settings) return undefined;
-
-  // Infer type from settings and value
-  let type: SharedColumnSettings['type'] = 'text';
-  if (settings.numberFormat) {
-    type = 'number';
-  } else if (settings.dateFormat) {
-    type = 'date';
-  } else if (typeof value === 'number') {
-    type = 'number';
-  } else if (value instanceof Date || isDateString(value)) {
-    type = 'date';
-  }
-
-  return {
-    type,
-    numberFormat: settings.numberFormat
-      ? {
-          style: settings.numberFormat.style || 'decimal',
-          currency: settings.numberFormat.currency || 'USD',
-          locale: settings.numberFormat.locale || fallbackLocale,
-          minimumFractionDigits: settings.numberFormat.minimumFractionDigits ?? 0,
-          maximumFractionDigits: settings.numberFormat.maximumFractionDigits ?? 2,
-          useGrouping: settings.numberFormat.useGrouping,
-          percentValueMode: settings.numberFormat.percentValueMode,
-        }
-      : undefined,
-    dateFormat: settings.dateFormat
-      ? {
-          format: settings.dateFormat.format || 'MM/dd/yyyy',
-          useCustomFormat: settings.dateFormat.useCustomFormat || false,
-          customFormat: settings.dateFormat.customFormat || '',
-          useRelativeTime: false,
-          timezone: settings.dateFormat.timezone,
-          sourceTimezone: settings.dateFormat.sourceTimezone || 'auto',
-        }
-      : undefined,
-  };
-}
+  formatNumericCanonical,
+  type NumericCanonicalFormat,
+} from 'react-semaphor/format-utils';
 
 /**
  * Check if a value looks like a date string.
@@ -77,11 +25,11 @@ function isDateString(value: unknown): boolean {
 }
 
 /**
- * Get the correct date format pattern, respecting custom format settings.
- * Matches logic in shared/format-utils/cell-formatter.ts
+ * Get the saved legacy date pattern. Temporal delivery consolidation is
+ * intentionally outside this phase.
  */
 function getDateFormatPattern(
-  dateFormat: SharedColumnSettings['dateFormat']
+  dateFormat: ColumnSettings['dateFormat']
 ): string {
   if (dateFormat?.useCustomFormat && dateFormat?.customFormat) {
     return dateFormat.customFormat;
@@ -93,7 +41,7 @@ function getDateFormatPattern(
  * Resolve display timezone, mapping 'auto' to the export context timezone.
  */
 function resolveDisplayTimezone(
-  dateFormat: SharedColumnSettings['dateFormat'],
+  dateFormat: ColumnSettings['dateFormat'],
   contextTimezone: string
 ): string {
   if (dateFormat?.timezone && dateFormat.timezone !== 'auto') {
@@ -102,14 +50,28 @@ function resolveDisplayTimezone(
   return contextTimezone;
 }
 
+function resolvedNumericFormatsByColumn(
+  formatting: ExportFormattingConfig,
+): ReadonlyMap<string, NumericCanonicalFormat> {
+  const formats = new Map<string, NumericCanonicalFormat>();
+  for (const entry of formatting.resolvedNumericFormats) {
+    if (entry.target.kind === 'column') {
+      formats.set(entry.target.columnKey, entry.format);
+    }
+  }
+  return formats;
+}
+
 /**
  * Format a cell value based on column settings.
  * Uses shared formatters for consistent output with frontend.
  */
 function formatCellValue(
   value: unknown,
+  columnKey: string,
   columnSettings: ColumnSettings | undefined,
-  formatting: ExportFormattingConfig
+  formatting: ExportFormattingConfig,
+  numericFormatsByColumn: ReadonlyMap<string, NumericCanonicalFormat>,
 ): string {
   if (value === null || value === undefined) {
     return '';
@@ -119,24 +81,18 @@ function formatCellValue(
     return String(value);
   }
 
-  const sharedSettings = adaptColumnSettings(columnSettings, value, formatting.locale);
-
   // Number formatting
   if (typeof value === 'number') {
-    if (sharedSettings?.numberFormat) {
-      return formatNumberWithColumnSettings(
-        value,
-        sharedSettings.numberFormat,
-        formatting.locale
-      );
+    const format = numericFormatsByColumn.get(columnKey);
+    if (format) {
+      return formatNumericCanonical(value, format);
     }
-    // Default number formatting
-    return new Intl.NumberFormat(formatting.locale).format(value);
+    return String(value);
   }
 
   // Date formatting - only format if explicit dateFormat settings exist
   if (value instanceof Date) {
-    const dateFormat = sharedSettings?.dateFormat;
+    const dateFormat = columnSettings?.dateFormat;
     if (dateFormat) {
       return formatDate(
         value.toISOString(),
@@ -152,10 +108,9 @@ function formatCellValue(
   // String that might be a date
   if (
     isDateString(value) &&
-    sharedSettings?.type === 'date' &&
-    sharedSettings.dateFormat
+    columnSettings?.dateFormat
   ) {
-    const dateFormat = sharedSettings.dateFormat;
+    const dateFormat = columnSettings.dateFormat;
     return formatDate(
       String(value),
       getDateFormatPattern(dateFormat),
@@ -231,12 +186,19 @@ function getVisibleColumns(
 function formatSingleRow(
   row: Record<string, unknown>,
   visibleColumns: string[],
-  formatting: ExportFormattingConfig
+  formatting: ExportFormattingConfig,
+  numericFormatsByColumn: ReadonlyMap<string, NumericCanonicalFormat>,
 ): string[] {
   return visibleColumns.map((field) => {
     const value = row[field];
     const columnSettings = formatting.columnSettings?.[field];
-    return formatCellValue(value, columnSettings, formatting);
+    return formatCellValue(
+      value,
+      field,
+      columnSettings,
+      formatting,
+      numericFormatsByColumn,
+    );
   });
 }
 
@@ -250,8 +212,11 @@ export function formatRowsForExport(
 ): string[][] {
   // Determine visible columns once, with fallback to first record's keys
   const visibleColumns = getVisibleColumns(columns, formatting, data[0]);
+  const numericFormatsByColumn = resolvedNumericFormatsByColumn(formatting);
 
-  return data.map((row) => formatSingleRow(row, visibleColumns, formatting));
+  return data.map((row) =>
+    formatSingleRow(row, visibleColumns, formatting, numericFormatsByColumn),
+  );
 }
 
 /**

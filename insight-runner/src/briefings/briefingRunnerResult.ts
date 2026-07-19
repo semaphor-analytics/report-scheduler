@@ -16,14 +16,22 @@ import type {
   BriefingContentTableColumn,
   BriefingRunnerResultPayload,
 } from "./briefingCallbackClient.js";
+import {
+  formatBriefingDisplayValue,
+  isBriefingNumericValue,
+  type BriefingAttachment,
+  type BriefingNumericValue,
+} from "react-semaphor/briefings";
+import {
+  resolveNumericPresentation,
+  type NumericCanonicalFormat,
+} from "react-semaphor/format-utils";
+import type { ReportRuntimeContext } from "react-semaphor/report-runtime-context";
 import type {
   ReportBlock,
   ReportPlan,
 } from "../artifacts/reportBlocks.js";
-import type {
-  BriefingAttachment,
-  BriefingRunnerPayload,
-} from "./briefingRunnerPayload.js";
+import type { BriefingRunnerPayload } from "./briefingRunnerPayload.js";
 import {
   buildBriefingDiagnosticFeedback,
   renderDiagnosticFeedbackMarkdown,
@@ -225,6 +233,7 @@ export function buildBriefingRunnerResultPayload(
             diagnosticFeedback,
             includeEvidence: payload.briefing.jobConfig.presentation.includeEvidence,
             includeSql: payload.briefing.jobConfig.presentation.includeSql,
+            reportContext: payload.briefing.jobConfig.reportContext,
           }),
         }
       : {}),
@@ -357,8 +366,6 @@ function formatAttachment(attachment: BriefingAttachment): string {
     case "dashboard_sheet":
     case "document_sheet":
       return `${label} (${attachment.format}, dashboard ${attachment.dashboardId}, sheet ${attachment.sheetId})`;
-    case "visual":
-      return `${label} (${attachment.format}, dashboard ${attachment.dashboardId}, visual ${attachment.visualId})`;
     case "card":
       return `${label} (${attachment.format}, dashboard ${attachment.dashboardId}, card ${attachment.cardId})`;
   }
@@ -552,6 +559,7 @@ function buildBriefingContentDocument(input: {
   diagnosticFeedback?: AnalyticsDiagnosticFeedback;
   includeEvidence: boolean;
   includeSql: boolean;
+  reportContext: ReportRuntimeContext;
 }): BriefingContentDocument {
   const ledgerEvidenceIds = input.result.evidence.entries.map((entry) => entry.id);
   const blocks: BriefingContentBlock[] = [];
@@ -561,7 +569,10 @@ function buildBriefingContentDocument(input: {
   );
 
   if (input.reportPlan) {
-    const reportBlocks = reportPlanToContentBlocks(input.reportPlan);
+    const reportBlocks = reportPlanToContentBlocks(
+      input.reportPlan,
+      input.reportContext,
+    );
     if (!reportBlocks.some((block) => block.type === "finding")) {
       blocks.push(...answerFindingBlocks);
     }
@@ -713,7 +724,10 @@ function answerFindingsToContentBlocks(
   );
 }
 
-function reportPlanToContentBlocks(reportPlan: ReportPlan): BriefingContentBlock[] {
+function reportPlanToContentBlocks(
+  reportPlan: ReportPlan,
+  reportContext: ReportRuntimeContext,
+): BriefingContentBlock[] {
   const blocks: BriefingContentBlock[] = [];
   const seen = new Set<string>();
   // Buffer consecutive metric blocks so we can emit a `kpi_grid` when we see
@@ -747,6 +761,9 @@ function reportPlanToContentBlocks(reportPlan: ReportPlan): BriefingContentBlock
             ? { previousValue: metric.previousValue }
             : {}),
           ...(metric.delta !== undefined ? { delta: metric.delta } : {}),
+          ...(metric.percentChange !== undefined
+            ? { percentChange: metric.percentChange }
+            : {}),
           ...(metric.unit ? { unit: metric.unit } : {}),
           ...(metric.evidenceIds ? { evidenceIds: metric.evidenceIds } : {}),
         })),
@@ -762,7 +779,7 @@ function reportPlanToContentBlocks(reportPlan: ReportPlan): BriefingContentBlock
   };
 
   for (const block of reportPlan.blocks) {
-    for (const contentBlock of reportBlockToContentBlocks(block)) {
+    for (const contentBlock of reportBlockToContentBlocks(block, reportContext)) {
       if (contentBlock.type === "metric") {
         pendingMetrics.push(contentBlock);
         continue;
@@ -780,7 +797,10 @@ function reportPlanToContentBlocks(reportPlan: ReportPlan): BriefingContentBlock
   return blocks;
 }
 
-function reportBlockToContentBlocks(block: ReportBlock): BriefingContentBlock[] {
+function reportBlockToContentBlocks(
+  block: ReportBlock,
+  reportContext: ReportRuntimeContext,
+): BriefingContentBlock[] {
   switch (block.type) {
     case "findings":
       return block.findings.reduce<BriefingContentBlock[]>((acc, finding) => {
@@ -799,11 +819,58 @@ function reportBlockToContentBlocks(block: ReportBlock): BriefingContentBlock[] 
       return [{
         type: "metric",
         label: block.title,
-        value: block.value,
-        ...(block.secondary ? { previousValue: block.secondary } : {}),
-        ...(block.delta ?? block.percentChange
-          ? { delta: [block.delta, block.percentChange].filter(Boolean).join(" / ") }
-          : {}),
+        value:
+          block.rawValue !== undefined && block.target
+            ? buildBriefingNumericValue(
+                block.rawValue,
+                block.target,
+                reportContext,
+                block.authoredFormat,
+              )
+            : block.value,
+        ...(block.rawPreviousValue !== undefined && block.target
+          ? {
+              previousValue: buildBriefingNumericValue(
+                block.rawPreviousValue,
+                block.target,
+                reportContext,
+                block.authoredFormat,
+              ),
+            }
+          : block.secondary
+            ? { previousValue: block.secondary }
+            : {}),
+        ...(block.rawDelta !== undefined && block.target
+          ? {
+              delta: buildBriefingNumericValue(
+                block.rawDelta,
+                block.target,
+                reportContext,
+                block.authoredFormat,
+                { showPositiveSign: true },
+              ),
+            }
+          : block.delta
+            ? { delta: block.delta }
+            : {}),
+        ...(block.rawPercentChange !== undefined && block.target
+          ? {
+              percentChange: buildBriefingNumericValue(
+                block.rawPercentChange,
+                block.target,
+                reportContext,
+                {
+                  type: "percent",
+                  minimumFractionDigits: 0,
+                  maximumFractionDigits: 1,
+                  percentValueMode: "fraction",
+                },
+                { showPositiveSign: true },
+              ),
+            }
+          : block.percentChange
+            ? { percentChange: block.percentChange }
+            : {}),
         evidenceIds: block.evidenceIds,
       }];
     case "progress":
@@ -815,7 +882,7 @@ function reportBlockToContentBlocks(block: ReportBlock): BriefingContentBlock[] 
         evidenceIds: block.evidenceIds,
       }];
     case "table":
-      return [reportTableToContentTable(block)];
+      return [reportTableToContentTable(block, reportContext)];
     case "limitations":
       return block.limitations.length
         ? [{
@@ -885,6 +952,7 @@ function extractEvidenceSql(query: unknown): string | null {
 
 function reportTableToContentTable(
   block: Extract<ReportBlock, { type: "table" }>,
+  reportContext: ReportRuntimeContext,
 ): BriefingContentBlock {
   const columns = block.columns.slice(0, 20).map((column) => ({
     key: column,
@@ -896,7 +964,16 @@ function reportTableToContentTable(
     id: block.id,
     title: block.title,
     columns,
-    rows: block.rows.slice(0, 100).map((row) => normalizeTableRow(row, columns)),
+    rows: block.rows
+      .slice(0, 100)
+      .map((row) =>
+        normalizeTableRow(
+          row,
+          columns,
+          reportContext,
+          block.columnFormats,
+        ),
+      ),
     totalRows: block.rows.length,
     evidenceIds: block.evidenceIds,
   };
@@ -905,16 +982,31 @@ function reportTableToContentTable(
 function normalizeTableRow(
   row: Record<string, unknown>,
   columns: BriefingContentTableColumn[],
+  reportContext: ReportRuntimeContext,
+  columnFormats?: Record<string, NumericCanonicalFormat>,
 ): Record<string, BriefingContentScalar> {
   return Object.fromEntries(
     columns.map((column) => [
       column.key,
-      normalizeContentScalar(row[column.key]),
+      normalizeContentScalar(
+        row[column.key],
+        column.key,
+        reportContext,
+        columnFormats?.[column.key],
+      ),
     ]),
   );
 }
 
-function normalizeContentScalar(value: unknown): BriefingContentScalar {
+function normalizeContentScalar(
+  value: unknown,
+  columnKey: string,
+  reportContext: ReportRuntimeContext,
+  authoredFormat?: NumericCanonicalFormat,
+): BriefingContentScalar {
+  if (isBriefingNumericValue(value)) {
+    return value;
+  }
   if (
     value === null ||
     typeof value === "string" ||
@@ -923,6 +1015,14 @@ function normalizeContentScalar(value: unknown): BriefingContentScalar {
   ) {
     if (typeof value === "number" && !Number.isFinite(value)) {
       return null;
+    }
+    if (typeof value === "number") {
+      return buildBriefingNumericValue(
+        value,
+        { kind: "column", columnKey },
+        reportContext,
+        authoredFormat,
+      );
     }
     return value;
   }
@@ -935,18 +1035,41 @@ function normalizeContentScalar(value: unknown): BriefingContentScalar {
   return String(value);
 }
 
+function buildBriefingNumericValue(
+  value: number,
+  target: BriefingNumericValue["target"],
+  reportContext: ReportRuntimeContext,
+  authoredFormat?: NumericCanonicalFormat,
+  options?: { showPositiveSign?: boolean },
+): BriefingNumericValue {
+  const resolved = resolveNumericPresentation(
+    authoredFormat ?? { type: "number" },
+    reportContext.valueFormat,
+  );
+  return {
+    value,
+    target,
+    format:
+      options?.showPositiveSign && value > 0
+        ? {
+            ...resolved,
+            prefix: `+${resolved.prefix ?? ""}`,
+          }
+        : resolved,
+  };
+}
+
 function inferColumnKind(
   key: string,
   rows: Array<Record<string, unknown>>,
 ): BriefingContentColumnKind {
-  const lower = key.toLowerCase();
-  if (lower.includes("percent") || lower.includes("pct") || lower.endsWith("_rate")) {
-    return "percent";
-  }
-  if (lower.includes("revenue") || lower.includes("amount") || lower.includes("cost")) {
-    return "currency";
-  }
   const sample = rows.map((row) => row[key]).find((value) => value !== null && value !== undefined);
+  if (isBriefingNumericValue(sample)) {
+    return sample.format.type === "currency" ||
+      sample.format.type === "percent"
+      ? sample.format.type
+      : "number";
+  }
   if (typeof sample === "number") {
     return "number";
   }
@@ -971,13 +1094,13 @@ function contentBlockKey(block: BriefingContentBlock): string {
     case "finding":
       return `${block.type}:${block.text}`;
     case "metric":
-      return `${block.type}:${block.label}:${block.value}`;
+      return `${block.type}:${block.label}:${formatBriefingDisplayValue(block.value)}`;
     case "kpi_grid":
       return `${block.type}:${block.tiles
-        .map((tile) => `${tile.label}=${tile.value}`)
+        .map((tile) => `${tile.label}=${formatBriefingDisplayValue(tile.value)}`)
         .join("|")}`;
     case "progress":
-      return `${block.type}:${block.label}:${block.value}`;
+      return `${block.type}:${block.label}:${formatBriefingDisplayValue(block.value)}`;
     case "table":
       return `${block.type}:${block.id ?? block.title ?? block.columns.map((column) => column.key).join(",")}`;
     case "actions":

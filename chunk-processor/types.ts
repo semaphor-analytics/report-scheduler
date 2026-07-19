@@ -1,6 +1,10 @@
 /**
  * Types for the chunk-processor Lambda
  */
+import type {
+  NumericPresentationExecutionSnapshot,
+  NumericPresentationSnapshotEntry,
+} from 'react-semaphor/format-utils';
 
 export interface ChunkInput {
   chunkId: string;
@@ -10,7 +14,7 @@ export interface ChunkInput {
   jobId: string;
   exportToken: string;
   cardConfig: CardConfig;
-  formatting: ExportFormattingConfig;
+  formatting: unknown;
 }
 
 export interface ChunkResult {
@@ -41,15 +45,19 @@ export interface ColumnInfo {
   type?: string;
 }
 
-export interface ExportFormattingConfig {
+interface ExportFormattingBase {
   useFormattedValues?: boolean;
   timezone: string;
-  locale: string;
   delimiter: string;
   includeHeaders: boolean;
   columnSettings?: Record<string, ColumnSettings>;
   visibleColumns?: string[];
   columnLabels?: Record<string, string>;
+}
+
+export interface ExportFormattingConfig extends ExportFormattingBase {
+  reportContext: NumericPresentationExecutionSnapshot['reportContext'];
+  resolvedNumericFormats: NumericPresentationSnapshotEntry[];
 }
 
 export interface ColumnSettings {

@@ -5,6 +5,7 @@ import {
 } from "../../src/briefings/briefingRunnerResult.js";
 import type { BriefingRunnerPayload } from "../../src/briefings/briefingRunnerPayload.js";
 import type { InsightLoopRunResult } from "../../src/runtime/runState.js";
+import { TEST_REPORT_CONTEXT } from "./reportContextFixture.js";
 
 describe("briefing runner result contract", () => {
   it("converts completed runs without a primary artifact into terminal failures", () => {
@@ -723,13 +724,150 @@ describe("briefing runner result contract", () => {
           type: "metric",
           label: "Revenue",
           value: "$21.8K",
-          delta: "+$8.6K / +65.1%",
+          delta: "+$8.6K",
+          percentChange: "+65.1%",
           evidenceIds: ["ev_001"],
         }),
       ]),
     });
     // Default font stack is Arial (no Open Sans forced on recipients).
     expect(result.artifacts.html).toContain("Arial");
+  });
+
+  it("carries raw governed numbers with stable targets and resolved formats", () => {
+    const result = buildBriefingRunnerResultPayload(
+      makePayload(),
+      makeCompletedResult({
+        reportPlan: {
+          title: "Weekly Revenue",
+          blocks: [
+            {
+              id: "metric:revenue",
+              type: "metric",
+              title: "Revenue",
+              value: "1,235",
+              rawValue: 1234.5,
+              target: { kind: "column", columnKey: "revenue" },
+              evidenceIds: ["ev_001"],
+            },
+            {
+              id: "table:regions",
+              type: "table",
+              title: "Regions",
+              presentation: "business",
+              columns: ["region", "revenue"],
+              rows: [{ region: "West", revenue: 1234.5 }],
+              evidenceIds: ["ev_001"],
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(result.content?.blocks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "metric",
+          value: {
+            value: 1234.5,
+            target: { kind: "column", columnKey: "revenue" },
+            format: expect.objectContaining({
+              type: "number",
+              locale: "en-US",
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 0,
+            }),
+          },
+        }),
+        expect.objectContaining({
+          type: "table",
+          rows: [
+            {
+              region: "West",
+              revenue: {
+                value: 1234.5,
+                target: { kind: "column", columnKey: "revenue" },
+                format: expect.objectContaining({
+                  type: "number",
+                  locale: "en-US",
+                }),
+              },
+            },
+          ],
+        }),
+      ]),
+    );
+    expect(result.artifacts.html).toContain("1,235");
+  });
+
+  it("preserves governed currency for comparison amounts and types percent change separately", () => {
+    const result = buildBriefingRunnerResultPayload(
+      makePayload(),
+      makeCompletedResult({
+        reportPlan: {
+          title: "Weekly Revenue",
+          blocks: [
+            {
+              id: "metric:revenue",
+              type: "metric",
+              title: "Revenue",
+              value: "1,234.50",
+              rawValue: 1234.5,
+              rawPreviousValue: 1000,
+              rawDelta: 234.5,
+              rawPercentChange: 0.2345,
+              target: { kind: "column", columnKey: "revenue" },
+              authoredFormat: {
+                type: "currency",
+                currency: "EUR",
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              },
+              evidenceIds: ["ev_001"],
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(result.content?.blocks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "metric",
+          value: expect.objectContaining({
+            value: 1234.5,
+            format: expect.objectContaining({
+              type: "currency",
+              currency: "EUR",
+              locale: "en-US",
+            }),
+          }),
+          previousValue: expect.objectContaining({
+            value: 1000,
+            format: expect.objectContaining({
+              type: "currency",
+              currency: "EUR",
+            }),
+          }),
+          delta: expect.objectContaining({
+            value: 234.5,
+            format: expect.objectContaining({
+              type: "currency",
+              currency: "EUR",
+              prefix: "+",
+            }),
+          }),
+          percentChange: expect.objectContaining({
+            value: 0.2345,
+            format: expect.objectContaining({
+              type: "percent",
+              percentValueMode: "fraction",
+              prefix: "+",
+            }),
+          }),
+        }),
+      ]),
+    );
   });
 
   it("includes evidence-backed KPI blocks in styled HTML and structured content", () => {
@@ -1031,6 +1169,7 @@ function makePayload(overrides: {
       scheduleExpr: null,
       jobConfig: {
         kind: "BRIEFING",
+        reportContext: TEST_REPORT_CONTEXT,
         source: { type: "project" },
         body: {
           type: "generated_analysis",
