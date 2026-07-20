@@ -167,6 +167,33 @@ describe('parseExportFormattingConfig', () => {
     );
   });
 
+  it('accepts a totals label key only when it identifies a visible column', () => {
+    expect(
+      parseExportFormattingConfig(
+        formatting({
+          visibleColumns: ['region', 'revenue'],
+          tableTotalsLabelColumnKey: 'region',
+        }),
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        visibleColumns: ['region', 'revenue'],
+        tableTotalsLabelColumnKey: 'region',
+      }),
+    );
+
+    expect(() =>
+      parseExportFormattingConfig(
+        formatting({
+          visibleColumns: ['revenue'],
+          tableTotalsLabelColumnKey: 'region',
+        }),
+      ),
+    ).toThrow(
+      'formatting.tableTotalsLabelColumnKey must identify a visible column',
+    );
+  });
+
   it('rejects a pre-Phase-E payload without the required snapshot', () => {
     expect(() =>
       parseExportFormattingConfig({

@@ -2,6 +2,7 @@
  * Types for the chunk-processor Lambda
  */
 import type {
+  FlatTableExportTotalsByColumnId,
   NumericPresentationExecutionSnapshot,
   NumericPresentationSnapshotEntry,
 } from 'react-semaphor/format-utils';
@@ -15,6 +16,7 @@ export interface ChunkInput {
   exportToken: string;
   cardConfig: CardConfig;
   formatting: unknown;
+  tableTotalsRequest?: unknown;
 }
 
 export interface ChunkResult {
@@ -23,6 +25,8 @@ export interface ChunkResult {
   rowsProcessed: number;
   s3Key?: string;
   error?: string;
+  tableTotalsByColumnId?: FlatTableExportTotalsByColumnId;
+  tableTotalsMetadataKey?: string;
 }
 
 export interface CardConfig {
@@ -53,6 +57,7 @@ interface ExportFormattingBase {
   columnSettings?: Record<string, ColumnSettings>;
   visibleColumns?: string[];
   columnLabels?: Record<string, string>;
+  tableTotalsLabelColumnKey?: string;
 }
 
 export interface ExportFormattingConfig extends ExportFormattingBase {
@@ -83,6 +88,7 @@ export interface QueryResponse {
   records: Record<string, unknown>[];
   columns?: ColumnInfo[];
   sql?: string;
+  tableTotalsByColumnId?: unknown;
   pagination?: {
     page: number;
     pageSize: number;

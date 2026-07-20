@@ -2,12 +2,18 @@
  * Types for the compaction-processor Lambda
  */
 
+import type {
+  FlatTableExportTotalsByColumnId,
+} from 'react-semaphor/format-utils';
+
 export interface ChunkResult {
   chunkId: string;
   status: 'completed' | 'already_completed' | 'failed';
   rowsProcessed: number;
   s3Key?: string;
   error?: string;
+  tableTotalsByColumnId?: FlatTableExportTotalsByColumnId;
+  tableTotalsMetadataKey?: string;
 }
 
 export interface CompactionInput {
@@ -15,17 +21,8 @@ export interface CompactionInput {
   exportToken: string;
   chunkResults: ChunkResult[];
   cardConfig: Record<string, unknown>;
-  formatting: ExportFormattingConfig;
-}
-
-export interface ExportFormattingConfig {
-  useFormattedValues?: boolean;
-  timezone: string;
-  locale: string;
-  delimiter: string;
-  includeHeaders: boolean;
-  columnSettings?: Record<string, unknown>;
-  visibleColumns?: string[];
+  formatting: unknown;
+  tableTotalsRequest?: unknown;
 }
 
 export interface CompactionResult {

@@ -14,7 +14,8 @@
         "jobId.$": "$.jobId",
         "exportToken.$": "$.exportToken",
         "cardConfig.$": "$.cardConfig",
-        "formatting.$": "$.formatting"
+        "formatting.$": "$.formatting",
+        "tableTotalsRequest.$": "$$.Map.Item.Value.tableTotalsRequest"
       },
       "ItemProcessor": {
         "ProcessorConfig": {

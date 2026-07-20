@@ -14,6 +14,7 @@ const FORMATTING_KEYS = new Set([
   'columnSettings',
   'visibleColumns',
   'columnLabels',
+  'tableTotalsLabelColumnKey',
   'resolvedNumericFormats',
 ]);
 
@@ -79,6 +80,26 @@ export function parseExportFormattingConfig(
     throw new Error('formatting.columnLabels values must be strings');
   }
   const columnSettings = optionalRecord(input.columnSettings, 'columnSettings');
+  const tableTotalsLabelColumnKey =
+    input.tableTotalsLabelColumnKey === undefined
+      ? undefined
+      : typeof input.tableTotalsLabelColumnKey === 'string' &&
+          input.tableTotalsLabelColumnKey.trim()
+        ? input.tableTotalsLabelColumnKey.trim()
+        : null;
+  if (tableTotalsLabelColumnKey === null) {
+    throw new Error(
+      'formatting.tableTotalsLabelColumnKey must be a non-empty string',
+    );
+  }
+  if (
+    tableTotalsLabelColumnKey &&
+    !visibleColumns?.includes(tableTotalsLabelColumnKey)
+  ) {
+    throw new Error(
+      'formatting.tableTotalsLabelColumnKey must identify a visible column',
+    );
+  }
 
   const common = {
     ...(input.useFormattedValues !== undefined
@@ -97,6 +118,7 @@ export function parseExportFormattingConfig(
     ...(columnLabels
       ? { columnLabels: columnLabels as Record<string, string> }
       : {}),
+    ...(tableTotalsLabelColumnKey ? { tableTotalsLabelColumnKey } : {}),
   };
 
   if (!isRecord(input.scope)) {

@@ -2,7 +2,12 @@
  * S3 client utilities for chunk uploads.
  */
 
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import {
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
+import type { FlatTableExportTotalsByColumnId } from 'react-semaphor/format-utils';
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || 'us-east-1',
@@ -37,6 +42,39 @@ export async function uploadChunk(params: UploadChunkParams): Promise<string> {
   );
 
   return s3Key;
+}
+
+export function getTableTotalsMetadataKey(jobId: string): string {
+  return `exports/${jobId}/deltas/001.totals.json`;
+}
+
+export async function uploadTableTotalsMetadata(params: {
+  jobId: string;
+  totalsByColumnId: FlatTableExportTotalsByColumnId;
+}): Promise<string> {
+  const s3Key = getTableTotalsMetadataKey(params.jobId);
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: s3Key,
+      Body: JSON.stringify(params.totalsByColumnId),
+      ContentType: 'application/json',
+    }),
+  );
+  return s3Key;
+}
+
+export async function fetchTableTotalsMetadata(jobId: string): Promise<unknown> {
+  const response = await s3Client.send(
+    new GetObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: getTableTotalsMetadataKey(jobId),
+    }),
+  );
+  if (!response.Body) {
+    throw new Error(`No table totals metadata found for export ${jobId}`);
+  }
+  return JSON.parse(await response.Body.transformToString());
 }
 
 /**

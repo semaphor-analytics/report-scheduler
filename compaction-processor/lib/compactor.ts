@@ -7,17 +7,29 @@
 
 import { createGzip } from 'zlib';
 import { PassThrough } from 'stream';
+import type { Readable } from 'stream';
 import { getObjectStream, uploadStream, deleteObjects } from './s3-client';
 
 interface CompactChunksParams {
   jobId: string;
   chunkKeys: string[];
+  footer?: string;
 }
 
 interface CompactResult {
   finalKey: string;
   totalBytes: number;
 }
+
+type CompactionIO = {
+  getObjectStream: (key: string) => Promise<Readable>;
+  uploadStream: typeof uploadStream;
+};
+
+const DEFAULT_COMPACTION_IO: CompactionIO = {
+  getObjectStream,
+  uploadStream,
+};
 
 /**
  * Compact multiple chunk CSV files into a single gzipped file.
@@ -26,9 +38,10 @@ interface CompactResult {
  * Never loads full file into memory.
  */
 export async function compactChunks(
-  params: CompactChunksParams
+  params: CompactChunksParams,
+  io: CompactionIO = DEFAULT_COMPACTION_IO,
 ): Promise<CompactResult> {
-  const { jobId, chunkKeys } = params;
+  const { jobId, chunkKeys, footer } = params;
 
   // Sort keys to ensure correct order (001.csv, 002.csv, etc.)
   const sortedKeys = [...chunkKeys].sort();
@@ -43,7 +56,7 @@ export async function compactChunks(
   gzipStream.pipe(passThrough);
 
   // Start ONE upload (consumes from passThrough)
-  const uploadTask = uploadStream(finalKey, passThrough);
+  const uploadTask = io.uploadStream(finalKey, passThrough);
 
   let totalBytes = 0;
 
@@ -51,7 +64,7 @@ export async function compactChunks(
     // Stream each chunk file through gzip
     for (const key of sortedKeys) {
       console.log(`Streaming chunk: ${key}`);
-      const chunkStream = await getObjectStream(key);
+      const chunkStream = await io.getObjectStream(key);
 
       await new Promise<void>((resolve, reject) => {
         chunkStream.on('data', (chunk: Buffer) => {
@@ -61,6 +74,11 @@ export async function compactChunks(
         chunkStream.on('end', () => resolve());
         chunkStream.on('error', reject);
       });
+    }
+
+    if (footer) {
+      totalBytes += Buffer.byteLength(footer);
+      gzipStream.write(footer);
     }
 
     // Signal end of gzip stream

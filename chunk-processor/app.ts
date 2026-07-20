@@ -13,10 +13,38 @@ import type { ChunkInput, ChunkResult } from './types';
 import { queryData, fetchChunkStatus, updateChunkStatus } from './lib/api-client';
 import { formatRowsForExport, generateCSV } from './lib/formatter';
 import { parseExportFormattingConfig } from './lib/formatting-contract';
-import { uploadChunk } from './lib/s3-client';
+import {
+  fetchTableTotalsMetadata,
+  getTableTotalsMetadataKey,
+  uploadChunk,
+  uploadTableTotalsMetadata,
+} from './lib/s3-client';
+import {
+  parseFlatTableExportTotalsByColumnId,
+  parseFlatTableExportTotalsRequest,
+} from 'react-semaphor/format-utils';
 
 const SEMAPHOR_APP_URL = process.env.SEMAPHOR_APP_URL || 'https://semaphor.cloud';
 const LAMBDA_API_KEY = process.env.LAMBDA_API_KEY || '';
+
+function requireCompletedChunkState(
+  status: NonNullable<Awaited<ReturnType<typeof fetchChunkStatus>>>,
+) {
+  if (typeof status.s3Key !== 'string' || !status.s3Key.trim()) {
+    throw new Error(`Completed chunk ${status.id} is missing its S3 key`);
+  }
+  if (
+    typeof status.rowCount !== 'number' ||
+    !Number.isInteger(status.rowCount) ||
+    status.rowCount < 0
+  ) {
+    throw new Error(`Completed chunk ${status.id} has an invalid row count`);
+  }
+  return {
+    s3Key: status.s3Key,
+    rowCount: status.rowCount,
+  };
+}
 
 export async function handler(event: ChunkInput): Promise<ChunkResult> {
   const {
@@ -28,12 +56,25 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
     exportToken,
     cardConfig,
     formatting: rawFormatting,
+    tableTotalsRequest: rawTableTotalsRequest,
   } = event;
 
   console.log(`Processing chunk ${chunkNumber} for job ${jobId}`);
 
+  let mayMarkChunkFailed = false;
   try {
     const formatting = parseExportFormattingConfig(rawFormatting);
+    if (
+      rawTableTotalsRequest !== undefined &&
+      rawTableTotalsRequest !== null &&
+      (!isFirstChunk || chunkNumber !== 1)
+    ) {
+      throw new Error('Only the first chunk may receive tableTotalsRequest');
+    }
+    const tableTotalsRequest =
+      rawTableTotalsRequest === undefined || rawTableTotalsRequest === null
+        ? undefined
+        : parseFlatTableExportTotalsRequest(rawTableTotalsRequest);
 
     // 1. Check idempotency - skip if already completed
     const existingStatus = await fetchChunkStatus(
@@ -41,17 +82,37 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
       SEMAPHOR_APP_URL,
       LAMBDA_API_KEY
     );
+    if (!existingStatus) {
+      throw new Error(`Chunk status not found for ${chunkId}`);
+    }
 
-    if (existingStatus?.status === 'completed') {
+    if (existingStatus.status === 'completed' && !tableTotalsRequest) {
+      const completedState = requireCompletedChunkState(existingStatus);
       console.log(`Chunk ${chunkId} already completed, skipping`);
       return {
         chunkId,
         status: 'already_completed',
-        rowsProcessed: existingStatus.rowCount || 0,
-        s3Key: existingStatus.s3Key,
+        rowsProcessed: completedState.rowCount,
+        s3Key: completedState.s3Key,
       };
     }
 
+    if (existingStatus.status === 'completed' && tableTotalsRequest) {
+      const completedState = requireCompletedChunkState(existingStatus);
+      const tableTotalsByColumnId = parseFlatTableExportTotalsByColumnId(
+        await fetchTableTotalsMetadata(jobId),
+      );
+      return {
+        chunkId,
+        status: 'already_completed',
+        rowsProcessed: completedState.rowCount,
+        s3Key: completedState.s3Key,
+        tableTotalsByColumnId,
+        tableTotalsMetadataKey: getTableTotalsMetadataKey(jobId),
+      };
+    }
+
+    mayMarkChunkFailed = true;
     // 2. Mark chunk as processing
     await updateChunkStatus({
       chunkId,
@@ -67,12 +128,18 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
       cardConfig,
       chunkNumber,
       chunkSize,
+      tableTotalsRequest,
     });
 
     // API returns 'records' not 'data'
     const records = queryResponse.records || [];
     const columns = queryResponse.columns || [];
     const rowCount = records.length;
+    const tableTotalsByColumnId = tableTotalsRequest
+      ? parseFlatTableExportTotalsByColumnId(
+          queryResponse.tableTotalsByColumnId,
+        )
+      : undefined;
 
     console.log(`Queried ${rowCount} rows for chunk ${chunkNumber}`);
 
@@ -89,40 +156,70 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
       chunkNumber,
       content: csvContent,
     });
+    const tableTotalsMetadataKey = tableTotalsByColumnId
+      ? await uploadTableTotalsMetadata({
+          jobId,
+          totalsByColumnId: tableTotalsByColumnId,
+        })
+      : undefined;
 
     console.log(`Uploaded chunk ${chunkNumber} to ${s3Key}`);
 
-    // 6. Update chunk status to completed
-    await updateChunkStatus({
-      chunkId,
-      url: SEMAPHOR_APP_URL,
-      apiKey: LAMBDA_API_KEY,
-      status: 'completed',
-      rowCount,
-      s3Key,
-    });
-
-    return {
+    const completedResult: ChunkResult = {
       chunkId,
       status: 'completed',
       rowsProcessed: rowCount,
       s3Key,
+      ...(tableTotalsByColumnId ? { tableTotalsByColumnId } : {}),
+      ...(tableTotalsMetadataKey ? { tableTotalsMetadataKey } : {}),
     };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`Error processing chunk ${chunkId}:`, errorMessage);
 
-    // Update chunk status to failed
+    // 6. Update chunk status to completed. A lost response is ambiguous: the
+    // app may have committed the transition and incremented completedChunks.
     try {
       await updateChunkStatus({
         chunkId,
         url: SEMAPHOR_APP_URL,
         apiKey: LAMBDA_API_KEY,
-        status: 'failed',
-        error: errorMessage,
+        status: 'completed',
+        rowCount,
+        s3Key,
       });
-    } catch (updateError) {
-      console.error('Failed to update chunk status:', updateError);
+    } catch (completionError) {
+      mayMarkChunkFailed = false;
+      const reconciledStatus = await fetchChunkStatus(
+        chunkId,
+        SEMAPHOR_APP_URL,
+        LAMBDA_API_KEY,
+      );
+      if (reconciledStatus?.status === 'completed') {
+        return completedResult;
+      }
+      if (reconciledStatus) {
+        mayMarkChunkFailed = true;
+      }
+      throw completionError;
+    }
+
+    mayMarkChunkFailed = false;
+    return completedResult;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`Error processing chunk ${chunkId}:`, errorMessage);
+
+    if (mayMarkChunkFailed) {
+      // Update only a chunk whose unfinished state is authoritative.
+      try {
+        await updateChunkStatus({
+          chunkId,
+          url: SEMAPHOR_APP_URL,
+          apiKey: LAMBDA_API_KEY,
+          status: 'failed',
+          error: errorMessage,
+        });
+      } catch (updateError) {
+        console.error('Failed to update chunk status:', updateError);
+      }
     }
 
     // Re-throw to trigger Step Functions retry

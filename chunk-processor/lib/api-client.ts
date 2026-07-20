@@ -7,6 +7,7 @@ import type {
   QueryResponse,
   ChunkStatusResponse,
 } from '../types';
+import type { FlatTableExportTotalsRequest } from 'react-semaphor/format-utils';
 
 interface QueryDataParams {
   url: string;
@@ -14,6 +15,7 @@ interface QueryDataParams {
   cardConfig: CardConfig;
   chunkNumber: number;
   chunkSize: number;
+  tableTotalsRequest?: FlatTableExportTotalsRequest;
 }
 
 /**
@@ -21,7 +23,14 @@ interface QueryDataParams {
  * Uses the export token which carries all security policies (CLS/RCLS/TLS).
  */
 export async function queryData(params: QueryDataParams): Promise<QueryResponse> {
-  const { url, token, cardConfig, chunkNumber, chunkSize } = params;
+  const {
+    url,
+    token,
+    cardConfig,
+    chunkNumber,
+    chunkSize,
+    tableTotalsRequest,
+  } = params;
 
   const response = await fetch(`${url}/api/v1/query`, {
     method: 'POST',
@@ -37,6 +46,7 @@ export async function queryData(params: QueryDataParams): Promise<QueryResponse>
         page: chunkNumber,
         pageSize: chunkSize,
       },
+      ...(tableTotalsRequest ? { tableTotalsRequest } : {}),
     }),
   });
 
@@ -50,26 +60,32 @@ export async function queryData(params: QueryDataParams): Promise<QueryResponse>
 
 /**
  * Fetch chunk status for idempotency check.
- * Returns null if chunk doesn't exist or API call fails.
+ * Returns null only when the chunk does not exist. Availability and server
+ * failures remain errors so callers cannot confuse unknown state with an
+ * unfinished chunk.
  */
 export async function fetchChunkStatus(
   chunkId: string,
   url: string,
   apiKey: string
 ): Promise<ChunkStatusResponse | null> {
-  try {
-    const response = await fetch(
-      `${url}/api/v1/exports/internal/chunks/${chunkId}`,
-      {
-        headers: { 'X-API-Key': apiKey },
-      }
-    );
+  const response = await fetch(
+    `${url}/api/v1/exports/internal/chunks/${chunkId}`,
+    {
+      headers: { 'X-API-Key': apiKey },
+    }
+  );
 
-    if (!response.ok) return null;
-    return response.json() as Promise<ChunkStatusResponse>;
-  } catch {
+  if (response.status === 404) {
     return null;
   }
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `Failed to fetch chunk status (${response.status}): ${errorText}`,
+    );
+  }
+  return response.json() as Promise<ChunkStatusResponse>;
 }
 
 interface UpdateChunkParams {
