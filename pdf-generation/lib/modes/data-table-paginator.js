@@ -18,7 +18,8 @@ export async function extractDataTableData(page) {
             colspan: cell.colSpan || 1,
             rowspan: cell.rowSpan || 1,
             className: cell.className,
-            columnId: cell.getAttribute('data-column-id')
+            columnId: cell.getAttribute('data-column-id'),
+            isNumeric: cell.classList.contains('numeric')
           }))
         });
       });
@@ -36,7 +37,8 @@ export async function extractDataTableData(page) {
             colspan: cell.colSpan || 1,
             rowspan: cell.rowSpan || 1,
             className: cell.className,
-            isHeader: cell.tagName === 'TH'
+            isHeader: cell.tagName === 'TH',
+            isNumeric: cell.classList.contains('numeric')
           }))
         };
         rows.push(rowData);
@@ -52,7 +54,8 @@ export async function extractDataTableData(page) {
             rowspan: cell.rowSpan || 1,
             className: cell.className,
             columnId: cell.getAttribute('data-column-id'),
-            isHeader: cell.tagName === 'TH'
+            isHeader: cell.tagName === 'TH',
+            isNumeric: cell.classList.contains('numeric')
           }))
         }
       : null;

@@ -45,6 +45,9 @@ describe('data table render', () => {
     expect(html).toContain('<tr class="grand-total">');
     expect(html).toContain('Total');
     expect(html).toContain('$9,000.00');
+    expect(html).toMatch(/<th[^>]*class="numeric"[^>]*>\s*Profit/);
+    expect(html).toContain('thead th.numeric {');
+    expect(html).not.toContain('numeric numeric');
   });
 
   it('hides truly empty columns and reports the optimization', () => {

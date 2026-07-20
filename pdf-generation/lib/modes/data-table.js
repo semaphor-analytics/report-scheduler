@@ -4,6 +4,16 @@ import { extractDataTableData, paginateDataTable } from './data-table-paginator.
 import { normalizePageSize } from '../page-size-utils.js';
 import { buildWideTableLayout } from './wide-table-layout.js';
 
+function getCellClassName(cell = {}) {
+  const classNames = String(cell.className || '')
+    .split(/\s+/)
+    .filter(Boolean);
+  if (cell.isNumeric) {
+    classNames.push('numeric');
+  }
+  return [...new Set(classNames)].join(' ');
+}
+
 export function getPdfOptions(dimensions, pageSize = 'A4', options = {}) {
   const now = new Date();
   const timezone = options.timezone || 'UTC';
@@ -195,7 +205,7 @@ export function renderDataTableHtml(pages, options = {}) {
         ${(headerRow.cells || [])
           .map(
             (cell) => `
-          <th colspan="${cell.colspan || 1}" rowspan="${cell.rowspan || 1}" class="${cell.className || ''}">
+          <th colspan="${cell.colspan || 1}" rowspan="${cell.rowspan || 1}" class="${getCellClassName(cell)}">
             ${escapeHtml(cell.text)}
           </th>
         `,
@@ -213,7 +223,7 @@ export function renderDataTableHtml(pages, options = {}) {
         ${(row.cells || [])
           .map(
             (cell) => `
-          <td colspan="${cell.colspan || 1}" rowspan="${cell.rowspan || 1}" class="${[cell.className || '', cell.isNumeric ? 'numeric' : ''].filter(Boolean).join(' ')}">
+          <td colspan="${cell.colspan || 1}" rowspan="${cell.rowspan || 1}" class="${getCellClassName(cell)}">
             ${escapeHtml(cell.text)}
           </td>
         `,
@@ -230,7 +240,7 @@ export function renderDataTableHtml(pages, options = {}) {
         ${(section.grandTotal.cells || [])
           .map(
             (cell) => `
-          <td colspan="${cell.colspan || 1}" class="${cell.className || ''}">
+          <td colspan="${cell.colspan || 1}" class="${getCellClassName(cell)}">
             ${escapeHtml(cell.text)}
           </td>
         `,
@@ -366,6 +376,10 @@ export function renderDataTableHtml(pages, options = {}) {
             background: #e2e2e2;
             color: #111;
             font-weight: 600;
+          }
+
+          thead th.numeric {
+            text-align: right;
           }
 
           tbody tr:nth-child(even) {
