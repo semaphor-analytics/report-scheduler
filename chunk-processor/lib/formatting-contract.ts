@@ -1,6 +1,7 @@
 import {
-  parseNumericPresentationExecutionSnapshot,
-  validateCardExportNumericPresentationSnapshot,
+  parsePresentationExecutionSnapshot,
+  parsePresentationScope,
+  validateCardExportPresentationSnapshot,
 } from 'react-semaphor/format-utils';
 import type { ExportFormattingConfig } from '../types';
 
@@ -15,7 +16,7 @@ const FORMATTING_KEYS = new Set([
   'visibleColumns',
   'columnLabels',
   'tableTotalsLabelColumnKey',
-  'resolvedNumericFormats',
+  'resolvedFormats',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -121,24 +122,16 @@ export function parseExportFormattingConfig(
     ...(tableTotalsLabelColumnKey ? { tableTotalsLabelColumnKey } : {}),
   };
 
-  if (!isRecord(input.scope)) {
-    throw new Error('formatting.scope must be an object');
-  }
-  const dashboardId =
-    typeof input.scope.dashboardId === 'string'
-      ? input.scope.dashboardId.trim()
-      : '';
-  const cardId =
-    typeof input.scope.cardId === 'string' ? input.scope.cardId.trim() : '';
-  if (!dashboardId || !cardId) {
+  const scope = parsePresentationScope(input.scope, 'formatting.scope');
+  if (!scope.cardId || scope.attachmentIndex !== undefined) {
     throw new Error(
-      'formatting.scope.dashboardId and formatting.scope.cardId must be non-empty strings',
+      'formatting.scope must identify exactly one dashboard card',
     );
   }
 
-  const snapshot = parseNumericPresentationExecutionSnapshot({
+  const snapshot = parsePresentationExecutionSnapshot({
     reportContext: input.reportContext,
-    resolvedNumericFormats: input.resolvedNumericFormats,
+    resolvedFormats: input.resolvedFormats,
   });
   if (timezone !== snapshot.reportContext.calendar.tz) {
     throw new Error(
@@ -146,9 +139,12 @@ export function parseExportFormattingConfig(
     );
   }
   try {
-    validateCardExportNumericPresentationSnapshot({
-      entries: snapshot.resolvedNumericFormats,
-      expectedScope: { dashboardId, cardId },
+    validateCardExportPresentationSnapshot({
+      snapshot,
+      expectedScope: {
+        dashboardId: scope.dashboardId,
+        cardId: scope.cardId,
+      },
       visibleColumns,
       useFormattedValues: input.useFormattedValues !== false,
     });
@@ -162,7 +158,8 @@ export function parseExportFormattingConfig(
 
   return {
     ...common,
+    scope,
     reportContext: snapshot.reportContext,
-    resolvedNumericFormats: snapshot.resolvedNumericFormats,
+    resolvedFormats: snapshot.resolvedFormats,
   };
 }

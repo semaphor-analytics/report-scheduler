@@ -12,7 +12,7 @@ describe('queryData table totals projection', () => {
     await queryData({
       url: 'https://app.example.com',
       token: 'token',
-      cardConfig: { cardType: 'table' },
+      queryPayload: { cardType: 'table', cardConfig: {} },
       chunkNumber: 2,
       chunkSize: 100,
     });
@@ -37,7 +37,7 @@ describe('queryData table totals projection', () => {
     await queryData({
       url: 'https://app.example.com',
       token: 'token',
-      cardConfig: { cardType: 'table' },
+      queryPayload: { cardType: 'table', cardConfig: {} },
       chunkNumber: 1,
       chunkSize: 100,
       tableTotalsRequest,

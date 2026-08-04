@@ -1,3 +1,5 @@
+import { createDeliveryBlockingRenderError } from './delivery-render-error.js';
+
 // Utility functions for detecting content stability and readiness
 
 /**
@@ -406,20 +408,45 @@ export async function waitForSizeStability(page, selector = null, options = {}) 
 export async function waitForDashboardReady(page, timeout = 3000) {
   console.log('Waiting for Semaphor ready indicator (window.__SEMAPHOR_READY__)...');
 
-  const isReady = await page.evaluate(async (maxWait) => {
+  const result = await page.evaluate(async (maxWait) => {
     const startTime = Date.now();
 
     while (Date.now() - startTime < maxWait) {
+      const renderError = document.querySelector(
+        '[data-semaphor-render-error-code]'
+      );
+      if (renderError) {
+        return {
+          ready: false,
+          error: {
+            code:
+              renderError.getAttribute('data-semaphor-render-error-code') ||
+              'render_failed',
+            message:
+              renderError.getAttribute('data-semaphor-render-error-message') ||
+              'Semaphor render failed',
+          },
+        };
+      }
       // Only check the window object - single source of truth
       if (window.__SEMAPHOR_READY__?.ready === true) {
         console.log('Semaphor ready at', Date.now() - startTime, 'ms');
-        return true;
+        return { ready: true };
       }
       await new Promise(r => setTimeout(r, 100));
     }
 
-    return false;
+    return { ready: false };
   }, timeout);
+
+  if (result.error) {
+    throw createDeliveryBlockingRenderError(
+      result.error.code,
+      result.error.message
+    );
+  }
+
+  const isReady = result.ready;
 
   if (isReady) {
     console.log('Semaphor is ready (all queries complete)');
@@ -428,6 +455,36 @@ export async function waitForDashboardReady(page, timeout = 3000) {
   }
 
   return isReady;
+}
+
+/**
+ * Fail closed when the rendered page has exposed a typed delivery error.
+ * Call this at the final artifact boundary as well as during readiness waits,
+ * because dashboard rendering may fail after the bounded ready timeout.
+ * @param {Page} page - Puppeteer page instance
+ */
+export async function throwIfDeliveryBlockingRenderError(page) {
+  const renderError = await page.evaluate(() => {
+    const element = document.querySelector(
+      '[data-semaphor-render-error-code]'
+    );
+    if (!element) return null;
+    return {
+      code:
+        element.getAttribute('data-semaphor-render-error-code') ||
+        'render_failed',
+      message:
+        element.getAttribute('data-semaphor-render-error-message') ||
+        'Semaphor render failed',
+    };
+  });
+
+  if (renderError) {
+    throw createDeliveryBlockingRenderError(
+      renderError.code,
+      renderError.message
+    );
+  }
 }
 
 /**

@@ -10,7 +10,10 @@ import * as dataTableMode from './modes/data-table.js';
 import * as aggregateTableMode from './modes/aggregate-table.js';
 import * as documentMode from './modes/document.js';
 import { encryptPdfBuffer } from '../pdf-encrypt.js';
-import { waitForDashboardReady } from './content-stability.js';
+import {
+  throwIfDeliveryBlockingRenderError,
+  waitForDashboardReady,
+} from './content-stability.js';
 import { mergePDFsWithMetadata } from './pdf-merger.js';
 import { applyPdfMetadata } from './pdf-metadata.js';
 import {
@@ -316,6 +319,7 @@ export async function generatePdf(url, options = {}) {
       console.warn('  First 200 chars of text:', pageContent.bodyText);
     }
 
+    await throwIfDeliveryBlockingRenderError(page);
     let pdfBuffer = await page.pdf(pdfOptions);
     timings.pdfGenerateDone = Date.now();
     console.log(`⏱️  PDF generation: ${timings.pdfGenerateDone - timings.pdfGenerateStart}ms`);
@@ -560,6 +564,7 @@ async function generateAllSheetsPdf(url, options = {}) {
       console.log('  ➜ Generating PDF...');
 
       // Generate PDF for this sheet
+      await throwIfDeliveryBlockingRenderError(page);
       const pdfBuffer = await page.pdf(pdfOptions);
 
       if (!pdfBuffer || pdfBuffer.length === 0) {

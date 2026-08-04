@@ -2,8 +2,11 @@ import {
   buildFlatTableExportTotalsFooter,
   parseFlatTableExportTotalsByColumnId,
   parseFlatTableExportTotalsRequest,
-  parseNumericPresentationSnapshotEntries,
-  type NumericPresentationSnapshotEntry,
+  parsePresentationExecutionSnapshot,
+  parsePresentationScope,
+  validateCardExportPresentationSnapshot,
+  type PresentationExecutionSnapshot,
+  type PresentationScope,
 } from 'react-semaphor/format-utils';
 import type { ChunkResult } from '../types';
 
@@ -12,7 +15,8 @@ type CompactionFooterFormatting = {
   useFormattedValues: boolean;
   visibleColumns: string[];
   tableTotalsLabelColumnKey?: string;
-  resolvedNumericFormats: NumericPresentationSnapshotEntry[];
+  snapshot: PresentationExecutionSnapshot;
+  scope: PresentationScope;
 };
 
 function asRecord(value: unknown, path: string): Record<string, unknown> {
@@ -59,6 +63,24 @@ function parseFooterFormatting(input: unknown): CompactionFooterFormatting {
     );
   }
 
+  const scope = parsePresentationScope(formatting.scope, 'formatting.scope');
+  if (!scope.cardId || scope.attachmentIndex !== undefined) {
+    throw new Error('formatting.scope must identify exactly one dashboard card');
+  }
+  const snapshot = parsePresentationExecutionSnapshot({
+    reportContext: formatting.reportContext,
+    resolvedFormats: formatting.resolvedFormats,
+  });
+  validateCardExportPresentationSnapshot({
+    snapshot,
+    expectedScope: {
+      dashboardId: scope.dashboardId,
+      cardId: scope.cardId,
+    },
+    visibleColumns: formatting.visibleColumns as string[],
+    useFormattedValues: formatting.useFormattedValues !== false,
+  });
+
   return {
     delimiter: formatting.delimiter,
     useFormattedValues: formatting.useFormattedValues !== false,
@@ -69,9 +91,8 @@ function parseFooterFormatting(input: unknown): CompactionFooterFormatting {
             formatting.tableTotalsLabelColumnKey,
         }
       : {}),
-    resolvedNumericFormats: parseNumericPresentationSnapshotEntries(
-      formatting.resolvedNumericFormats,
-    ),
+    scope,
+    snapshot,
   };
 }
 
@@ -119,7 +140,8 @@ export function resolveCompactionFooter(input: {
     totalsByColumnId,
     visibleColumns: formatting.visibleColumns,
     labelColumnKey: formatting.tableTotalsLabelColumnKey,
-    resolvedNumericFormats: formatting.resolvedNumericFormats,
+    snapshot: formatting.snapshot,
+    scope: formatting.scope,
     useFormattedValues: formatting.useFormattedValues !== false,
     delimiter: formatting.delimiter,
   });

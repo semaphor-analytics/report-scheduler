@@ -7,6 +7,7 @@ import type { NumericCanonicalFormat } from 'react-semaphor/format-utils';
 
 describe('formatter', () => {
   const defaultFormatting: ExportFormattingConfig = {
+    scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
     timezone: 'UTC',
     reportContext: {
       calendar: { tz: 'UTC', weekStart: 1, anchor: 'now' },
@@ -29,7 +30,7 @@ describe('formatter', () => {
         },
       },
     },
-    resolvedNumericFormats: [],
+    resolvedFormats: [],
     delimiter: ',',
     includeHeaders: true,
   };
@@ -40,7 +41,7 @@ describe('formatter', () => {
   ): ExportFormattingConfig {
     return {
       ...defaultFormatting,
-      resolvedNumericFormats: [
+      resolvedFormats: [
         {
           scope: {
             dashboardId: 'dashboard-1',
@@ -53,7 +54,434 @@ describe('formatter', () => {
     };
   }
 
+  function withTemporalFormat(
+    useFormattedValues: boolean,
+    columnKey = 'Created month',
+  ): ExportFormattingConfig {
+    return {
+      ...defaultFormatting,
+      useFormattedValues,
+      visibleColumns: [columnKey],
+      resolvedFormats: [
+        {
+          scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
+          target: { kind: 'column', columnKey },
+          format: {
+            type: 'temporal_bucket',
+            presentation: { mode: 'auto' },
+            locale: 'en-US',
+          },
+        },
+      ],
+    };
+  }
+
   describe('formatRowsForExport', () => {
+    it('formats canonical temporal buckets from metadata and the captured snapshot', () => {
+      const columns: ColumnInfo[] = [
+        {
+          key: 'Created month',
+          field: 'Created month',
+          label: 'Created month',
+          temporalBucket: {
+            kind: 'temporal_bucket',
+            granularity: 'month',
+            calendar: { tz: 'UTC', weekStart: 1 },
+          },
+        },
+      ];
+
+      expect(
+        formatRowsForExport(
+          [
+            { 'Created month': '2026-07-01' },
+            { 'Created month': null },
+          ],
+          columns,
+          withTemporalFormat(true),
+        ),
+      ).toEqual([['Jul 2026'], ['(Blank)']]);
+      expect(
+        formatRowsForExport(
+          [
+            { 'Created month': '2026-07-01' },
+            { 'Created month': null },
+          ],
+          columns,
+          withTemporalFormat(false),
+        ),
+      ).toEqual([['2026-07-01'], ['']]);
+    });
+
+    it('keeps labeled canonical subtotal metadata on its stable raw output key', () => {
+      const columns: ColumnInfo[] = [
+        {
+          key: 'orders_created_at',
+          temporalBucket: {
+            kind: 'temporal_bucket',
+            granularity: 'month',
+            calendar: { tz: 'UTC', weekStart: 1 },
+          },
+        },
+        { key: 'revenue' },
+      ];
+      const formatting = {
+        ...withTemporalFormat(true, 'orders_created_at'),
+        visibleColumns: ['orders_created_at', 'revenue'],
+      };
+      const queryPayload = {
+        cardType: 'aggregateTable',
+        cardConfig: {
+          groupByColumns: [
+            {
+              id: 'created-month-id',
+              name: 'created_at',
+              label: 'Created month',
+            },
+          ],
+          rowAggregates: [
+            {
+              function: 'SUM',
+              groupLevel: 'created-month-id',
+              label: 'Monthly subtotal',
+            },
+            { function: 'SUM', groupLevel: 'ALL' },
+          ],
+        },
+      };
+
+      expect(
+        formatRowsForExport(
+          [
+            {
+              orders_created_at: null,
+              revenue: 10,
+              isSubtotal: true,
+              subtotalLevel: 'orders_created_at',
+              subtotalContext: {
+                groupByValues: { orders_created_at: '2026-07-01' },
+              },
+              aggregate: 'SUM',
+            },
+            {
+              orders_created_at: null,
+              revenue: 10,
+              isGrandTotal: true,
+              aggregate: 'SUM',
+            },
+          ],
+          columns,
+          formatting,
+          {
+            queryPayload,
+            columnKeyMap: {
+              version: 1,
+              source: 'explorer',
+              byRole: {
+                groupby: {
+                  'created-month-id': {
+                    role: 'groupby',
+                    rawKey: 'orders_created_at',
+                    outputKey: 'orders_created_at',
+                  },
+                },
+              },
+            },
+          },
+        ),
+      ).toEqual([
+        ['Monthly subtotal', '10'],
+        ['Grand Total', '10'],
+      ]);
+    });
+
+    it('preserves a blank temporal parent on a deeper aggregate subtotal', () => {
+      const formatting = {
+        ...withTemporalFormat(true, 'orders_created_at'),
+        visibleColumns: ['orders_created_at', 'orders_region', 'revenue'],
+      };
+
+      expect(
+        formatRowsForExport(
+          [
+            {
+              orders_created_at: null,
+              orders_region: 'West',
+              revenue: 10,
+              isSubtotal: true,
+              subtotalLevel: 'orders_region',
+              subtotalContext: {
+                groupByValues: {
+                  orders_created_at: null,
+                  orders_region: 'West',
+                },
+              },
+              aggregate: 'SUM',
+            },
+          ],
+          [
+            {
+              key: 'orders_created_at',
+              temporalBucket: {
+                kind: 'temporal_bucket',
+                granularity: 'month',
+                calendar: { tz: 'UTC', weekStart: 1 },
+              },
+            },
+            { key: 'orders_region' },
+            { key: 'revenue' },
+          ],
+          formatting,
+          {
+            queryPayload: {
+              cardType: 'aggregateTable',
+              cardConfig: {
+                groupByColumns: [
+                  { id: 'created-month-id', name: 'created_at' },
+                  { id: 'region-id', name: 'region' },
+                ],
+                rowAggregates: [
+                  {
+                    function: 'SUM',
+                    groupLevel: 'region-id',
+                  },
+                ],
+              },
+            },
+            columnKeyMap: {
+              version: 1,
+              source: 'explorer',
+              byRole: {
+                groupby: {
+                  'created-month-id': {
+                    role: 'groupby',
+                    rawKey: 'orders_created_at',
+                  },
+                  'region-id': {
+                    role: 'groupby',
+                    rawKey: 'orders_region',
+                  },
+                },
+              },
+            },
+          },
+        ),
+      ).toEqual([['(Blank)', 'Subtotal (West)', '10']]);
+    });
+
+    it('does not format a hidden temporal parent before a visible subtotal', () => {
+      expect(
+        formatRowsForExport(
+          [
+            {
+              orders_created_at: null,
+              orders_region: 'West',
+              revenue: 10,
+              isSubtotal: true,
+              subtotalLevel: 'orders_region',
+              subtotalContext: {
+                groupByValues: {
+                  orders_created_at: '2026-07-01',
+                  orders_region: 'West',
+                },
+              },
+              aggregate: 'SUM',
+            },
+          ],
+          [
+            {
+              key: 'orders_created_at',
+              temporalBucket: {
+                kind: 'temporal_bucket',
+                granularity: 'month',
+                calendar: { tz: 'UTC', weekStart: 1 },
+              },
+            },
+            { key: 'orders_region' },
+            { key: 'revenue' },
+          ],
+          {
+            ...defaultFormatting,
+            useFormattedValues: true,
+            visibleColumns: ['orders_region', 'revenue'],
+          },
+          {
+            queryPayload: {
+              cardType: 'aggregateTable',
+              cardConfig: {
+                groupByColumns: [
+                  { id: 'created-month-id', name: 'created_at' },
+                  { id: 'region-id', name: 'region' },
+                ],
+                rowAggregates: [
+                  { function: 'SUM', groupLevel: 'region-id' },
+                ],
+              },
+            },
+            columnKeyMap: {
+              version: 1,
+              source: 'explorer',
+              byRole: {
+                groupby: {
+                  'created-month-id': {
+                    role: 'groupby',
+                    rawKey: 'orders_created_at',
+                  },
+                  'region-id': {
+                    role: 'groupby',
+                    rawKey: 'orders_region',
+                  },
+                },
+              },
+            },
+          },
+        ),
+      ).toEqual([['Subtotal (West)', '10']]);
+    });
+
+    it('does not apply aggregate presentation without canonical temporal metadata', () => {
+      expect(
+        formatRowsForExport(
+          [
+            {
+              region: 'raw sql value',
+              isSubtotal: true,
+              subtotalLevel: 'region',
+              subtotalContext: { groupByValues: { region: 'West' } },
+            },
+          ],
+          [{ key: 'region' }],
+          {
+            ...defaultFormatting,
+            useFormattedValues: true,
+            visibleColumns: ['region'],
+          },
+          {
+            queryPayload: {
+              cardType: 'aggregateTable',
+              sql: 'select region, isSubtotal from custom_result',
+              cardConfig: {
+                groupByColumns: [{ id: 'region-id', name: 'region' }],
+                rowAggregates: [
+                  {
+                    function: 'SUM',
+                    groupLevel: 'region-id',
+                    label: 'Configured subtotal',
+                  },
+                ],
+              },
+            },
+            columnKeyMap: {
+              version: 1,
+              source: 'explorer',
+              byRole: {
+                groupby: {
+                  'region-id': { role: 'groupby', rawKey: 'region' },
+                },
+              },
+            },
+          },
+        ),
+      ).toEqual([['raw sql value']]);
+    });
+
+    it('accepts metric-only aggregate tables without group columns', () => {
+      expect(
+        formatRowsForExport(
+          [{ revenue: 10 }],
+          [{ key: 'revenue' }],
+          {
+            ...defaultFormatting,
+            visibleColumns: ['revenue'],
+          },
+          {
+            queryPayload: {
+              cardType: 'aggregateTable',
+              cardConfig: { metricColumns: [{ id: 'revenue' }] },
+            },
+          },
+        ),
+      ).toEqual([['10']]);
+    });
+
+    it('revalidates captured presentation against authoritative result metadata', () => {
+      const formatting = withTemporalFormat(true);
+      formatting.resolvedFormats = [
+        {
+          scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
+          target: { kind: 'column', columnKey: 'Created month' },
+          format: {
+            type: 'temporal_bucket',
+            presentation: {
+              mode: 'preset',
+              preset: 'fiscal_year',
+            },
+            locale: 'en-US',
+          },
+        },
+      ];
+
+      expect(
+        formatRowsForExport(
+          [{ 'Created month': '2026-01-01' }],
+          [
+            {
+              key: 'Created month',
+              temporalBucket: {
+                kind: 'temporal_bucket',
+                granularity: 'year',
+                calendar: { tz: 'UTC', weekStart: 1 },
+              },
+            },
+          ],
+          formatting,
+        ),
+      ).toEqual([['2026']]);
+    });
+
+    it('rejects formatted temporal delivery without its captured format', () => {
+      expect(() =>
+        formatRowsForExport(
+          [{ 'Created month': '2026-07-01' }],
+          [
+            {
+              key: 'Created month',
+              temporalBucket: {
+                kind: 'temporal_bucket',
+                granularity: 'month',
+                calendar: { tz: 'UTC', weekStart: 1 },
+              },
+            },
+          ],
+          {
+            ...defaultFormatting,
+            useFormattedValues: true,
+            visibleColumns: ['Created month'],
+          },
+        ),
+      ).toThrow('Missing resolved temporal presentation');
+    });
+
+    it('rejects a captured temporal format without result metadata', () => {
+      expect(() =>
+        formatRowsForExport(
+          [{ 'Created month': '2026-07-01' }],
+          [{ key: 'Created month' }],
+          withTemporalFormat(true),
+        ),
+      ).toThrow('Missing temporal bucket metadata');
+    });
+
+    it('does not require temporal metadata for raw CSV', () => {
+      expect(
+        formatRowsForExport(
+          [{ 'Created month': '2026-07-01' }],
+          [{ key: 'Created month' }],
+          withTemporalFormat(false),
+        ),
+      ).toEqual([['2026-07-01']]);
+    });
+
     it('should format rows with columns from API', () => {
       const data = [
         { name: 'Alice', age: 30, city: 'NYC' },
@@ -217,6 +645,359 @@ describe('formatter', () => {
 
       expect(result[0][0]).toBe('12345.67');
     });
+  });
+
+  it('formats producer-aligned temporal wide-pivot members in async CSV headers', () => {
+    const formatting: ExportFormattingConfig = {
+      ...defaultFormatting,
+      useFormattedValues: true,
+      visibleColumns: ['revenue_july'],
+      columnLabels: { revenue_july: 'Revenue Current' },
+      resolvedFormats: [
+        {
+          scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
+          target: {
+            kind: 'field',
+            fieldId: 'created-month',
+            role: 'groupby',
+          },
+          format: {
+            type: 'temporal_bucket',
+            presentation: { mode: 'pattern', pattern: 'YYYY' },
+            locale: 'en-US',
+          },
+        },
+        {
+          scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
+          target: {
+            kind: 'field',
+            fieldId: 'created-month',
+            role: 'pivotby',
+          },
+          format: {
+            type: 'temporal_bucket',
+            presentation: { mode: 'auto' },
+            locale: 'en-US',
+          },
+        },
+      ],
+    };
+    const columns: ColumnInfo[] = [
+      {
+        key: 'revenue_july',
+        label: 'Revenue',
+        pivotIdentity: {
+          metricId: 'revenue',
+          metricAlias: 'revenue_sum',
+          members: [
+            {
+              fieldId: 'created-month',
+              value: '2026-07-01',
+              temporalBucket: {
+                kind: 'temporal_bucket',
+                granularity: 'month',
+                calendar: { tz: 'UTC', weekStart: 1 },
+              },
+            },
+          ],
+        },
+      },
+    ];
+
+    expect(
+      generateCSV([['10']], columns, formatting, { includeHeaders: true }),
+    ).toBe('Jul 2026 / Revenue Current\n10\n');
+  });
+
+  it('preserves canonical pivot members in raw async CSV headers', () => {
+    const formatting: ExportFormattingConfig = {
+      ...defaultFormatting,
+      useFormattedValues: false,
+      visibleColumns: ['revenue_july', 'revenue_august'],
+    };
+    const columns: ColumnInfo[] = [
+      {
+        key: 'revenue_july',
+        label: 'Revenue',
+        pivotIdentity: {
+          metricId: 'revenue',
+          metricAlias: 'revenue_sum',
+          members: [{ fieldId: 'created-month', value: '2026-07-01' }],
+        },
+      },
+      {
+        key: 'revenue_august',
+        label: 'Revenue',
+        pivotIdentity: {
+          metricId: 'revenue',
+          metricAlias: 'revenue_sum',
+          members: [{ fieldId: 'created-month', value: '2026-08-01' }],
+        },
+      },
+    ];
+
+    expect(
+      generateCSV([['10', '20']], columns, formatting, {
+        includeHeaders: true,
+      }),
+    ).toBe(
+      '2026-07-01 / Revenue,2026-08-01 / Revenue\n10,20\n',
+    );
+  });
+
+  it('fails closed when a physical pivot column omits member identity', () => {
+    const formatting: ExportFormattingConfig = {
+      ...defaultFormatting,
+      useFormattedValues: false,
+      visibleColumns: ['revenue_july'],
+    };
+    const columns: ColumnInfo[] = [
+      {
+        key: 'revenue_july',
+        label: 'Revenue',
+        pivotIdentity: {
+          metricId: 'revenue',
+          metricAlias: 'revenue_sum',
+          members: undefined as any,
+        },
+      },
+    ];
+
+    expect(() =>
+      generateCSV([['10']], columns, formatting, { includeHeaders: true }),
+    ).toThrow('missing_pivot_member_identity');
+  });
+
+  it('fails closed when a pivot member lacks stable field identity', () => {
+    const formatting: ExportFormattingConfig = {
+      ...defaultFormatting,
+      visibleColumns: ['revenue_july'],
+    };
+    const columns: ColumnInfo[] = [
+      {
+        key: 'revenue_july',
+        pivotIdentity: {
+          metricId: 'revenue',
+          metricAlias: 'revenue_sum',
+          members: [{ fieldId: '', value: '2026-08-01' }],
+        },
+      },
+    ];
+
+    expect(() =>
+      generateCSV([['10']], columns, formatting, { includeHeaders: true }),
+    ).toThrow('invalid identity');
+  });
+
+  it('validates pivot identity even when CSV headers are disabled', () => {
+    const formatting: ExportFormattingConfig = {
+      ...defaultFormatting,
+      visibleColumns: ['revenue_july'],
+    };
+    const columns: ColumnInfo[] = [
+      {
+        key: 'revenue_july',
+        pivotIdentity: {
+          metricId: 'revenue',
+          metricAlias: 'revenue_sum',
+          members: undefined as any,
+        },
+      },
+    ];
+
+    expect(() =>
+      generateCSV([['10']], columns, formatting, { includeHeaders: false }),
+    ).toThrow('missing_pivot_member_identity');
+  });
+
+  it('validates hidden pivot identities against authored axis order', () => {
+    const formatting: ExportFormattingConfig = {
+      ...defaultFormatting,
+      visibleColumns: ['revenue_july'],
+    };
+    const columns: ColumnInfo[] = [
+      {
+        key: 'revenue_july',
+        pivotIdentity: {
+          metricId: 'revenue',
+          metricAlias: 'revenue_sum',
+          members: [
+            { fieldId: 'month', value: '2026-07-01' },
+            { fieldId: 'region', value: 'East' },
+          ],
+        },
+      },
+      {
+        key: 'hidden_revenue',
+        pivotIdentity: {
+          metricId: 'revenue',
+          metricAlias: 'revenue_sum',
+          members: [{ fieldId: 'region', value: 'West' }],
+        },
+      },
+    ];
+
+    expect(() =>
+      formatRowsForExport(
+        [{ revenue_july: 10, hidden_revenue: 20 }],
+        columns,
+        formatting,
+        {
+          queryPayload: {
+            cardType: 'pivotTable',
+            cardConfig: {
+              pivotByColumns: [{ id: 'month' }, { id: 'region' }],
+            },
+          },
+        },
+      ),
+    ).toThrow('expected "month"');
+  });
+
+  it('rejects a partial ordinary leaf from the production query payload', () => {
+    const columns: ColumnInfo[] = [
+      {
+        key: 'revenue_july',
+        pivotIdentity: {
+          metricId: 'revenue',
+          metricAlias: 'revenue_sum',
+          members: [{ fieldId: 'month', value: '2026-07-01' }],
+        },
+      },
+    ];
+
+    expect(() =>
+      formatRowsForExport(
+        [{ revenue_july: 10 }],
+        columns,
+        { ...defaultFormatting, visibleColumns: ['revenue_july'] },
+        {
+          queryPayload: {
+            cardType: 'pivotTable',
+            cardConfig: {
+              pivotByColumns: [{ id: 'month' }, { id: 'region' }],
+            },
+          },
+        },
+      ),
+    ).toThrow('expected 2');
+  });
+
+  it('accepts a partial tuple only for an explicit pivot subtotal', () => {
+    const columns: ColumnInfo[] = [
+      {
+        key: 'revenue_july_subtotal',
+        pivotIdentity: {
+          metricId: 'revenue',
+          metricAlias: 'revenue_sum',
+          members: [{ fieldId: 'month', value: '2026-07-01' }],
+        },
+      },
+    ];
+
+    expect(() =>
+      formatRowsForExport(
+        [{ revenue_july_subtotal: 10 }],
+        columns,
+        {
+          ...defaultFormatting,
+          visibleColumns: ['revenue_july_subtotal'],
+        },
+        {
+          queryPayload: {
+            cardType: 'pivotTable',
+            cardConfig: {
+              pivotByColumns: [{ id: 'month' }, { id: 'region' }],
+            },
+          },
+          columnMetadata: {
+            revenue_july_subtotal: {
+              isSubtotal: true,
+              subtotalScope: 'pivot-value',
+            },
+          },
+        },
+      ),
+    ).not.toThrow();
+  });
+
+  it('accepts an empty tuple with pivot axes only for an explicit grand total', () => {
+    const columns: ColumnInfo[] = [
+      {
+        key: 'revenue_total',
+        pivotIdentity: {
+          metricId: 'revenue',
+          metricAlias: 'revenue_sum',
+          members: [],
+        },
+      },
+    ];
+    const context = {
+      queryPayload: {
+        cardType: 'pivotTable',
+        cardConfig: {
+          pivotByColumns: [{ id: 'month' }, { id: 'region' }],
+        },
+      },
+    };
+
+    expect(() =>
+      formatRowsForExport(
+        [{ revenue_total: 10 }],
+        columns,
+        { ...defaultFormatting, visibleColumns: ['revenue_total'] },
+        context,
+      ),
+    ).toThrow('missing its required pivot tuple');
+
+    expect(() =>
+      formatRowsForExport(
+        [{ revenue_total: 10 }],
+        columns,
+        { ...defaultFormatting, visibleColumns: ['revenue_total'] },
+        {
+          ...context,
+          columnMetadata: {
+            revenue_total: {
+              isSubtotal: true,
+              subtotalScope: 'grand-total',
+            },
+          },
+        },
+      ),
+    ).not.toThrow();
+  });
+
+  it('accepts an empty member tuple for a metric-only column', () => {
+    const formatting: ExportFormattingConfig = {
+      ...defaultFormatting,
+      visibleColumns: ['revenue'],
+    };
+    const columns: ColumnInfo[] = [
+      {
+        key: 'revenue',
+        pivotIdentity: {
+          metricId: 'revenue',
+          metricAlias: 'revenue_sum',
+          members: [],
+        },
+      },
+    ];
+
+    const rows = formatRowsForExport(
+      [{ revenue: 10 }],
+      columns,
+      formatting,
+      {
+        queryPayload: {
+          cardType: 'pivotTable',
+          cardConfig: { pivotByColumns: [] },
+        },
+      },
+    );
+    expect(generateCSV(rows, columns, formatting, { includeHeaders: false })).toBe(
+      '10\n',
+    );
   });
 
   describe('generateCSV', () => {

@@ -2,10 +2,32 @@
  * Types for the chunk-processor Lambda
  */
 import type {
+  CanonicalPivotResultContract,
+  CanonicalPivotResultState,
   FlatTableExportTotalsByColumnId,
-  NumericPresentationExecutionSnapshot,
-  NumericPresentationSnapshotEntry,
+  PivotResultColumnClassification,
+  PresentationExecutionSnapshot,
+  PresentationScope,
+  TemporalBucketMetadata,
 } from 'react-semaphor/format-utils';
+
+export interface QueryColumnKeyBinding {
+  role?: string;
+  rawKey: string;
+  outputKey?: string;
+}
+
+export interface QueryColumnKeyMap {
+  version: 1;
+  source: 'explorer';
+  byRole: Partial<
+    Record<
+      'groupby' | 'metric' | 'pivotby' | 'detail',
+      Record<string, QueryColumnKeyBinding>
+    >
+  >;
+  byMetricAlias?: Record<string, QueryColumnKeyBinding>;
+}
 
 export interface ChunkInput {
   chunkId: string;
@@ -14,6 +36,7 @@ export interface ChunkInput {
   isFirstChunk: boolean;
   jobId: string;
   exportToken: string;
+  /** Historical wire name; this value is the complete query payload envelope. */
   cardConfig: CardConfig;
   formatting: unknown;
   tableTotalsRequest?: unknown;
@@ -38,15 +61,29 @@ export interface CardConfig {
   controlDefinitions?: unknown[];
   cardControlDefinitions?: unknown[];
   controlBindings?: unknown[];
+  resultOwner?: 'config' | 'freeform' | 'none';
   columns?: ColumnInfo[];
   filters?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
 export interface ColumnInfo {
-  field: string;
+  field?: string;
+  key?: string;
+  name?: string;
   headerName?: string;
+  label?: string;
   type?: string;
+  temporalBucket?: TemporalBucketMetadata;
+  pivotIdentity?: {
+    metricId: string;
+    metricAlias: string;
+    members: Array<{
+      fieldId: string;
+      value: string | null;
+      temporalBucket?: TemporalBucketMetadata;
+    }>;
+  };
 }
 
 interface ExportFormattingBase {
@@ -60,9 +97,10 @@ interface ExportFormattingBase {
   tableTotalsLabelColumnKey?: string;
 }
 
-export interface ExportFormattingConfig extends ExportFormattingBase {
-  reportContext: NumericPresentationExecutionSnapshot['reportContext'];
-  resolvedNumericFormats: NumericPresentationSnapshotEntry[];
+export interface ExportFormattingConfig
+  extends ExportFormattingBase,
+    PresentationExecutionSnapshot {
+  scope: PresentationScope;
 }
 
 export interface ColumnSettings {
@@ -85,8 +123,12 @@ export interface ColumnSettings {
 }
 
 export interface QueryResponse {
+  pivotResultState?: CanonicalPivotResultState;
+  pivotResultContract?: CanonicalPivotResultContract;
   records: Record<string, unknown>[];
   columns?: ColumnInfo[];
+  columnKeyMap?: QueryColumnKeyMap;
+  columnMetadata?: Record<string, PivotResultColumnClassification>;
   sql?: string;
   tableTotalsByColumnId?: unknown;
   pagination?: {

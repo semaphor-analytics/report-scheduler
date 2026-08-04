@@ -12,7 +12,7 @@ import type { FlatTableExportTotalsRequest } from 'react-semaphor/format-utils';
 interface QueryDataParams {
   url: string;
   token: string;
-  cardConfig: CardConfig;
+  queryPayload: CardConfig;
   chunkNumber: number;
   chunkSize: number;
   tableTotalsRequest?: FlatTableExportTotalsRequest;
@@ -26,7 +26,7 @@ export async function queryData(params: QueryDataParams): Promise<QueryResponse>
   const {
     url,
     token,
-    cardConfig,
+    queryPayload,
     chunkNumber,
     chunkSize,
     tableTotalsRequest,
@@ -39,7 +39,7 @@ export async function queryData(params: QueryDataParams): Promise<QueryResponse>
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({
-      ...cardConfig,
+      ...queryPayload,
       exportMode: true,
       exportType: 'chunked',
       pagination: {

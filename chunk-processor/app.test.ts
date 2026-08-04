@@ -64,7 +64,7 @@ const formatting = {
   includeHeaders: true,
   tableTotalsLabelColumnKey: 'region',
   visibleColumns: ['region', 'revenue'],
-  resolvedNumericFormats: [
+  resolvedFormats: [
     {
       scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
       target: { kind: 'column', columnKey: 'region' },
@@ -279,5 +279,79 @@ describe('chunk handler table totals', () => {
     expect(updateChunkStatus).not.toHaveBeenCalledWith(
       expect.objectContaining({ status: 'failed' }),
     );
+  });
+
+  it('validates pivot members against the production query envelope', async () => {
+    jest.mocked(queryData).mockResolvedValue({
+      pivotResultState: 'loaded_valid',
+      pivotResultContract: {
+        version: 1,
+        expectedRoleFieldIds: {
+          groupby: [],
+          metric: ['revenue'],
+          pivotby: ['month', 'region'],
+          detail: [],
+        },
+        expectedMetricAliases: [],
+        columnKinds: { revenue_july: 'pivot_metric' },
+        columnClassifications: {},
+      },
+      records: [{ revenue_july: 10 }],
+      columns: [
+        {
+          key: 'revenue_july',
+          name: 'revenue',
+          label: 'Revenue / July',
+          pivotIdentity: {
+            metricId: 'revenue',
+            metricAlias: 'revenue_sum',
+            members: [
+              { fieldId: 'month', value: '2026-07-01' },
+              { fieldId: 'region', value: 'East' },
+            ],
+          },
+        },
+      ],
+      columnKeyMap: {
+        version: 1,
+        source: 'explorer',
+        byRole: {
+          pivotby: {
+            month: { role: 'pivotby', rawKey: 'month' },
+            region: { role: 'pivotby', rawKey: 'region' },
+          },
+          metric: {
+            revenue: { role: 'metric', rawKey: 'revenue_sum' },
+          },
+        },
+      },
+    });
+
+    await expect(
+      handler(
+        event({
+          cardConfig: {
+            cardType: 'pivotTable',
+            resultOwner: 'config',
+            cardConfig: {
+              pivotByColumns: [{ id: 'month' }, { id: 'region' }],
+              metricColumns: [{ id: 'revenue' }],
+            },
+          },
+          formatting: {
+            ...formatting,
+            useFormattedValues: false,
+            visibleColumns: ['revenue_july'],
+            tableTotalsLabelColumnKey: undefined,
+          },
+        }),
+      ),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        status: 'completed',
+        rowsProcessed: 1,
+      }),
+    );
+    expect(uploadChunk).toHaveBeenCalledTimes(1);
   });
 });

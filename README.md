@@ -83,31 +83,17 @@ cp .env.example .env
 
 ### 2. Update Configuration
 
-Edit `.env` with your values:
+`.env.example` is the canonical scheduler configuration. It lists every
+customer-configurable deployment variable in one place: required settings are
+active, while optional features and the alternative email provider are
+commented out. After copying it to `.env`:
 
-```bash
-# Your Semaphor application URL
-SEMAPHOR_APP_URL=https://your-semaphor-instance.com
-
-# API key for Lambda authentication (must match LAMBDA_API_KEY in semaphor-app)
-LAMBDA_API_KEY=your-api-key-here
-
-# SES verified sender email address
-SES_SENDER_EMAIL=noreply@yourdomain.com
-
-# Optional: external provider mode
-EMAIL_PROVIDER_MODE=SES
-# EMAIL_PROVIDER_MODE=EXTERNAL
-# EMAIL_EXTERNAL_AUTH_SECRET=replace-with-secret
-# RESEND_API_KEY=re_xxx
-# RESEND_SENDER_EMAIL=reports@yourdomain.com
-
-# Optional: AI-generated Briefings through the Insight Loop runner Lambda
-INSIGHT_LOOP_MODEL_PROVIDER=openai
-INSIGHT_LOOP_MODEL=gpt-5.5
-INSIGHT_LOOP_REASONING_EFFORT=medium
-OPENAI_API_KEY=sk-...
-```
+1. Set `SEMAPHOR_APP_URL` and generate `LAMBDA_API_KEY` with
+   `openssl rand -hex 32`.
+2. Configure the active SES values, or switch `EMAIL_PROVIDER_MODE` to
+   `EXTERNAL` and uncomment the three Resend settings.
+3. Uncomment the four Insight Loop values only when enabling AI-generated
+   Briefings.
 
 ### 3. Deploy to AWS
 
@@ -476,6 +462,12 @@ sam list stack-outputs --stack-name semaphor-report-scheduler
 - If `EMAIL_PROVIDER_MODE=EXTERNAL`:
   - Verify `EMAIL_EXTERNAL_AUTH_SECRET` is set in both sender and provider environments
   - Check `ResendProviderFunction` logs
+  - `External provider response missing success=true` means the provider
+    returned HTTP 2xx without the required top-level `{ "success": true }`
+    response. Redeploy the current stack so `EmailSenderFunction` and
+    `ResendProviderFunction` use the same release and secret, and verify that
+    the app uses `EmailSenderFunctionUrl` rather than
+    `ResendProviderFunctionUrl`.
 - Check logs: `sam logs -n EmailSenderFunction --stack-name semaphor-report-scheduler --tail`
 
 **Exports Not Processing**

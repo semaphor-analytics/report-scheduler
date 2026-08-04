@@ -2,10 +2,20 @@
  * Extract formatted table data from the page DOM
  * This extracts the already-formatted text content that users see
  */
-export async function extractTableData(page, tableInfo) {
-  return await page.evaluate((selector) => {
+export async function extractTableData(page, tableInfo, options = {}) {
+  return await page.evaluate(({ selector, useFormattedValues }) => {
     const table = document.querySelector(selector);
     if (!table) return { headers: [], rows: [], grandTotalRows: [] };
+
+    const readCellText = (cell) => {
+      if (
+        !useFormattedValues &&
+        cell.getAttribute('data-export-has-raw-value') === 'true'
+      ) {
+        return cell.getAttribute('data-export-raw-value') || '';
+      }
+      return cell.textContent?.trim() || '';
+    };
 
     const headers = [];
     const dataRows = [];
@@ -39,7 +49,7 @@ export async function extractTableData(page, tableInfo) {
             colIndex++;
           }
 
-          const text = cell.textContent?.trim() || '';
+          const text = readCellText(cell);
           const colspan = cell.colSpan || 1;
           const rowspan = cell.rowSpan || 1;
 
@@ -109,7 +119,7 @@ export async function extractTableData(page, tableInfo) {
           }
 
           // Get the formatted text content
-          const text = cell.textContent?.trim() || '';
+          const text = readCellText(cell);
 
           rowCells.push({
             text: text,
@@ -148,7 +158,7 @@ export async function extractTableData(page, tableInfo) {
             return;
           }
 
-          const text = cell.textContent?.trim() || '';
+          const text = readCellText(cell);
           footerCells.push({
             text: text,
             isHeader: true,
@@ -177,7 +187,10 @@ export async function extractTableData(page, tableInfo) {
     };
 
     return { headers, rows: dataRows, grandTotalRows, metadata };
-  }, tableInfo.selector);
+  }, {
+    selector: tableInfo.selector,
+    useFormattedValues: options.useFormattedValues !== false,
+  });
 }
 
 /**

@@ -12,6 +12,7 @@
 import type { ChunkInput, ChunkResult } from './types';
 import { queryData, fetchChunkStatus, updateChunkStatus } from './lib/api-client';
 import { formatRowsForExport, generateCSV } from './lib/formatter';
+import { resolvePivotExportResultLifecycle } from './lib/pivot-result-lifecycle';
 import { parseExportFormattingConfig } from './lib/formatting-contract';
 import {
   fetchTableTotalsMetadata,
@@ -54,7 +55,7 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
     isFirstChunk,
     jobId,
     exportToken,
-    cardConfig,
+    cardConfig: queryPayload,
     formatting: rawFormatting,
     tableTotalsRequest: rawTableTotalsRequest,
   } = event;
@@ -125,15 +126,23 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
     const queryResponse = await queryData({
       url: SEMAPHOR_APP_URL,
       token: exportToken,
-      cardConfig,
+      queryPayload,
       chunkNumber,
       chunkSize,
       tableTotalsRequest,
     });
+    const pivotResultLifecycle = resolvePivotExportResultLifecycle({
+      queryPayload,
+      queryResponse,
+    });
+    const canonicalPivotResult =
+      pivotResultLifecycle.kind === 'canonical'
+        ? pivotResultLifecycle.result
+        : undefined;
 
     // API returns 'records' not 'data'
-    const records = queryResponse.records || [];
-    const columns = queryResponse.columns || [];
+    const records = canonicalPivotResult?.records || queryResponse.records || [];
+    const columns = canonicalPivotResult?.columns || queryResponse.columns || [];
     const rowCount = records.length;
     const tableTotalsByColumnId = tableTotalsRequest
       ? parseFlatTableExportTotalsByColumnId(
@@ -144,10 +153,22 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
     console.log(`Queried ${rowCount} rows for chunk ${chunkNumber}`);
 
     // 4. Format data as CSV
-    const formattedRows = formatRowsForExport(records, columns, formatting);
+    const formattedRows = formatRowsForExport(
+      records,
+      columns,
+      formatting,
+      {
+        queryPayload,
+        columnKeyMap:
+          canonicalPivotResult?.columnKeyMap || queryResponse.columnKeyMap,
+        columnMetadata: queryResponse.columnMetadata,
+        pivotResultKind: pivotResultLifecycle.kind,
+      },
+    );
     const csvContent = generateCSV(formattedRows, columns, formatting, {
       includeHeaders: isFirstChunk && formatting.includeHeaders,
       rawRecords: records, // Pass raw records for header fallback if columns is empty
+      pivotResultKind: pivotResultLifecycle.kind,
     });
 
     // 5. Upload to S3

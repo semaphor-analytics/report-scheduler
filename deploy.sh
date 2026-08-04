@@ -151,6 +151,10 @@ if [ -n "${INSIGHT_LOOP_MODEL:-}" ]; then
   PARAMETER_OVERRIDES+=("InsightLoopModel=${INSIGHT_LOOP_MODEL}")
 fi
 
+if [ -n "${INSIGHT_LOOP_REASONING_EFFORT:-}" ]; then
+  PARAMETER_OVERRIDES+=("InsightLoopReasoningEffort=${INSIGHT_LOOP_REASONING_EFFORT}")
+fi
+
 if [ -n "${OPENAI_API_KEY:-}" ]; then
   PARAMETER_OVERRIDES+=("OpenAiApiKey=${OPENAI_API_KEY}")
 fi

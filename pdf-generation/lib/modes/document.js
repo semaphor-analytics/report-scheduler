@@ -1,4 +1,5 @@
 import { normalizePageSize } from '../page-size-utils.js';
+import { createDeliveryBlockingRenderError } from '../delivery-render-error.js';
 
 export async function waitForDocumentReady(page, timeout = 90000) {
   console.log('Document mode - waiting for print surface readiness');
@@ -17,6 +18,24 @@ export async function waitForDocumentReady(page, timeout = 90000) {
     let lastDiagnostics = {};
 
     while (Date.now() - start < maxWait) {
+      const deliveryRenderError = document.querySelector(
+        '[data-semaphor-render-error-code]'
+      );
+      if (deliveryRenderError) {
+        return {
+          ready: false,
+          deliveryError: {
+            code:
+              deliveryRenderError.getAttribute(
+                'data-semaphor-render-error-code'
+              ) || 'render_failed',
+            message:
+              deliveryRenderError.getAttribute(
+                'data-semaphor-render-error-message'
+              ) || 'Semaphor render failed',
+          },
+        };
+      }
       const hasDocumentPages = document.querySelector(
         '[data-document-page-stack="true"] [data-testid="document-page"]'
       );
@@ -73,6 +92,12 @@ export async function waitForDocumentReady(page, timeout = 90000) {
   }, timeout);
 
   if (!readiness.ready) {
+    if (readiness.deliveryError) {
+      throw createDeliveryBlockingRenderError(
+        readiness.deliveryError.code,
+        readiness.deliveryError.message
+      );
+    }
     const diagnostics = readiness.diagnostics
       ? ` (${JSON.stringify(readiness.diagnostics)})`
       : '';

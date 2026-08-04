@@ -4,16 +4,45 @@
  */
 
 import type {
+  CardConfig,
   ColumnInfo,
   ExportFormattingConfig,
   ColumnSettings,
+  QueryColumnKeyMap,
 } from '../types';
 
 import {
+  findResolvedNumericFormat,
+  findResolvedTemporalBucketFormat,
   formatDate,
   formatNumericCanonical,
+  formatTemporalBucket,
+  presentPivotHeader,
+  requirePivotHeaderMembers,
+  requirePivotResultColumnIdentities,
+  resolveTemporalBucketPresentation,
   type NumericCanonicalFormat,
+  type PivotResultColumnClassification,
+  type ResolvedTemporalBucketFormat,
+  type TemporalBucketMetadata,
 } from 'react-semaphor/format-utils';
+import {
+  resolveAggregateGroupCellOverrides,
+  resolveAggregateTableExportContext,
+  type AggregateTablePresentationContext,
+} from './aggregate-table-row-presentation';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function resolveEffectiveCardConfig(
+  queryPayload: CardConfig | undefined,
+): CardConfig | undefined {
+  return isRecord(queryPayload?.cardConfig)
+    ? queryPayload.cardConfig
+    : undefined;
+}
 
 /**
  * Check if a value looks like a date string.
@@ -50,14 +79,86 @@ function resolveDisplayTimezone(
   return contextTimezone;
 }
 
-function resolvedNumericFormatsByColumn(
+function numericFormatsByVisibleColumn(
   formatting: ExportFormattingConfig,
+  visibleColumns: readonly string[],
 ): ReadonlyMap<string, NumericCanonicalFormat> {
   const formats = new Map<string, NumericCanonicalFormat>();
-  for (const entry of formatting.resolvedNumericFormats) {
-    if (entry.target.kind === 'column') {
-      formats.set(entry.target.columnKey, entry.format);
+  for (const columnKey of visibleColumns) {
+    const format = findResolvedNumericFormat({
+      snapshot: formatting,
+      scope: formatting.scope,
+      target: { kind: 'column', columnKey },
+    });
+    if (format) formats.set(columnKey, format);
+  }
+  return formats;
+}
+
+function temporalFormatsByVisibleColumn(
+  formatting: ExportFormattingConfig,
+  visibleColumns: readonly string[],
+): ReadonlyMap<string, ResolvedTemporalBucketFormat> {
+  const formats = new Map<string, ResolvedTemporalBucketFormat>();
+  for (const columnKey of visibleColumns) {
+    const format = findResolvedTemporalBucketFormat({
+      snapshot: formatting,
+      scope: formatting.scope,
+      target: { kind: 'column', columnKey },
+    });
+    if (format) formats.set(columnKey, format);
+  }
+  return formats;
+}
+
+function assertTemporalPresentationMetadata(
+  formatting: ExportFormattingConfig,
+  visibleColumns: readonly string[],
+  temporalFormatsByColumn: ReadonlyMap<string, ResolvedTemporalBucketFormat>,
+  temporalMetadataByColumn: ReadonlyMap<string, TemporalBucketMetadata>,
+): void {
+  if (formatting.useFormattedValues === false) return;
+
+  for (const columnKey of visibleColumns) {
+    const hasFormat = temporalFormatsByColumn.has(columnKey);
+    const hasMetadata = temporalMetadataByColumn.has(columnKey);
+    if (hasFormat && !hasMetadata) {
+      throw new Error(
+        `Missing temporal bucket metadata for column "${columnKey}"`,
+      );
     }
+    if (hasMetadata && !hasFormat) {
+      throw new Error(
+        `Missing resolved temporal presentation for column "${columnKey}"`,
+      );
+    }
+  }
+}
+
+function applicableTemporalFormatsByVisibleColumn(
+  formatting: ExportFormattingConfig,
+  visibleColumns: readonly string[],
+  temporalFormatsByColumn: ReadonlyMap<string, ResolvedTemporalBucketFormat>,
+  temporalMetadataByColumn: ReadonlyMap<string, TemporalBucketMetadata>,
+): ReadonlyMap<string, ResolvedTemporalBucketFormat> {
+  if (formatting.useFormattedValues === false) {
+    return temporalFormatsByColumn;
+  }
+
+  const formats = new Map<string, ResolvedTemporalBucketFormat>();
+  for (const columnKey of visibleColumns) {
+    const format = temporalFormatsByColumn.get(columnKey);
+    const metadata = temporalMetadataByColumn.get(columnKey);
+    if (!format || !metadata) continue;
+
+    formats.set(
+      columnKey,
+      resolveTemporalBucketPresentation({
+        metadata,
+        cardFormat: format,
+        locale: format.locale,
+      }).format,
+    );
   }
   return formats;
 }
@@ -72,13 +173,35 @@ function formatCellValue(
   columnSettings: ColumnSettings | undefined,
   formatting: ExportFormattingConfig,
   numericFormatsByColumn: ReadonlyMap<string, NumericCanonicalFormat>,
+  temporalFormatsByColumn: ReadonlyMap<string, ResolvedTemporalBucketFormat>,
+  temporalMetadataByColumn: ReadonlyMap<string, TemporalBucketMetadata>,
 ): string {
-  if (value === null || value === undefined) {
-    return '';
+  if (formatting.useFormattedValues === false) {
+    return value === null || value === undefined ? '' : String(value);
   }
 
-  if (formatting.useFormattedValues === false) {
-    return String(value);
+  const temporalMetadata = temporalMetadataByColumn.get(columnKey);
+  if (temporalMetadata) {
+    const format = temporalFormatsByColumn.get(columnKey);
+    if (!format) {
+      throw new Error(
+        `Missing resolved temporal presentation for column "${columnKey}"`,
+      );
+    }
+    if (value !== null && value !== undefined && typeof value !== 'string') {
+      throw new Error(
+        `Canonical temporal column "${columnKey}" must contain a string or null`,
+      );
+    }
+    return formatTemporalBucket({
+      value: value ?? null,
+      metadata: temporalMetadata,
+      format,
+    });
+  }
+
+  if (value === null || value === undefined) {
+    return '';
   }
 
   // Number formatting
@@ -157,6 +280,44 @@ function getOwnColumnLabel(
   return typeof label === 'string' && label.length > 0 ? label : undefined;
 }
 
+function getPivotColumnLabel(
+  column: ColumnInfo | undefined,
+  formatting: ExportFormattingConfig,
+  metricLabel?: string,
+): string | undefined {
+  const identity = column?.pivotIdentity;
+  if (!identity || identity.members.length === 0) {
+    return undefined;
+  }
+  const members = requirePivotHeaderMembers({
+    identity,
+    columnKey: column?.key || column?.field || '',
+  });
+  const resolvedMetricLabel = metricLabel || column?.label || column?.headerName;
+  return presentPivotHeader({
+    members,
+    metricLabel: resolvedMetricLabel,
+    mode:
+      formatting.useFormattedValues === false ? 'canonical' : 'formatted',
+    resolveTemporalFormat: (fieldId) => {
+      const member = members.find((candidate) => candidate.fieldId === fieldId);
+      if (!member?.temporalBucket) return undefined;
+      const format = findResolvedTemporalBucketFormat({
+        snapshot: formatting,
+        scope: formatting.scope,
+        target: { kind: 'field', fieldId, role: 'pivotby' },
+      });
+      return format
+        ? resolveTemporalBucketPresentation({
+            metadata: member.temporalBucket,
+            cardFormat: format,
+            locale: format.locale,
+          }).format
+        : undefined;
+    },
+  }).flattenedLabel;
+}
+
 /**
  * Get visible columns with fallback to record keys if columns array is empty.
  */
@@ -171,7 +332,9 @@ function getVisibleColumns(
   }
   // Priority 2: Derive from columns array
   if (columns.length > 0) {
-    return columns.map((c) => c.field);
+    return columns
+      .map((column) => column.key || column.field)
+      .filter((key): key is string => Boolean(key));
   }
   // Priority 3: Fallback to first record's keys (if no columns metadata)
   if (firstRow) {
@@ -186,10 +349,32 @@ function getVisibleColumns(
 function formatSingleRow(
   row: Record<string, unknown>,
   visibleColumns: string[],
+  visibleColumnKeys: ReadonlySet<string>,
   formatting: ExportFormattingConfig,
   numericFormatsByColumn: ReadonlyMap<string, NumericCanonicalFormat>,
+  temporalFormatsByColumn: ReadonlyMap<string, ResolvedTemporalBucketFormat>,
+  temporalMetadataByColumn: ReadonlyMap<string, TemporalBucketMetadata>,
+  aggregateContext?: AggregateTablePresentationContext,
 ): string[] {
+  const groupCellOverrides = resolveAggregateGroupCellOverrides({
+    row,
+    aggregateContext,
+    useFormattedValues: formatting.useFormattedValues !== false,
+    visibleColumnKeys,
+    formatGroupValue: (value, key) =>
+      formatCellValue(
+        value,
+        key,
+        formatting.columnSettings?.[key],
+        formatting,
+        numericFormatsByColumn,
+        temporalFormatsByColumn,
+        temporalMetadataByColumn,
+      ),
+  });
   return visibleColumns.map((field) => {
+    const groupCellOverride = groupCellOverrides?.get(field);
+    if (groupCellOverride !== undefined) return groupCellOverride;
     const value = row[field];
     const columnSettings = formatting.columnSettings?.[field];
     return formatCellValue(
@@ -198,6 +383,8 @@ function formatSingleRow(
       columnSettings,
       formatting,
       numericFormatsByColumn,
+      temporalFormatsByColumn,
+      temporalMetadataByColumn,
     );
   });
 }
@@ -208,14 +395,96 @@ function formatSingleRow(
 export function formatRowsForExport(
   data: Record<string, unknown>[],
   columns: ColumnInfo[],
-  formatting: ExportFormattingConfig
+  formatting: ExportFormattingConfig,
+  context?: {
+    queryPayload?: CardConfig;
+    columnKeyMap?: QueryColumnKeyMap;
+    columnMetadata?: Record<string, PivotResultColumnClassification>;
+    pivotResultKind?: 'canonical' | 'legacy_raw' | 'not_pivot';
+  },
 ): string[][] {
+  const effectiveCardConfig = resolveEffectiveCardConfig(
+    context?.queryPayload,
+  );
+  const pivotByColumns = effectiveCardConfig?.pivotByColumns;
+  const expectedPivotFieldIds = Array.isArray(pivotByColumns)
+    ? pivotByColumns.flatMap((field) => {
+        if (!field || typeof field !== 'object' || Array.isArray(field)) {
+          return [];
+        }
+        const fieldId = (field as Record<string, unknown>).id;
+        return typeof fieldId === 'string' && fieldId ? [fieldId] : [];
+      })
+    : [];
+  if (
+    context?.pivotResultKind !== 'canonical' &&
+    context?.pivotResultKind !== 'legacy_raw'
+  ) {
+    requirePivotResultColumnIdentities(
+      columns.map((column) => ({
+        key: column.key || column.field || '<unknown>',
+        pivotIdentity: column.pivotIdentity,
+      })),
+      {
+        expectedPivotFieldIds,
+        columnClassifications: context?.columnMetadata,
+      },
+    );
+  }
   // Determine visible columns once, with fallback to first record's keys
   const visibleColumns = getVisibleColumns(columns, formatting, data[0]);
-  const numericFormatsByColumn = resolvedNumericFormatsByColumn(formatting);
+  const visibleColumnKeys = new Set(visibleColumns);
+  const numericFormatsByColumn = numericFormatsByVisibleColumn(
+    formatting,
+    visibleColumns,
+  );
+  const temporalFormatsByColumn = temporalFormatsByVisibleColumn(
+    formatting,
+    visibleColumns,
+  );
+  const temporalMetadataByColumn = new Map(
+    columns.flatMap((column) => {
+      const key = column.key || column.field;
+      return key && column.temporalBucket
+        ? [[key, column.temporalBucket] as const]
+        : [];
+    }),
+  );
+  assertTemporalPresentationMetadata(
+    formatting,
+    visibleColumns,
+    temporalFormatsByColumn,
+    temporalMetadataByColumn,
+  );
+  const applicableTemporalFormatsByColumn =
+    applicableTemporalFormatsByVisibleColumn(
+      formatting,
+      visibleColumns,
+      temporalFormatsByColumn,
+      temporalMetadataByColumn,
+    );
+  // Canonical temporal metadata is emitted only for config-owned activated
+  // results. Use that authoritative result signal instead of reconstructing
+  // SQL/Python ownership from the untyped job payload.
+  const aggregateContext =
+    temporalMetadataByColumn.size > 0
+      ? resolveAggregateTableExportContext(
+          context?.queryPayload,
+          context?.columnKeyMap,
+        )
+      : undefined;
 
   return data.map((row) =>
-    formatSingleRow(row, visibleColumns, formatting, numericFormatsByColumn),
+    formatSingleRow(
+      row,
+      visibleColumns,
+      visibleColumnKeys,
+      formatting,
+      numericFormatsByColumn,
+      applicableTemporalFormatsByColumn,
+      temporalMetadataByColumn,
+      aggregateContext,
+    ),
   );
 }
 
@@ -226,20 +495,43 @@ export function generateCSV(
   data: string[][],
   columns: ColumnInfo[],
   formatting: ExportFormattingConfig,
-  options: { includeHeaders: boolean; rawRecords?: Record<string, unknown>[] }
+  options: {
+    includeHeaders: boolean;
+    rawRecords?: Record<string, unknown>[];
+    pivotResultKind?: 'canonical' | 'legacy_raw' | 'not_pivot';
+  }
 ): string {
   const { includeHeaders, rawRecords } = options;
   const delimiter = formatting.delimiter || ',';
   const lines: string[] = [];
+  const visibleColumns = getVisibleColumns(columns, formatting, rawRecords?.[0]);
+
+  if (
+    options.pivotResultKind !== 'canonical' &&
+    options.pivotResultKind !== 'legacy_raw'
+  ) {
+    visibleColumns.forEach((field) => {
+      const column = columns.find((candidate) =>
+        (candidate.key || candidate.field) === field
+      );
+      if (column?.pivotIdentity) {
+        requirePivotHeaderMembers({
+          identity: column.pivotIdentity,
+          columnKey: column.key || column.field || field,
+        });
+      }
+    });
+  }
 
   // Header row (first chunk only)
   if (includeHeaders) {
-    // Use same fallback logic as formatRowsForExport
-    const visibleColumns = getVisibleColumns(columns, formatting, rawRecords?.[0]);
     const headers = visibleColumns.map((field) => {
-      const col = columns.find((c) => c.field === field);
+      const col = columns.find((c) => (c.key || c.field) === field);
+      const authoredLabel = getOwnColumnLabel(formatting.columnLabels, field);
       const headerName =
-        getOwnColumnLabel(formatting.columnLabels, field) ||
+        getPivotColumnLabel(col, formatting, authoredLabel) ||
+        authoredLabel ||
+        col?.label ||
         col?.headerName ||
         field;
       return escapeCSVValue(headerName, delimiter);

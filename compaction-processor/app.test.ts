@@ -39,11 +39,36 @@ describe('compaction handler table totals', () => {
         ],
       },
       formatting: {
+        scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
+        reportContext: {
+          calendar: { tz: 'UTC', weekStart: 1, anchor: 'now' },
+          valueFormat: {
+            locale: 'en-US',
+            dateStyle: 'short',
+            dateTime: { dateStyle: 'short', timeStyle: 'short' },
+            defaultCurrency: 'USD',
+          },
+          preferenceSources: {
+            calendar: {
+              tz: 'system_default',
+              weekStart: 'system_default',
+            },
+            valueFormat: {
+              locale: 'system_default',
+              dateStyle: 'system_default',
+              dateTime: {
+                dateStyle: 'system_default',
+                timeStyle: 'system_default',
+              },
+              defaultCurrency: 'system_default',
+            },
+          },
+        },
         delimiter: ',',
         useFormattedValues: true,
         includeHeaders: true,
         visibleColumns: ['revenue'],
-        resolvedNumericFormats: [
+        resolvedFormats: [
           {
             scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
             target: { kind: 'column', columnKey: 'revenue' },

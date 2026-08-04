@@ -35,7 +35,27 @@
                 "MaxAttempts": 2
               }
             ],
+            "Next": "EvaluateGeneratedAttachment"
+          },
+          "EvaluateGeneratedAttachment": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Variable": "$.success",
+                "BooleanEquals": true,
+                "Next": "AttachmentGenerated"
+              }
+            ],
+            "Default": "FailTypedAttachmentRender"
+          },
+          "AttachmentGenerated": {
+            "Type": "Pass",
             "End": true
+          },
+          "FailTypedAttachmentRender": {
+            "Type": "Fail",
+            "Error": "SemaphorDeliveryBlockingRenderError",
+            "CausePath": "$.statusMessage"
           }
         }
       },
@@ -46,10 +66,21 @@
             "States.ALL"
           ],
           "ResultPath": "$.deliveryError",
-          "Next": "UpdateStatusFailedFromException"
+          "Next": "ClassifyAttachmentFailure"
         }
       ],
       "Next": "SendConsolidatedEmail"
+    },
+    "ClassifyAttachmentFailure": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.deliveryError.Error",
+          "StringEquals": "SemaphorDeliveryBlockingRenderError",
+          "Next": "UpdateStatusFailedFromTypedRender"
+        }
+      ],
+      "Default": "UpdateStatusFailedFromException"
     },
     "SendConsolidatedEmail": {
       "Type": "Task",
@@ -154,6 +185,29 @@
           "scheduleId.$": "$.scheduleId",
           "leaseOwner.$": "$.leaseOwner",
           "status": "error"
+        }
+      },
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "DeliveryFailed"
+        }
+      ],
+      "Next": "DeliveryFailed"
+    },
+    "UpdateStatusFailedFromTypedRender": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "OutputPath": "$.Payload",
+      "Parameters": {
+        "FunctionName": "${EmailSenderFunctionArn}",
+        "Payload": {
+          "action": "update_status",
+          "scheduleId.$": "$.scheduleId",
+          "leaseOwner.$": "$.leaseOwner",
+          "status.$": "$.deliveryError.Cause"
         }
       },
       "Catch": [

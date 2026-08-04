@@ -1,13 +1,37 @@
 import { resolveCompactionFooter } from './footer';
 
+const reportContext = {
+  calendar: { tz: 'UTC', weekStart: 1, anchor: 'now' },
+  valueFormat: {
+    locale: 'en-US',
+    dateStyle: 'short',
+    dateTime: { dateStyle: 'short', timeStyle: 'short' },
+    defaultCurrency: 'USD',
+  },
+  preferenceSources: {
+    calendar: { tz: 'system_default', weekStart: 'system_default' },
+    valueFormat: {
+      locale: 'system_default',
+      dateStyle: 'system_default',
+      dateTime: {
+        dateStyle: 'system_default',
+        timeStyle: 'system_default',
+      },
+      defaultCurrency: 'system_default',
+    },
+  },
+};
+
 const formatting = {
+  scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
+  reportContext,
   timezone: 'UTC',
   delimiter: ',',
   includeHeaders: true,
   useFormattedValues: true,
   visibleColumns: ['region', 'revenue'],
   tableTotalsLabelColumnKey: 'region',
-  resolvedNumericFormats: [
+  resolvedFormats: [
     {
       scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
       target: { kind: 'column', columnKey: 'region' },
@@ -67,6 +91,58 @@ describe('resolveCompactionFooter', () => {
     });
 
     expect(footer).toBe('Total,"$9,000.00"\n');
+  });
+
+  it('accepts generalized temporal presentation snapshots for totals exports', () => {
+    const temporalFormatting = {
+      ...formatting,
+      visibleColumns: ['period', 'revenue'],
+      tableTotalsLabelColumnKey: 'period',
+      resolvedFormats: [
+        {
+          scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
+          target: { kind: 'column', columnKey: 'period' },
+          format: {
+            type: 'temporal_bucket',
+            presentation: { mode: 'auto' },
+            locale: 'en-US',
+          },
+        },
+        formatting.resolvedFormats[1],
+      ],
+    };
+    const temporalTotalsRequest = {
+      ...tableTotalsRequest,
+      columns: [
+        {
+          fieldId: 'period-id',
+          role: 'groupby',
+          behavior: 'label',
+          label: 'Total',
+        },
+        tableTotalsRequest.columns[1],
+      ],
+    };
+
+    expect(
+      resolveCompactionFooter({
+        tableTotalsRequest: temporalTotalsRequest,
+        formatting: temporalFormatting,
+        totalRows: 10,
+        chunkResults: [
+          {
+            chunkId: 'chunk-1',
+            status: 'completed',
+            rowsProcessed: 10,
+            s3Key: '001.csv',
+            tableTotalsByColumnId: {
+              period: 'Total',
+              revenue: '9000.00',
+            },
+          },
+        ],
+      }),
+    ).toBe('Total,"$9,000.00"\n');
   });
 
   it('fails rather than silently omitting or duplicating an enabled footer', () => {

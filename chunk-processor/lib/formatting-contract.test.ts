@@ -30,7 +30,7 @@ function formatting(overrides: Record<string, unknown> = {}) {
     reportContext: REPORT_CONTEXT,
     delimiter: ',',
     includeHeaders: true,
-    resolvedNumericFormats: [],
+    resolvedFormats: [],
     ...overrides,
   };
 }
@@ -59,9 +59,34 @@ describe('parseExportFormattingConfig', () => {
       expect.objectContaining({
         timezone: 'UTC',
         reportContext: REPORT_CONTEXT,
-        resolvedNumericFormats: [],
+        resolvedFormats: [],
       }),
     );
+  });
+
+  it('accepts the activated temporal export-column branch', () => {
+    expect(
+      parseExportFormattingConfig(
+        formatting({
+          resolvedFormats: [
+            {
+              scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
+              target: { kind: 'column', columnKey: 'order_month' },
+              format: {
+                type: 'temporal_bucket',
+                presentation: { mode: 'auto' },
+                locale: 'en-US',
+              },
+            },
+          ],
+        }),
+      ).resolvedFormats,
+    ).toEqual([
+      expect.objectContaining({
+        target: { kind: 'column', columnKey: 'order_month' },
+        format: expect.objectContaining({ type: 'temporal_bucket' }),
+      }),
+    ]);
   });
 
   it('rejects a missing or invalid report context without a fallback', () => {
@@ -95,6 +120,11 @@ describe('parseExportFormattingConfig', () => {
     ).toThrow('unknown property "comparisonPresentation"');
     expect(() =>
       parseExportFormattingConfig(
+        formatting({ resolvedNumericFormats: [] }),
+      ),
+    ).toThrow('unknown property "resolvedNumericFormats"');
+    expect(() =>
+      parseExportFormattingConfig(
         formatting({ timezone: 'America/Chicago' }),
       ),
     ).toThrow('must equal reportContext.calendar.tz');
@@ -104,7 +134,7 @@ describe('parseExportFormattingConfig', () => {
     expect(() =>
       parseExportFormattingConfig(
         formatting({
-          resolvedNumericFormats: [
+          resolvedFormats: [
             resolvedColumnFormat('dashboard-1', 'card-1', 'revenue'),
             resolvedColumnFormat('dashboard-1', 'card-2', 'margin'),
           ],
@@ -115,7 +145,7 @@ describe('parseExportFormattingConfig', () => {
     expect(() =>
       parseExportFormattingConfig(
         formatting({
-          resolvedNumericFormats: [
+          resolvedFormats: [
             {
               ...resolvedColumnFormat(
                 'dashboard-1',
@@ -128,7 +158,7 @@ describe('parseExportFormattingConfig', () => {
         }),
       ),
     ).toThrow(
-      'formatting.resolvedNumericFormats.0.target must identify an export column',
+      'formatting.resolvedFormats.0.target must identify an export column',
     );
   });
 
@@ -138,11 +168,11 @@ describe('parseExportFormattingConfig', () => {
         formatting({
           useFormattedValues: true,
           visibleColumns: ['revenue'],
-          resolvedNumericFormats: [],
+          resolvedFormats: [],
         }),
       ),
     ).toThrow(
-      'formatting.resolvedNumericFormats is missing visible export column "revenue"',
+      'formatting.resolvedFormats is missing visible export column "revenue"',
     );
 
     expect(
@@ -150,7 +180,7 @@ describe('parseExportFormattingConfig', () => {
         formatting({
           useFormattedValues: true,
           visibleColumns: ['revenue'],
-          resolvedNumericFormats: [
+          resolvedFormats: [
             resolvedColumnFormat('dashboard-1', 'card-1', 'revenue'),
           ],
         }),
@@ -158,7 +188,7 @@ describe('parseExportFormattingConfig', () => {
     ).toEqual(
       expect.objectContaining({
         visibleColumns: ['revenue'],
-        resolvedNumericFormats: [
+        resolvedFormats: [
           expect.objectContaining({
             target: { kind: 'column', columnKey: 'revenue' },
           }),

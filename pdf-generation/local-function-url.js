@@ -124,6 +124,7 @@ async function handleGet(req, res, parsedUrl) {
       includeSubtotals: true,
       includeGrandTotal: true,
       includeMetadata: true,
+      useFormattedValues: query.get('useFormattedValues') !== 'false',
       reportTitle,
       timezone: query.get('timezone') || 'UTC',
       filterLine: query.get('filterLine') || '',

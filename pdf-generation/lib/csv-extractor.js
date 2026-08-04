@@ -1,7 +1,11 @@
 import { launchBrowser, closeBrowser } from './browser.js';
 import { setupPage } from './page-setup.js';
-import { waitForDashboardReady } from './content-stability.js';
+import {
+  throwIfDeliveryBlockingRenderError,
+  waitForDashboardReady,
+} from './content-stability.js';
 import { extractTableData, convertToCSV } from './modes/csv-table.js';
+import { propagateDeliveryBlockingRenderError } from './delivery-render-error.js';
 
 /**
  * Generate CSV from a table URL using Puppeteer to extract formatted data
@@ -40,7 +44,13 @@ export async function generateCsv(url, options = {}) {
     }
 
     // 3. Wait for table to load
-    await page.waitForSelector('table', { timeout: 10000 });
+    try {
+      await page.waitForSelector('table', { timeout: 10000 });
+    } catch (error) {
+      await throwIfDeliveryBlockingRenderError(page);
+      throw error;
+    }
+    await throwIfDeliveryBlockingRenderError(page);
     console.log('Table element found');
 
     // 4. Detect table type and extract data
@@ -70,7 +80,8 @@ export async function generateCsv(url, options = {}) {
     }
 
     // 5. Extract formatted table data from DOM
-    const tableData = await extractTableData(page, tableInfo);
+    const tableData = await extractTableData(page, tableInfo, options);
+    await throwIfDeliveryBlockingRenderError(page);
 
     console.log(`Extracted table data: ${tableData.rows.length} rows, ${tableData.headers.length} header rows`);
 
@@ -87,7 +98,8 @@ export async function generateCsv(url, options = {}) {
 
   } catch (error) {
     console.error('CSV generation error:', error);
-    throw new Error(`Failed to generate CSV: ${error.message}`);
+    const csvError = new Error(`Failed to generate CSV: ${error.message}`);
+    throw propagateDeliveryBlockingRenderError(error, csvError);
 
   } finally {
     if (browser) {

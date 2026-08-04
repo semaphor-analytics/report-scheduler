@@ -7,6 +7,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { generatePdf } from './lib/pdf-generator.js';
 import { generateCsv } from './lib/csv-extractor.js';
 import { generatePdfFromData } from './lib/pdf-from-data-generator.js';
+import { deliveryBlockingErrorResponseFields } from './lib/delivery-render-error.js';
 
 // Initialize S3 client
 const s3 = new S3Client({});
@@ -243,6 +244,7 @@ async function handleScheduledStepFunctionRequest(event) {
       settings.delimiter ||
       reportParams?.csvOptions?.delimiter ||
       ',',
+    useFormattedValues: settings.useFormattedValues !== false,
     isVisualExport: targetUrl.includes('/visual/'),
     watermarkEnabled: watermark.enabled === true,
     watermarkText:
@@ -284,6 +286,37 @@ async function handleScheduledStepFunctionRequest(event) {
     sizeBytes: uploaded.sizeBytes,
     url: uploaded.presignedUrl,
     ...(layoutApplied ? { layoutApplied } : {}),
+  };
+}
+
+function scheduledDeliveryBlockingFailure(event, error) {
+  const responseFields = deliveryBlockingErrorResponseFields(error);
+  if (!responseFields.errorCode) {
+    return null;
+  }
+  const schedule = asRecord(event?.schedule);
+  const scheduleId =
+    typeof event?.scheduleId === 'string'
+      ? event.scheduleId
+      : typeof schedule.scheduleId === 'string'
+        ? schedule.scheduleId
+        : '';
+  const leaseOwner =
+    typeof event?.leaseOwner === 'string'
+      ? event.leaseOwner
+      : typeof schedule.leaseOwner === 'string'
+        ? schedule.leaseOwner
+        : '';
+  const message = error?.message || 'Scheduled report rendering failed';
+  const statusMessage = message.startsWith(`${responseFields.errorCode}:`)
+    ? message
+    : `${responseFields.errorCode}: ${message}`;
+  return {
+    success: false,
+    scheduleId,
+    leaseOwner,
+    errorCode: responseFields.errorCode,
+    statusMessage,
   };
 }
 
@@ -384,6 +417,7 @@ async function handleDataDirectRequest(event) {
       body: JSON.stringify({
         message: error.message || 'Internal server error',
         error: error.message,
+        ...deliveryBlockingErrorResponseFields(error),
       }),
     };
   }
@@ -397,7 +431,15 @@ export const handler = async (event) => {
       !event?.queryStringParameters);
   try {
     if (isScheduleStepFnEvent) {
-      return await handleScheduledStepFunctionRequest(event);
+      try {
+        return await handleScheduledStepFunctionRequest(event);
+      } catch (error) {
+        const typedFailure = scheduledDeliveryBlockingFailure(event, error);
+        if (typedFailure) {
+          return typedFailure;
+        }
+        throw error;
+      }
     }
 
     // Check if this is a data-direct POST request (fast path)
@@ -511,6 +553,8 @@ export const handler = async (event) => {
       reportParams: reportParams,
       format: format,
       delimiter: event?.queryStringParameters?.delimiter || ',',
+      useFormattedValues:
+        event?.queryStringParameters?.useFormattedValues !== 'false',
       isVisualExport: isVisualExport,
       watermarkEnabled: watermarkEnabled,
       watermarkText: watermarkText,
@@ -675,6 +719,7 @@ export const handler = async (event) => {
       body: JSON.stringify({
         message: error.message || 'Internal server error',
         error: error.message,
+        ...deliveryBlockingErrorResponseFields(error),
       }),
     };
   }

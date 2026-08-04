@@ -30,7 +30,7 @@
     "esbuild": "^0.27.7",
     "mdast-util-from-markdown": "^2.0.2",
     "mdast-util-to-string": "^4.0.0",
-    "react-semaphor": "0.1.435",
+    "react-semaphor": "0.1.445",
     "zod": "^4"
   },
   "devDependencies": {
