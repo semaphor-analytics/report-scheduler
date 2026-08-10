@@ -100,7 +100,7 @@ export function resolveRawTemporalExportPresentation(input: {
     };
   }
   const rawFormats = rawFormatsForScope(input.formatting);
-  const activatedColumnKeys = new Set(rawFormats.keys());
+  const activatedColumnKeys = new Set<string>();
   const byColumnKey = new Map<string, PreparedRawTemporalColumn>();
   if (rawFormats.size === 0) {
     return { activatedColumnKeys, byColumnKey };
@@ -122,7 +122,11 @@ export function resolveRawTemporalExportPresentation(input: {
       metadata = validateRawTemporalResultColumn(column, {
         metadataRequired: true,
       });
+      activatedColumnKeys.add(columnKey);
     } else if (declaredSql) {
+      // Explicit SQL declaration owns activation even when this chunk is
+      // empty or contains only invalid strings and cannot yield metadata.
+      activatedColumnKeys.add(columnKey);
       const classification = classifyDeclaredSqlTemporalColumn({
         columnKey,
         values: requireColumnValues(input.records, columnKey),
@@ -132,9 +136,10 @@ export function resolveRawTemporalExportPresentation(input: {
         metadata = classification.metadata;
       }
     } else {
-      validateRawTemporalResultColumn(column || {}, {
-        metadataRequired: true,
-      });
+      // Config-owned recurring/print snapshots may contain an inert pre-query
+      // candidate. Only authoritative transported rawTemporal metadata turns
+      // that candidate into an activated delivery column.
+      continue;
     }
 
     if (metadata) {

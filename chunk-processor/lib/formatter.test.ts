@@ -178,6 +178,24 @@ describe('formatter', () => {
       ).toEqual([['2026-08-09'], ['']]);
     });
 
+    it('keeps a pre-query config candidate inert without transported metadata', () => {
+      expect(
+        formatRowsForExport(
+          [{ occurred_at: '2026-08-09' }],
+          [{ key: 'occurred_at', field: 'occurred_at', dataType: 'date' }],
+          withRawTemporalFormat(true),
+          {
+            queryPayload: {
+              cardType: 'detailTable',
+              resultOwner: 'config',
+              sql: '',
+              python: '',
+            },
+          },
+        ),
+      ).toEqual([['2026-08-09']]);
+    });
+
     it('classifies declared SQL temporal columns and returns durable chunk evidence', () => {
       const result = formatRowsForExportWithEvidence(
         [
