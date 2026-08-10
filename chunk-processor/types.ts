@@ -8,6 +8,8 @@ import type {
   PivotResultColumnClassification,
   PresentationExecutionSnapshot,
   PresentationScope,
+  RawTemporalChunkClassificationEvidence,
+  RawTemporalValueMetadata,
   TemporalBucketMetadata,
 } from 'react-semaphor/format-utils';
 
@@ -50,6 +52,8 @@ export interface ChunkResult {
   error?: string;
   tableTotalsByColumnId?: FlatTableExportTotalsByColumnId;
   tableTotalsMetadataKey?: string;
+  rawTemporalClassification?: RawTemporalChunkClassificationEvidence;
+  rawTemporalClassificationKey?: string;
 }
 
 export interface CardConfig {
@@ -57,6 +61,7 @@ export interface CardConfig {
   connectionId?: string;
   dataModelId?: string;
   sql?: string;
+  python?: string;
   controlValues?: Record<string, unknown>;
   controlDefinitions?: unknown[];
   cardControlDefinitions?: unknown[];
@@ -74,7 +79,9 @@ export interface ColumnInfo {
   headerName?: string;
   label?: string;
   type?: string;
+  dataType?: 'string' | 'number' | 'boolean' | 'date' | 'datetime' | 'unknown';
   temporalBucket?: TemporalBucketMetadata;
+  rawTemporal?: RawTemporalValueMetadata;
   pivotIdentity?: {
     metricId: string;
     metricAlias: string;
@@ -97,10 +104,9 @@ interface ExportFormattingBase {
   tableTotalsLabelColumnKey?: string;
 }
 
-export interface ExportFormattingConfig
-  extends ExportFormattingBase,
-    PresentationExecutionSnapshot {
+export interface ExportFormattingConfig extends ExportFormattingBase {
   scope: PresentationScope;
+  presentationExecutionSnapshot: PresentationExecutionSnapshot;
 }
 
 export interface ColumnSettings {

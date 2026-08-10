@@ -1,36 +1,40 @@
-import { formatRowsForExport, generateCSV } from './formatter';
-import type {
-  ColumnInfo,
-  ExportFormattingConfig,
-} from '../types';
+import {
+  formatRowsForExport,
+  formatRowsForExportWithEvidence,
+  generateCSV,
+} from './formatter';
+import type { ColumnInfo, ExportFormattingConfig } from '../types';
 import type { NumericCanonicalFormat } from 'react-semaphor/format-utils';
 
 describe('formatter', () => {
   const defaultFormatting: ExportFormattingConfig = {
     scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
     timezone: 'UTC',
-    reportContext: {
-      calendar: { tz: 'UTC', weekStart: 1, anchor: 'now' },
-      valueFormat: {
-        locale: 'en-US',
-        dateStyle: 'short',
-        dateTime: { dateStyle: 'short', timeStyle: 'short' },
-        defaultCurrency: 'USD',
-      },
-      preferenceSources: {
-        calendar: { tz: 'system_default', weekStart: 'system_default' },
+    presentationExecutionSnapshot: {
+      version: 1,
+      reportContext: {
+        calendar: { tz: 'UTC', weekStart: 1, anchor: 'now' },
         valueFormat: {
-          locale: 'system_default',
-          dateStyle: 'system_default',
-          dateTime: {
+          locale: 'en-US',
+          dateStyle: 'short',
+          dateTime: { dateStyle: 'short', timeStyle: 'short' },
+          defaultCurrency: 'USD',
+        },
+        preferenceSources: {
+          calendar: { tz: 'system_default', weekStart: 'system_default' },
+          valueFormat: {
+            locale: 'system_default',
             dateStyle: 'system_default',
-            timeStyle: 'system_default',
+            dateTime: {
+              dateStyle: 'system_default',
+              timeStyle: 'system_default',
+            },
+            defaultCurrency: 'system_default',
           },
-          defaultCurrency: 'system_default',
         },
       },
+      resolvedFormats: [],
     },
-    resolvedFormats: [],
     delimiter: ',',
     includeHeaders: true,
   };
@@ -41,16 +45,19 @@ describe('formatter', () => {
   ): ExportFormattingConfig {
     return {
       ...defaultFormatting,
-      resolvedFormats: [
-        {
-          scope: {
-            dashboardId: 'dashboard-1',
-            cardId: 'card-1',
+      presentationExecutionSnapshot: {
+        ...defaultFormatting.presentationExecutionSnapshot,
+        resolvedFormats: [
+          {
+            scope: {
+              dashboardId: 'dashboard-1',
+              cardId: 'card-1',
+            },
+            target: { kind: 'column', columnKey },
+            format,
           },
-          target: { kind: 'column', columnKey },
-          format,
-        },
-      ],
+        ],
+      },
     };
   }
 
@@ -62,21 +69,180 @@ describe('formatter', () => {
       ...defaultFormatting,
       useFormattedValues,
       visibleColumns: [columnKey],
-      resolvedFormats: [
-        {
-          scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
-          target: { kind: 'column', columnKey },
-          format: {
-            type: 'temporal_bucket',
-            presentation: { mode: 'auto' },
-            locale: 'en-US',
+      presentationExecutionSnapshot: {
+        ...defaultFormatting.presentationExecutionSnapshot,
+        resolvedFormats: [
+          {
+            scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
+            target: { kind: 'column', columnKey },
+            format: {
+              type: 'temporal_bucket',
+              presentation: {
+                mode: 'auto',
+                styles: {
+                  dateStyle: 'short',
+                  dateTime: { dateStyle: 'short', timeStyle: 'short' },
+                },
+              },
+              locale: 'fr-FR',
+            },
           },
-        },
-      ],
+        ],
+      },
+    };
+  }
+
+  function withRawTemporalFormat(
+    useFormattedValues: boolean,
+    columnKey = 'occurred_at',
+  ): ExportFormattingConfig {
+    return {
+      ...defaultFormatting,
+      useFormattedValues,
+      visibleColumns: [columnKey],
+      presentationExecutionSnapshot: {
+        ...defaultFormatting.presentationExecutionSnapshot,
+        resolvedFormats: [
+          {
+            scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
+            target: { kind: 'column', columnKey },
+            format: {
+              type: 'raw_temporal',
+              locale: 'en-US',
+              calendarTimezone: 'UTC',
+              presentation: {
+                mode: 'pattern',
+                pattern: 'MMM DD, YYYY',
+                dialect: 'semaphor_tokens',
+              },
+            },
+          },
+        ],
+      },
     };
   }
 
   describe('formatRowsForExport', () => {
+    it('characterizes current explicit date settings in worker CSV', () => {
+      const formatting: ExportFormattingConfig = {
+        ...defaultFormatting,
+        useFormattedValues: true,
+        columnSettings: {
+          occurred_at: {
+            dateFormat: {
+              format: 'MM/dd/yyyy',
+              useCustomFormat: false,
+              customFormat: '',
+              timezone: 'UTC',
+              sourceTimezone: 'UTC',
+            },
+          },
+        },
+      };
+
+      expect(
+        formatRowsForExport(
+          [{ occurred_at: '2026-08-09T14:30:00.000Z' }],
+          [{ key: 'occurred_at', field: 'occurred_at' }],
+          formatting,
+        ),
+      ).toEqual([['08/09/2026']]);
+    });
+
+    it('formats config-owned raw temporal values from metadata and the captured snapshot', () => {
+      const columns: ColumnInfo[] = [
+        {
+          key: 'occurred_at',
+          field: 'occurred_at',
+          dataType: 'date',
+          rawTemporal: {
+            kind: 'raw_temporal',
+            valueKind: 'date',
+          },
+        },
+      ];
+
+      expect(
+        formatRowsForExport(
+          [{ occurred_at: '2026-08-09' }, { occurred_at: null }],
+          columns,
+          withRawTemporalFormat(true),
+        ),
+      ).toEqual([['Aug 09, 2026'], ['']]);
+      expect(
+        formatRowsForExport(
+          [{ occurred_at: '2026-08-09' }, { occurred_at: null }],
+          columns,
+          withRawTemporalFormat(false),
+        ),
+      ).toEqual([['2026-08-09'], ['']]);
+    });
+
+    it('classifies declared SQL temporal columns and returns durable chunk evidence', () => {
+      const result = formatRowsForExportWithEvidence(
+        [
+          { occurred_at: '2026-08-09T14:30:00Z' },
+          { occurred_at: 'not-a-date' },
+        ],
+        [{ key: 'occurred_at', field: 'occurred_at' }],
+        withRawTemporalFormat(true),
+        {
+          queryPayload: {
+            cardType: 'table',
+            resultOwner: 'freeform',
+            sql: 'select occurred_at from events',
+            python: '',
+          },
+        },
+      );
+
+      expect(result.rows).toEqual([['Aug 09, 2026'], ['not-a-date']]);
+      expect(result.rawTemporalClassification).toEqual({
+        version: 1,
+        columns: { occurred_at: 'instant' },
+      });
+    });
+
+    it('keeps formatting-disabled SQL output raw without classification evidence', () => {
+      const result = formatRowsForExportWithEvidence(
+        [{ occurred_at: '2026-08-09T14:30:00Z' }],
+        [{ key: 'occurred_at', field: 'occurred_at' }],
+        withRawTemporalFormat(false),
+        {
+          queryPayload: {
+            cardType: 'table',
+            resultOwner: 'freeform',
+            sql: 'select occurred_at from events',
+            python: '',
+          },
+        },
+      );
+
+      expect(result.rows).toEqual([['2026-08-09T14:30:00Z']]);
+      expect(result.rawTemporalClassification).toBeUndefined();
+    });
+
+    it('fails a declared SQL chunk that mixes temporal meanings', () => {
+      expect(() =>
+        formatRowsForExportWithEvidence(
+          [
+            { occurred_at: '2026-08-09' },
+            { occurred_at: '2026-08-09T14:30:00Z' },
+          ],
+          [{ key: 'occurred_at', field: 'occurred_at' }],
+          withRawTemporalFormat(true),
+          {
+            queryPayload: {
+              cardType: 'table',
+              resultOwner: 'freeform',
+              sql: 'select occurred_at from events',
+              python: '',
+            },
+          },
+        ),
+      ).toThrow('mixes date, wall-datetime, or instant semantics');
+    });
+
     it('formats canonical temporal buckets from metadata and the captured snapshot', () => {
       const columns: ColumnInfo[] = [
         {
@@ -93,20 +259,14 @@ describe('formatter', () => {
 
       expect(
         formatRowsForExport(
-          [
-            { 'Created month': '2026-07-01' },
-            { 'Created month': null },
-          ],
+          [{ 'Created month': '2026-07-01' }, { 'Created month': null }],
           columns,
           withTemporalFormat(true),
         ),
-      ).toEqual([['Jul 2026'], ['(Blank)']]);
+      ).toEqual([['07/2026'], ['(Blank)']]);
       expect(
         formatRowsForExport(
-          [
-            { 'Created month': '2026-07-01' },
-            { 'Created month': null },
-          ],
+          [{ 'Created month': '2026-07-01' }, { 'Created month': null }],
           columns,
           withTemporalFormat(false),
         ),
@@ -313,9 +473,7 @@ describe('formatter', () => {
                   { id: 'created-month-id', name: 'created_at' },
                   { id: 'region-id', name: 'region' },
                 ],
-                rowAggregates: [
-                  { function: 'SUM', groupLevel: 'region-id' },
-                ],
+                rowAggregates: [{ function: 'SUM', groupLevel: 'region-id' }],
               },
             },
             columnKeyMap: {
@@ -406,7 +564,7 @@ describe('formatter', () => {
 
     it('revalidates captured presentation against authoritative result metadata', () => {
       const formatting = withTemporalFormat(true);
-      formatting.resolvedFormats = [
+      formatting.presentationExecutionSnapshot.resolvedFormats = [
         {
           scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
           target: { kind: 'column', columnKey: 'Created month' },
@@ -653,34 +811,43 @@ describe('formatter', () => {
       useFormattedValues: true,
       visibleColumns: ['revenue_july'],
       columnLabels: { revenue_july: 'Revenue Current' },
-      resolvedFormats: [
-        {
-          scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
-          target: {
-            kind: 'field',
-            fieldId: 'created-month',
-            role: 'groupby',
+      presentationExecutionSnapshot: {
+        ...defaultFormatting.presentationExecutionSnapshot,
+        resolvedFormats: [
+          {
+            scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
+            target: {
+              kind: 'field',
+              fieldId: 'created-month',
+              role: 'groupby',
+            },
+            format: {
+              type: 'temporal_bucket',
+              presentation: { mode: 'pattern', pattern: 'YYYY' },
+              locale: 'en-US',
+            },
           },
-          format: {
-            type: 'temporal_bucket',
-            presentation: { mode: 'pattern', pattern: 'YYYY' },
-            locale: 'en-US',
+          {
+            scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
+            target: {
+              kind: 'field',
+              fieldId: 'created-month',
+              role: 'pivotby',
+            },
+            format: {
+              type: 'temporal_bucket',
+              presentation: {
+                mode: 'auto',
+                styles: {
+                  dateStyle: 'short',
+                  dateTime: { dateStyle: 'short', timeStyle: 'short' },
+                },
+              },
+              locale: 'fr-FR',
+            },
           },
-        },
-        {
-          scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
-          target: {
-            kind: 'field',
-            fieldId: 'created-month',
-            role: 'pivotby',
-          },
-          format: {
-            type: 'temporal_bucket',
-            presentation: { mode: 'auto' },
-            locale: 'en-US',
-          },
-        },
-      ],
+        ],
+      },
     };
     const columns: ColumnInfo[] = [
       {
@@ -706,7 +873,7 @@ describe('formatter', () => {
 
     expect(
       generateCSV([['10']], columns, formatting, { includeHeaders: true }),
-    ).toBe('Jul 2026 / Revenue Current\n10\n');
+    ).toBe('07/2026 / Revenue Current\n10\n');
   });
 
   it('preserves canonical pivot members in raw async CSV headers', () => {
@@ -740,9 +907,7 @@ describe('formatter', () => {
       generateCSV([['10', '20']], columns, formatting, {
         includeHeaders: true,
       }),
-    ).toBe(
-      '2026-07-01 / Revenue,2026-08-01 / Revenue\n10,20\n',
-    );
+    ).toBe('2026-07-01 / Revenue,2026-08-01 / Revenue\n10,20\n');
   });
 
   it('fails closed when a physical pivot column omits member identity', () => {
@@ -984,20 +1149,15 @@ describe('formatter', () => {
       },
     ];
 
-    const rows = formatRowsForExport(
-      [{ revenue: 10 }],
-      columns,
-      formatting,
-      {
-        queryPayload: {
-          cardType: 'pivotTable',
-          cardConfig: { pivotByColumns: [] },
-        },
+    const rows = formatRowsForExport([{ revenue: 10 }], columns, formatting, {
+      queryPayload: {
+        cardType: 'pivotTable',
+        cardConfig: { pivotByColumns: [] },
       },
-    );
-    expect(generateCSV(rows, columns, formatting, { includeHeaders: false })).toBe(
-      '10\n',
-    );
+    });
+    expect(
+      generateCSV(rows, columns, formatting, { includeHeaders: false }),
+    ).toBe('10\n');
   });
 
   describe('generateCSV', () => {
@@ -1027,12 +1187,9 @@ describe('formatter', () => {
           comparison_sales: 'Sales (Previous Period)',
         },
       };
-      const result = generateCSV(
-        [['120', '100']],
-        [],
-        formatting,
-        { includeHeaders: true },
-      );
+      const result = generateCSV([['120', '100']], [], formatting, {
+        includeHeaders: true,
+      });
       expect(result).toBe('Sales,Sales (Previous Period)\n120,100\n');
     });
 
@@ -1100,10 +1257,7 @@ describe('formatter', () => {
 
     it('should escape values containing delimiter', () => {
       const data = [['Hello, World', 'Test']];
-      const columns: ColumnInfo[] = [
-        { field: 'greeting' },
-        { field: 'test' },
-      ];
+      const columns: ColumnInfo[] = [{ field: 'greeting' }, { field: 'test' }];
 
       const result = generateCSV(data, columns, defaultFormatting, {
         includeHeaders: false,
@@ -1114,10 +1268,7 @@ describe('formatter', () => {
 
     it('should escape values containing double quotes', () => {
       const data = [['Say "Hello"', 'Test']];
-      const columns: ColumnInfo[] = [
-        { field: 'greeting' },
-        { field: 'test' },
-      ];
+      const columns: ColumnInfo[] = [{ field: 'greeting' }, { field: 'test' }];
 
       const result = generateCSV(data, columns, defaultFormatting, {
         includeHeaders: false,
@@ -1128,10 +1279,7 @@ describe('formatter', () => {
 
     it('should escape values containing newlines', () => {
       const data = [['Line1\nLine2', 'Test']];
-      const columns: ColumnInfo[] = [
-        { field: 'multiline' },
-        { field: 'test' },
-      ];
+      const columns: ColumnInfo[] = [{ field: 'multiline' }, { field: 'test' }];
 
       const result = generateCSV(data, columns, defaultFormatting, {
         includeHeaders: false,
@@ -1160,9 +1308,7 @@ describe('formatter', () => {
     });
 
     it('should handle empty data array', () => {
-      const columns: ColumnInfo[] = [
-        { field: 'name', headerName: 'Name' },
-      ];
+      const columns: ColumnInfo[] = [{ field: 'name', headerName: 'Name' }];
 
       const result = generateCSV([], columns, defaultFormatting, {
         includeHeaders: true,
@@ -1190,7 +1336,11 @@ describe('formatter', () => {
       ];
       const columns: ColumnInfo[] = []; // Empty - API didn't return columns
 
-      const formattedRows = formatRowsForExport(records, columns, defaultFormatting);
+      const formattedRows = formatRowsForExport(
+        records,
+        columns,
+        defaultFormatting,
+      );
       const csv = generateCSV(formattedRows, columns, defaultFormatting, {
         includeHeaders: true,
         rawRecords: records,
@@ -1213,7 +1363,11 @@ describe('formatter', () => {
       ];
       const columns: ColumnInfo[] = [];
 
-      const formattedRows = formatRowsForExport(records, columns, defaultFormatting);
+      const formattedRows = formatRowsForExport(
+        records,
+        columns,
+        defaultFormatting,
+      );
 
       // Each row should have 2 values, not be empty
       expect(formattedRows[0].length).toBe(2);
@@ -1232,10 +1386,7 @@ describe('formatter', () => {
         ['Alice', '30'],
         ['Bob', '25'],
       ];
-      const columns: ColumnInfo[] = [
-        { field: 'name' },
-        { field: 'age' },
-      ];
+      const columns: ColumnInfo[] = [{ field: 'name' }, { field: 'age' }];
 
       const result = generateCSV(data, columns, defaultFormatting, {
         includeHeaders: false,
@@ -1244,9 +1395,14 @@ describe('formatter', () => {
       expect(result.endsWith('\n')).toBe(true);
 
       // Simulate chunk concatenation
-      const chunk1 = generateCSV([['Alice', '30']], columns, defaultFormatting, {
-        includeHeaders: true,
-      });
+      const chunk1 = generateCSV(
+        [['Alice', '30']],
+        columns,
+        defaultFormatting,
+        {
+          includeHeaders: true,
+        },
+      );
       const chunk2 = generateCSV([['Bob', '25']], columns, defaultFormatting, {
         includeHeaders: false,
       });

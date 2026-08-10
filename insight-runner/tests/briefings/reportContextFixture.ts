@@ -1,4 +1,5 @@
 import type { ReportRuntimeContext } from "react-semaphor/report-runtime-context";
+import type { PresentationExecutionSnapshot } from "react-semaphor/format-utils";
 
 export const TEST_REPORT_CONTEXT: ReportRuntimeContext = {
   calendar: {
@@ -30,4 +31,10 @@ export const TEST_REPORT_CONTEXT: ReportRuntimeContext = {
       defaultCurrency: "system_default",
     },
   },
+};
+
+export const TEST_PRESENTATION_EXECUTION_SNAPSHOT: PresentationExecutionSnapshot = {
+  version: 1,
+  reportContext: TEST_REPORT_CONTEXT,
+  resolvedFormats: [],
 };

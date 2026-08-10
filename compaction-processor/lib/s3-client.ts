@@ -35,6 +35,28 @@ export async function getObjectStream(key: string): Promise<Readable> {
 }
 
 /**
+ * Fetch the durable raw-temporal classification stored beside a completed
+ * chunk. Parsing and contract validation remain owned by the caller so this
+ * transport helper does not duplicate the shared format-utils contract.
+ */
+export async function fetchRawTemporalClassificationByKey(
+  key: string,
+): Promise<unknown> {
+  const response = await s3Client.send(
+    new GetObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: key,
+    }),
+  );
+
+  if (!response.Body) {
+    throw new Error(`No body returned for raw temporal sidecar: ${key}`);
+  }
+
+  return JSON.parse(await response.Body.transformToString());
+}
+
+/**
  * Upload a stream to S3 using multipart upload.
  * Returns the final file size.
  */

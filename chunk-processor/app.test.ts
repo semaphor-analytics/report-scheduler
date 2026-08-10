@@ -6,8 +6,10 @@ import {
   updateChunkStatus,
 } from './lib/api-client';
 import {
+  fetchRawTemporalClassification,
   fetchTableTotalsMetadata,
   uploadChunk,
+  uploadRawTemporalClassification,
   uploadTableTotalsMetadata,
 } from './lib/s3-client';
 
@@ -17,11 +19,17 @@ jest.mock('./lib/api-client', () => ({
   updateChunkStatus: jest.fn(),
 }));
 jest.mock('./lib/s3-client', () => ({
+  fetchRawTemporalClassification: jest.fn(),
   fetchTableTotalsMetadata: jest.fn(),
+  getRawTemporalClassificationKey: jest.fn(
+    (jobId: string, chunkNumber: number) =>
+      `exports/${jobId}/deltas/${String(chunkNumber).padStart(3, '0')}.raw-temporal.json`,
+  ),
   getTableTotalsMetadataKey: jest.fn(
     (jobId: string) => `exports/${jobId}/deltas/001.totals.json`,
   ),
   uploadChunk: jest.fn(),
+  uploadRawTemporalClassification: jest.fn(),
   uploadTableTotalsMetadata: jest.fn(),
 }));
 
@@ -39,54 +47,83 @@ const request = {
 const formatting = {
   scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
   timezone: 'UTC',
-  reportContext: {
-    calendar: { tz: 'UTC', weekStart: 1, anchor: 'now' },
-    valueFormat: {
-      locale: 'en-US',
-      dateStyle: 'short',
-      dateTime: { dateStyle: 'short', timeStyle: 'short' },
-      defaultCurrency: 'USD',
-    },
-    preferenceSources: {
-      calendar: { tz: 'system_default', weekStart: 'system_default' },
+  presentationExecutionSnapshot: {
+    version: 1,
+    reportContext: {
+      calendar: { tz: 'UTC', weekStart: 1, anchor: 'now' },
       valueFormat: {
-        locale: 'system_default',
-        dateStyle: 'system_default',
-        dateTime: {
+        locale: 'en-US',
+        dateStyle: 'short',
+        dateTime: { dateStyle: 'short', timeStyle: 'short' },
+        defaultCurrency: 'USD',
+      },
+      preferenceSources: {
+        calendar: { tz: 'system_default', weekStart: 'system_default' },
+        valueFormat: {
+          locale: 'system_default',
           dateStyle: 'system_default',
-          timeStyle: 'system_default',
+          dateTime: {
+            dateStyle: 'system_default',
+            timeStyle: 'system_default',
+          },
+          defaultCurrency: 'system_default',
         },
-        defaultCurrency: 'system_default',
       },
     },
+    resolvedFormats: [
+      {
+        scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
+        target: { kind: 'column', columnKey: 'region' },
+        format: {
+          type: 'number',
+          locale: 'en-US',
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 3,
+        },
+      },
+      {
+        scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
+        target: { kind: 'column', columnKey: 'revenue' },
+        format: {
+          type: 'currency',
+          locale: 'en-US',
+          currency: 'USD',
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        },
+      },
+    ],
   },
   delimiter: ',',
   includeHeaders: true,
   tableTotalsLabelColumnKey: 'region',
   visibleColumns: ['region', 'revenue'],
-  resolvedFormats: [
-    {
-      scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
-      target: { kind: 'column', columnKey: 'region' },
-      format: {
-        type: 'number',
-        locale: 'en-US',
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 3,
+};
+
+const rawTemporalFormatting = {
+  ...formatting,
+  useFormattedValues: true,
+  visibleColumns: ['occurred_at'],
+  tableTotalsLabelColumnKey: 'occurred_at',
+  presentationExecutionSnapshot: {
+    ...formatting.presentationExecutionSnapshot,
+    resolvedFormats: [
+      {
+        scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
+        target: { kind: 'column', columnKey: 'occurred_at' },
+        format: {
+          type: 'raw_temporal',
+          locale: 'en-US',
+          calendarTimezone: 'UTC',
+          presentation: {
+            mode: 'pattern',
+            pattern: 'MMM DD, YYYY',
+            dialect: 'semaphor_tokens',
+          },
+        },
       },
-    },
-    {
-      scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
-      target: { kind: 'column', columnKey: 'revenue' },
-      format: {
-        type: 'currency',
-        locale: 'en-US',
-        currency: 'USD',
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      },
-    },
-  ],
+    ],
+  },
 };
 
 function event(overrides: Partial<ChunkInput> = {}): ChunkInput {
@@ -112,12 +149,17 @@ describe('chunk handler table totals', () => {
       chunkNumber: 1,
     });
     jest.mocked(updateChunkStatus).mockResolvedValue(undefined);
-    jest.mocked(uploadChunk).mockResolvedValue(
-      'exports/job-1/deltas/001.csv',
-    );
-    jest.mocked(uploadTableTotalsMetadata).mockResolvedValue(
-      'exports/job-1/deltas/001.totals.json',
-    );
+    jest.mocked(uploadChunk).mockResolvedValue('exports/job-1/deltas/001.csv');
+    jest
+      .mocked(uploadTableTotalsMetadata)
+      .mockResolvedValue('exports/job-1/deltas/001.totals.json');
+    jest
+      .mocked(uploadRawTemporalClassification)
+      .mockResolvedValue('exports/job-1/deltas/001.raw-temporal.json');
+    jest.mocked(fetchRawTemporalClassification).mockResolvedValue({
+      version: 1,
+      columns: { occurred_at: 'instant' },
+    });
     jest.mocked(fetchTableTotalsMetadata).mockResolvedValue({
       revenue: '9000.00',
     });
@@ -129,9 +171,7 @@ describe('chunk handler table totals', () => {
   });
 
   it('returns the validated map as first-chunk metadata', async () => {
-    const result = await handler(
-      event({ tableTotalsRequest: request }),
-    );
+    const result = await handler(event({ tableTotalsRequest: request }));
 
     expect(queryData).toHaveBeenCalledWith(
       expect.objectContaining({ tableTotalsRequest: request }),
@@ -140,6 +180,83 @@ describe('chunk handler table totals', () => {
     expect(result.tableTotalsByColumnId).toEqual({ revenue: '9000.00' });
     expect(result.tableTotalsMetadataKey).toBe(
       'exports/job-1/deltas/001.totals.json',
+    );
+  });
+
+  it('persists declared SQL classification evidence with the completed chunk', async () => {
+    jest.mocked(queryData).mockResolvedValue({
+      records: [{ occurred_at: '2026-08-09T14:30:00Z' }],
+      columns: [{ field: 'occurred_at' }],
+    });
+
+    const result = await handler(
+      event({
+        cardConfig: {
+          cardType: 'table',
+          resultOwner: 'freeform',
+          sql: 'select occurred_at from events',
+          python: '',
+        },
+        formatting: rawTemporalFormatting,
+      }),
+    );
+
+    expect(uploadRawTemporalClassification).toHaveBeenCalledWith({
+      jobId: 'job-1',
+      chunkNumber: 1,
+      evidence: {
+        version: 1,
+        columns: { occurred_at: 'instant' },
+      },
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        rawTemporalClassification: {
+          version: 1,
+          columns: { occurred_at: 'instant' },
+        },
+        rawTemporalClassificationKey:
+          'exports/job-1/deltas/001.raw-temporal.json',
+      }),
+    );
+  });
+
+  it('rehydrates declared SQL classification evidence on idempotent replay', async () => {
+    jest.mocked(fetchChunkStatus).mockResolvedValue({
+      id: 'chunk-1',
+      status: 'completed',
+      chunkNumber: 1,
+      rowCount: 1,
+      s3Key: 'exports/job-1/deltas/001.csv',
+    });
+
+    const result = await handler(
+      event({
+        cardConfig: {
+          cardType: 'table',
+          resultOwner: 'freeform',
+          sql: 'select occurred_at from events',
+          python: '',
+        },
+        formatting: rawTemporalFormatting,
+      }),
+    );
+
+    expect(fetchRawTemporalClassification).toHaveBeenCalledWith({
+      jobId: 'job-1',
+      chunkNumber: 1,
+    });
+    expect(queryData).not.toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'already_completed',
+        rawTemporalClassification: {
+          version: 1,
+          columns: { occurred_at: 'instant' },
+        },
+        rawTemporalClassificationKey:
+          'exports/job-1/deltas/001.raw-temporal.json',
+      }),
     );
   });
 
@@ -204,9 +321,9 @@ describe('chunk handler table totals', () => {
       rowCount: 100,
       s3Key: 'exports/job-1/deltas/001.csv',
     });
-    jest.mocked(fetchTableTotalsMetadata).mockRejectedValue(
-      new Error('transient S3 error'),
-    );
+    jest
+      .mocked(fetchTableTotalsMetadata)
+      .mockRejectedValue(new Error('transient S3 error'));
 
     await expect(
       handler(event({ tableTotalsRequest: request })),
@@ -233,9 +350,9 @@ describe('chunk handler table totals', () => {
   });
 
   it('does no work when status reconciliation is unavailable', async () => {
-    jest.mocked(fetchChunkStatus).mockRejectedValue(
-      new Error('status unavailable'),
-    );
+    jest
+      .mocked(fetchChunkStatus)
+      .mockRejectedValue(new Error('status unavailable'));
 
     await expect(
       handler(event({ tableTotalsRequest: request })),
@@ -247,7 +364,8 @@ describe('chunk handler table totals', () => {
   });
 
   it('reconciles a lost completion response without marking the chunk failed', async () => {
-    jest.mocked(fetchChunkStatus)
+    jest
+      .mocked(fetchChunkStatus)
       .mockResolvedValueOnce({
         id: 'chunk-1',
         status: 'pending',
@@ -260,7 +378,8 @@ describe('chunk handler table totals', () => {
         rowCount: 1,
         s3Key: 'exports/job-1/deltas/001.csv',
       });
-    jest.mocked(updateChunkStatus)
+    jest
+      .mocked(updateChunkStatus)
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('completion response lost'));
 

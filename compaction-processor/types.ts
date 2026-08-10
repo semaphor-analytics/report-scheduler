@@ -4,6 +4,7 @@
 
 import type {
   FlatTableExportTotalsByColumnId,
+  RawTemporalChunkClassificationEvidence,
 } from 'react-semaphor/format-utils';
 
 export interface ChunkResult {
@@ -14,6 +15,8 @@ export interface ChunkResult {
   error?: string;
   tableTotalsByColumnId?: FlatTableExportTotalsByColumnId;
   tableTotalsMetadataKey?: string;
+  rawTemporalClassification?: RawTemporalChunkClassificationEvidence;
+  rawTemporalClassificationKey?: string;
 }
 
 export interface CompactionInput {

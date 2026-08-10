@@ -233,7 +233,9 @@ export function buildBriefingRunnerResultPayload(
             diagnosticFeedback,
             includeEvidence: payload.briefing.jobConfig.presentation.includeEvidence,
             includeSql: payload.briefing.jobConfig.presentation.includeSql,
-            reportContext: payload.briefing.jobConfig.reportContext,
+            reportContext:
+              payload.briefing.jobConfig.presentationExecutionSnapshot
+                .reportContext,
           }),
         }
       : {}),

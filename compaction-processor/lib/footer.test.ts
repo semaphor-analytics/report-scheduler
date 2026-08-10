@@ -24,36 +24,39 @@ const reportContext = {
 
 const formatting = {
   scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
-  reportContext,
+  presentationExecutionSnapshot: {
+    version: 1,
+    reportContext,
+    resolvedFormats: [
+      {
+        scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
+        target: { kind: 'column', columnKey: 'region' },
+        format: {
+          type: 'number',
+          locale: 'en-US',
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 3,
+        },
+      },
+      {
+        scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
+        target: { kind: 'column', columnKey: 'revenue' },
+        format: {
+          type: 'currency',
+          locale: 'en-US',
+          currency: 'USD',
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        },
+      },
+    ],
+  },
   timezone: 'UTC',
   delimiter: ',',
   includeHeaders: true,
   useFormattedValues: true,
   visibleColumns: ['region', 'revenue'],
   tableTotalsLabelColumnKey: 'region',
-  resolvedFormats: [
-    {
-      scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
-      target: { kind: 'column', columnKey: 'region' },
-      format: {
-        type: 'number',
-        locale: 'en-US',
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 3,
-      },
-    },
-    {
-      scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
-      target: { kind: 'column', columnKey: 'revenue' },
-      format: {
-        type: 'currency',
-        locale: 'en-US',
-        currency: 'USD',
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      },
-    },
-  ],
 };
 
 const tableTotalsRequest = {
@@ -98,18 +101,27 @@ describe('resolveCompactionFooter', () => {
       ...formatting,
       visibleColumns: ['period', 'revenue'],
       tableTotalsLabelColumnKey: 'period',
-      resolvedFormats: [
+      presentationExecutionSnapshot: {
+        ...formatting.presentationExecutionSnapshot,
+        resolvedFormats: [
         {
           scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
           target: { kind: 'column', columnKey: 'period' },
           format: {
             type: 'temporal_bucket',
-            presentation: { mode: 'auto' },
+            presentation: {
+              mode: 'auto',
+              styles: {
+                dateStyle: 'short',
+                dateTime: { dateStyle: 'short', timeStyle: 'short' },
+              },
+            },
             locale: 'en-US',
           },
         },
-        formatting.resolvedFormats[1],
-      ],
+          formatting.presentationExecutionSnapshot.resolvedFormats[1],
+        ],
+      },
     };
     const temporalTotalsRequest = {
       ...tableTotalsRequest,
@@ -185,6 +197,32 @@ describe('resolveCompactionFooter', () => {
     ).toThrow('Expected exactly one table totals map, received 2');
   });
 
+  it.each(['reportContext', 'resolvedFormats'])(
+    'rejects the retired formatting.%s sibling',
+    (retiredKey) => {
+      expect(() =>
+        resolveCompactionFooter({
+          tableTotalsRequest,
+          formatting: {
+            ...formatting,
+            [retiredKey]: retiredKey === 'reportContext' ? reportContext : [],
+          },
+          totalRows: 10,
+          chunkResults: [
+            {
+              chunkId: 'chunk-1',
+              status: 'completed',
+              rowsProcessed: 10,
+              tableTotalsByColumnId: { revenue: '1' },
+            },
+          ],
+        }),
+      ).toThrow(
+        'invalid_presentation_execution_snapshot',
+      );
+    },
+  );
+
   it('leaves totals-disabled exports byte-compatible', () => {
     expect(
       resolveCompactionFooter({
@@ -201,6 +239,29 @@ describe('resolveCompactionFooter', () => {
       }),
     ).toBeUndefined();
   });
+
+  it.each(['reportContext', 'resolvedFormats'])(
+    'rejects retired formatting.%s when totals are disabled',
+    (retiredKey) => {
+      expect(() =>
+        resolveCompactionFooter({
+          formatting: {
+            ...formatting,
+            [retiredKey]: retiredKey === 'reportContext' ? reportContext : [],
+          },
+          totalRows: 10,
+          chunkResults: [
+            {
+              chunkId: 'chunk-1',
+              status: 'completed',
+              rowsProcessed: 10,
+              s3Key: '001.csv',
+            },
+          ],
+        }),
+      ).toThrow('invalid_presentation_execution_snapshot');
+    },
+  );
 
   it('suppresses the footer for a validated zero-row export', () => {
     expect(

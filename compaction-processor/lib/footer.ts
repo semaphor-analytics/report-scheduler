@@ -4,6 +4,7 @@ import {
   parseFlatTableExportTotalsRequest,
   parsePresentationExecutionSnapshot,
   parsePresentationScope,
+  PresentationExecutionSnapshotError,
   validateCardExportPresentationSnapshot,
   type PresentationExecutionSnapshot,
   type PresentationScope,
@@ -19,6 +20,12 @@ type CompactionFooterFormatting = {
   scope: PresentationScope;
 };
 
+type CompactionPresentationEnvelope = {
+  formatting: Record<string, unknown>;
+  snapshot: PresentationExecutionSnapshot;
+  scope: PresentationScope & { cardId: string };
+};
+
 function asRecord(value: unknown, path: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`${path} must be an object`);
@@ -26,8 +33,35 @@ function asRecord(value: unknown, path: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function parseFooterFormatting(input: unknown): CompactionFooterFormatting {
+function parseCompactionPresentationEnvelope(
+  input: unknown,
+): CompactionPresentationEnvelope {
   const formatting = asRecord(input, 'formatting');
+  const retiredPresentationKey = ['reportContext', 'resolvedFormats'].find(
+    (key) => Object.prototype.hasOwnProperty.call(formatting, key),
+  );
+  if (retiredPresentationKey) {
+    throw new PresentationExecutionSnapshotError(
+      `formatting.${retiredPresentationKey} is retired; formatting.presentationExecutionSnapshot is authoritative.`,
+    );
+  }
+  const scope = parsePresentationScope(formatting.scope, 'formatting.scope');
+  if (!scope.cardId || scope.attachmentIndex !== undefined) {
+    throw new Error('formatting.scope must identify exactly one dashboard card');
+  }
+  const snapshot = parsePresentationExecutionSnapshot(
+    formatting.presentationExecutionSnapshot,
+  );
+  return {
+    formatting,
+    snapshot,
+    scope: { ...scope, cardId: scope.cardId },
+  };
+}
+
+function parseFooterFormatting(input: unknown): CompactionFooterFormatting {
+  const { formatting, snapshot, scope } =
+    parseCompactionPresentationEnvelope(input);
   if (
     typeof formatting.delimiter !== 'string' ||
     formatting.delimiter.length === 0
@@ -63,23 +97,23 @@ function parseFooterFormatting(input: unknown): CompactionFooterFormatting {
     );
   }
 
-  const scope = parsePresentationScope(formatting.scope, 'formatting.scope');
-  if (!scope.cardId || scope.attachmentIndex !== undefined) {
-    throw new Error('formatting.scope must identify exactly one dashboard card');
+  try {
+    validateCardExportPresentationSnapshot({
+      snapshot,
+      expectedScope: {
+        dashboardId: scope.dashboardId,
+        cardId: scope.cardId,
+      },
+      visibleColumns: formatting.visibleColumns as string[],
+      useFormattedValues: formatting.useFormattedValues !== false,
+    });
+  } catch (error) {
+    throw new PresentationExecutionSnapshotError(
+      `formatting.presentationExecutionSnapshot.${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
-  const snapshot = parsePresentationExecutionSnapshot({
-    reportContext: formatting.reportContext,
-    resolvedFormats: formatting.resolvedFormats,
-  });
-  validateCardExportPresentationSnapshot({
-    snapshot,
-    expectedScope: {
-      dashboardId: scope.dashboardId,
-      cardId: scope.cardId,
-    },
-    visibleColumns: formatting.visibleColumns as string[],
-    useFormattedValues: formatting.useFormattedValues !== false,
-  });
 
   return {
     delimiter: formatting.delimiter,
@@ -109,6 +143,7 @@ export function resolveCompactionFooter(input: {
     throw new Error('totalRows must be a non-negative integer');
   }
   if (input.tableTotalsRequest === undefined || input.tableTotalsRequest === null) {
+    parseCompactionPresentationEnvelope(input.formatting);
     if (
       input.chunkResults.some(
         (result) => result.tableTotalsByColumnId !== undefined,

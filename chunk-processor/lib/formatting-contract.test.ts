@@ -27,10 +27,13 @@ function formatting(overrides: Record<string, unknown> = {}) {
     scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
     useFormattedValues: false,
     timezone: 'UTC',
-    reportContext: REPORT_CONTEXT,
+    presentationExecutionSnapshot: {
+      version: 1,
+      reportContext: REPORT_CONTEXT,
+      resolvedFormats: [],
+    },
     delimiter: ',',
     includeHeaders: true,
-    resolvedFormats: [],
     ...overrides,
   };
 }
@@ -58,8 +61,11 @@ describe('parseExportFormattingConfig', () => {
     expect(parseExportFormattingConfig(formatting())).toEqual(
       expect.objectContaining({
         timezone: 'UTC',
-        reportContext: REPORT_CONTEXT,
-        resolvedFormats: [],
+        presentationExecutionSnapshot: {
+          version: 1,
+          reportContext: REPORT_CONTEXT,
+          resolvedFormats: [],
+        },
       }),
     );
   });
@@ -68,19 +74,29 @@ describe('parseExportFormattingConfig', () => {
     expect(
       parseExportFormattingConfig(
         formatting({
-          resolvedFormats: [
+          presentationExecutionSnapshot: {
+            version: 1,
+            reportContext: REPORT_CONTEXT,
+            resolvedFormats: [
             {
               scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },
               target: { kind: 'column', columnKey: 'order_month' },
               format: {
                 type: 'temporal_bucket',
-                presentation: { mode: 'auto' },
+                presentation: {
+                  mode: 'auto',
+                  styles: {
+                    dateStyle: 'short',
+                    dateTime: { dateStyle: 'short', timeStyle: 'short' },
+                  },
+                },
                 locale: 'en-US',
               },
             },
-          ],
+            ],
+          },
         }),
-      ).resolvedFormats,
+      ).presentationExecutionSnapshot.resolvedFormats,
     ).toEqual([
       expect.objectContaining({
         target: { kind: 'column', columnKey: 'order_month' },
@@ -89,23 +105,40 @@ describe('parseExportFormattingConfig', () => {
     ]);
   });
 
-  it('rejects a missing or invalid report context without a fallback', () => {
+  it('rejects a missing or invalid presentation snapshot without a fallback', () => {
     expect(() =>
       parseExportFormattingConfig(
-        formatting({ reportContext: undefined }),
+        formatting({ presentationExecutionSnapshot: undefined }),
       ),
-    ).toThrow('reportContext is invalid');
+    ).toThrow('presentation execution snapshot');
     expect(() =>
       parseExportFormattingConfig(
         formatting({
-          reportContext: {
-            ...REPORT_CONTEXT,
-            calendar: { ...REPORT_CONTEXT.calendar, weekStart: 7 },
+          presentationExecutionSnapshot: {
+            version: 1,
+            reportContext: {
+              ...REPORT_CONTEXT,
+              calendar: { ...REPORT_CONTEXT.calendar, weekStart: 7 },
+            },
+            resolvedFormats: [],
           },
         }),
       ),
     ).toThrow('weekStart');
   });
+
+  it.each(['reportContext', 'resolvedFormats'])(
+    'rejects the retired formatting.%s sibling with the typed resave action',
+    (retiredKey) => {
+      expect(() =>
+        parseExportFormattingConfig(
+          formatting({
+            [retiredKey]: retiredKey === 'reportContext' ? REPORT_CONTEXT : [],
+          }),
+        ),
+      ).toThrow('invalid_presentation_execution_snapshot');
+    },
+  );
 
   it('rejects retired worker presentation state and derived-timezone drift', () => {
     expect(() =>
@@ -127,17 +160,23 @@ describe('parseExportFormattingConfig', () => {
       parseExportFormattingConfig(
         formatting({ timezone: 'America/Chicago' }),
       ),
-    ).toThrow('must equal reportContext.calendar.tz');
+    ).toThrow(
+      'must equal presentationExecutionSnapshot.reportContext.calendar.tz',
+    );
   });
 
   it('rejects mismatched scopes and non-column presentation targets', () => {
     expect(() =>
       parseExportFormattingConfig(
         formatting({
-          resolvedFormats: [
-            resolvedColumnFormat('dashboard-1', 'card-1', 'revenue'),
-            resolvedColumnFormat('dashboard-1', 'card-2', 'margin'),
-          ],
+          presentationExecutionSnapshot: {
+            version: 1,
+            reportContext: REPORT_CONTEXT,
+            resolvedFormats: [
+              resolvedColumnFormat('dashboard-1', 'card-1', 'revenue'),
+              resolvedColumnFormat('dashboard-1', 'card-2', 'margin'),
+            ],
+          },
         }),
       ),
     ).toThrow('scope must match the executing dashboard/card');
@@ -145,20 +184,22 @@ describe('parseExportFormattingConfig', () => {
     expect(() =>
       parseExportFormattingConfig(
         formatting({
-          resolvedFormats: [
-            {
+          presentationExecutionSnapshot: {
+            version: 1,
+            reportContext: REPORT_CONTEXT,
+            resolvedFormats: [{
               ...resolvedColumnFormat(
                 'dashboard-1',
                 'card-1',
                 'revenue',
               ),
               target: { kind: 'metric', metricId: 'revenue' },
-            },
-          ],
+            }],
+          },
         }),
       ),
     ).toThrow(
-      'formatting.resolvedFormats.0.target must identify an export column',
+      'formatting.presentationExecutionSnapshot.resolvedFormats.0.target must identify an export column',
     );
   });
 
@@ -168,31 +209,60 @@ describe('parseExportFormattingConfig', () => {
         formatting({
           useFormattedValues: true,
           visibleColumns: ['revenue'],
-          resolvedFormats: [],
+          presentationExecutionSnapshot: {
+            version: 1,
+            reportContext: REPORT_CONTEXT,
+            resolvedFormats: [],
+          },
         }),
       ),
     ).toThrow(
-      'formatting.resolvedFormats is missing visible export column "revenue"',
+      'formatting.presentationExecutionSnapshot.resolvedFormats is missing visible export column "revenue"',
     );
+    try {
+      parseExportFormattingConfig(
+        formatting({
+          useFormattedValues: true,
+          visibleColumns: ['revenue'],
+          presentationExecutionSnapshot: {
+            version: 1,
+            reportContext: REPORT_CONTEXT,
+            resolvedFormats: [],
+          },
+        }),
+      );
+      throw new Error('Expected snapshot validation to fail');
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: 'invalid_presentation_execution_snapshot',
+        deliveryBlocking: true,
+      });
+    }
 
     expect(
       parseExportFormattingConfig(
         formatting({
           useFormattedValues: true,
           visibleColumns: ['revenue'],
-          resolvedFormats: [
-            resolvedColumnFormat('dashboard-1', 'card-1', 'revenue'),
-          ],
+          presentationExecutionSnapshot: {
+            version: 1,
+            reportContext: REPORT_CONTEXT,
+            resolvedFormats: [
+              resolvedColumnFormat('dashboard-1', 'card-1', 'revenue'),
+            ],
+          },
         }),
       ),
     ).toEqual(
       expect.objectContaining({
         visibleColumns: ['revenue'],
-        resolvedFormats: [
-          expect.objectContaining({
-            target: { kind: 'column', columnKey: 'revenue' },
-          }),
-        ],
+        presentationExecutionSnapshot: expect.objectContaining({
+          resolvedFormats: [
+            expect.objectContaining({
+              target: { kind: 'column', columnKey: 'revenue' },
+            }),
+          ],
+        }),
       }),
     );
   });

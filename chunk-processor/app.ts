@@ -10,22 +10,32 @@
  */
 
 import type { ChunkInput, ChunkResult } from './types';
-import { queryData, fetchChunkStatus, updateChunkStatus } from './lib/api-client';
-import { formatRowsForExport, generateCSV } from './lib/formatter';
+import {
+  queryData,
+  fetchChunkStatus,
+  updateChunkStatus,
+} from './lib/api-client';
+import { formatRowsForExportWithEvidence, generateCSV } from './lib/formatter';
 import { resolvePivotExportResultLifecycle } from './lib/pivot-result-lifecycle';
 import { parseExportFormattingConfig } from './lib/formatting-contract';
 import {
   fetchTableTotalsMetadata,
+  fetchRawTemporalClassification,
+  getRawTemporalClassificationKey,
   getTableTotalsMetadataKey,
   uploadChunk,
   uploadTableTotalsMetadata,
+  uploadRawTemporalClassification,
 } from './lib/s3-client';
 import {
   parseFlatTableExportTotalsByColumnId,
   parseFlatTableExportTotalsRequest,
+  parseRawTemporalChunkClassificationEvidence,
 } from 'react-semaphor/format-utils';
+import { requiresRawTemporalSqlChunkEvidence } from './lib/raw-temporal-row-presentation';
 
-const SEMAPHOR_APP_URL = process.env.SEMAPHOR_APP_URL || 'https://semaphor.cloud';
+const SEMAPHOR_APP_URL =
+  process.env.SEMAPHOR_APP_URL || 'https://semaphor.cloud';
 const LAMBDA_API_KEY = process.env.LAMBDA_API_KEY || '';
 
 function requireCompletedChunkState(
@@ -65,6 +75,10 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
   let mayMarkChunkFailed = false;
   try {
     const formatting = parseExportFormattingConfig(rawFormatting);
+    const rawTemporalEvidenceRequired = requiresRawTemporalSqlChunkEvidence({
+      formatting,
+      queryPayload,
+    });
     if (
       rawTableTotalsRequest !== undefined &&
       rawTableTotalsRequest !== null &&
@@ -81,7 +95,7 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
     const existingStatus = await fetchChunkStatus(
       chunkId,
       SEMAPHOR_APP_URL,
-      LAMBDA_API_KEY
+      LAMBDA_API_KEY,
     );
     if (!existingStatus) {
       throw new Error(`Chunk status not found for ${chunkId}`);
@@ -89,12 +103,26 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
 
     if (existingStatus.status === 'completed' && !tableTotalsRequest) {
       const completedState = requireCompletedChunkState(existingStatus);
+      const rawTemporalClassification = rawTemporalEvidenceRequired
+        ? parseRawTemporalChunkClassificationEvidence(
+            await fetchRawTemporalClassification({ jobId, chunkNumber }),
+          )
+        : undefined;
       console.log(`Chunk ${chunkId} already completed, skipping`);
       return {
         chunkId,
         status: 'already_completed',
         rowsProcessed: completedState.rowCount,
         s3Key: completedState.s3Key,
+        ...(rawTemporalClassification
+          ? {
+              rawTemporalClassification,
+              rawTemporalClassificationKey: getRawTemporalClassificationKey(
+                jobId,
+                chunkNumber,
+              ),
+            }
+          : {}),
       };
     }
 
@@ -103,6 +131,11 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
       const tableTotalsByColumnId = parseFlatTableExportTotalsByColumnId(
         await fetchTableTotalsMetadata(jobId),
       );
+      const rawTemporalClassification = rawTemporalEvidenceRequired
+        ? parseRawTemporalChunkClassificationEvidence(
+            await fetchRawTemporalClassification({ jobId, chunkNumber }),
+          )
+        : undefined;
       return {
         chunkId,
         status: 'already_completed',
@@ -110,6 +143,15 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
         s3Key: completedState.s3Key,
         tableTotalsByColumnId,
         tableTotalsMetadataKey: getTableTotalsMetadataKey(jobId),
+        ...(rawTemporalClassification
+          ? {
+              rawTemporalClassification,
+              rawTemporalClassificationKey: getRawTemporalClassificationKey(
+                jobId,
+                chunkNumber,
+              ),
+            }
+          : {}),
       };
     }
 
@@ -141,8 +183,10 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
         : undefined;
 
     // API returns 'records' not 'data'
-    const records = canonicalPivotResult?.records || queryResponse.records || [];
-    const columns = canonicalPivotResult?.columns || queryResponse.columns || [];
+    const records =
+      canonicalPivotResult?.records || queryResponse.records || [];
+    const columns =
+      canonicalPivotResult?.columns || queryResponse.columns || [];
     const rowCount = records.length;
     const tableTotalsByColumnId = tableTotalsRequest
       ? parseFlatTableExportTotalsByColumnId(
@@ -153,7 +197,7 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
     console.log(`Queried ${rowCount} rows for chunk ${chunkNumber}`);
 
     // 4. Format data as CSV
-    const formattedRows = formatRowsForExport(
+    const formattedResult = formatRowsForExportWithEvidence(
       records,
       columns,
       formatting,
@@ -165,7 +209,7 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
         pivotResultKind: pivotResultLifecycle.kind,
       },
     );
-    const csvContent = generateCSV(formattedRows, columns, formatting, {
+    const csvContent = generateCSV(formattedResult.rows, columns, formatting, {
       includeHeaders: isFirstChunk && formatting.includeHeaders,
       rawRecords: records, // Pass raw records for header fallback if columns is empty
       pivotResultKind: pivotResultLifecycle.kind,
@@ -183,6 +227,14 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
           totalsByColumnId: tableTotalsByColumnId,
         })
       : undefined;
+    const rawTemporalClassificationKey =
+      formattedResult.rawTemporalClassification
+        ? await uploadRawTemporalClassification({
+            jobId,
+            chunkNumber,
+            evidence: formattedResult.rawTemporalClassification,
+          })
+        : undefined;
 
     console.log(`Uploaded chunk ${chunkNumber} to ${s3Key}`);
 
@@ -193,6 +245,13 @@ export async function handler(event: ChunkInput): Promise<ChunkResult> {
       s3Key,
       ...(tableTotalsByColumnId ? { tableTotalsByColumnId } : {}),
       ...(tableTotalsMetadataKey ? { tableTotalsMetadataKey } : {}),
+      ...(formattedResult.rawTemporalClassification
+        ? {
+            rawTemporalClassification:
+              formattedResult.rawTemporalClassification,
+          }
+        : {}),
+      ...(rawTemporalClassificationKey ? { rawTemporalClassificationKey } : {}),
     };
 
     // 6. Update chunk status to completed. A lost response is ambiguous: the

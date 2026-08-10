@@ -9,7 +9,7 @@ import type {
   BriefingRunnerPayload,
 } from "../../src/briefings/briefingRunnerPayload.js";
 import type { FunctionUrlEvent } from "../../src/lambda/http.js";
-import { TEST_REPORT_CONTEXT } from "../briefings/reportContextFixture.js";
+import { TEST_PRESENTATION_EXECUTION_SNAPSHOT } from "../briefings/reportContextFixture.js";
 
 const originalLambdaApiKey = process.env.LAMBDA_API_KEY;
 
@@ -167,7 +167,7 @@ function makeRunnerPayload(): BriefingRunnerPayload {
       scheduleExpr: null,
       jobConfig: {
         kind: "BRIEFING",
-        reportContext: TEST_REPORT_CONTEXT,
+        presentationExecutionSnapshot: TEST_PRESENTATION_EXECUTION_SNAPSHOT,
         source: { type: "project" },
         body: {
           type: "generated_analysis",

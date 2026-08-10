@@ -4,7 +4,7 @@ import type {
   BriefingPlannerPayload,
   BriefingRunnerPayload,
 } from "../../src/briefings/briefingRunnerPayload.js";
-import { TEST_REPORT_CONTEXT } from "./reportContextFixture.js";
+import { TEST_PRESENTATION_EXECUTION_SNAPSHOT } from "./reportContextFixture.js";
 
 const servers: BriefingRunServerHandle[] = [];
 
@@ -244,7 +244,7 @@ function makePayload(): BriefingRunnerPayload {
       scheduleExpr: null,
       jobConfig: {
         kind: "BRIEFING",
-        reportContext: TEST_REPORT_CONTEXT,
+        presentationExecutionSnapshot: TEST_PRESENTATION_EXECUTION_SNAPSHOT,
         source: { type: "project" },
         body: {
           type: "generated_analysis",

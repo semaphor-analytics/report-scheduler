@@ -8,6 +8,10 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import type { FlatTableExportTotalsByColumnId } from 'react-semaphor/format-utils';
+import {
+  parseRawTemporalChunkClassificationEvidence,
+  type RawTemporalChunkClassificationEvidence,
+} from 'react-semaphor/format-utils';
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || 'us-east-1',
@@ -38,7 +42,7 @@ export async function uploadChunk(params: UploadChunkParams): Promise<string> {
       Key: s3Key,
       Body: content,
       ContentType: 'text/csv',
-    })
+    }),
   );
 
   return s3Key;
@@ -64,7 +68,9 @@ export async function uploadTableTotalsMetadata(params: {
   return s3Key;
 }
 
-export async function fetchTableTotalsMetadata(jobId: string): Promise<unknown> {
+export async function fetchTableTotalsMetadata(
+  jobId: string,
+): Promise<unknown> {
   const response = await s3Client.send(
     new GetObjectCommand({
       Bucket: BUCKET_NAME,
@@ -73,6 +79,55 @@ export async function fetchTableTotalsMetadata(jobId: string): Promise<unknown> 
   );
   if (!response.Body) {
     throw new Error(`No table totals metadata found for export ${jobId}`);
+  }
+  return JSON.parse(await response.Body.transformToString());
+}
+
+export function getRawTemporalClassificationKey(
+  jobId: string,
+  chunkNumber: number,
+): string {
+  const paddedNumber = String(chunkNumber).padStart(3, '0');
+  return `exports/${jobId}/deltas/${paddedNumber}.raw-temporal.json`;
+}
+
+export async function uploadRawTemporalClassification(params: {
+  jobId: string;
+  chunkNumber: number;
+  evidence: RawTemporalChunkClassificationEvidence;
+}): Promise<string> {
+  const evidence = parseRawTemporalChunkClassificationEvidence(
+    params.evidence,
+  );
+  const s3Key = getRawTemporalClassificationKey(
+    params.jobId,
+    params.chunkNumber,
+  );
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: s3Key,
+      Body: JSON.stringify(evidence),
+      ContentType: 'application/json',
+    }),
+  );
+  return s3Key;
+}
+
+export async function fetchRawTemporalClassification(params: {
+  jobId: string;
+  chunkNumber: number;
+}): Promise<unknown> {
+  const response = await s3Client.send(
+    new GetObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: getRawTemporalClassificationKey(params.jobId, params.chunkNumber),
+    }),
+  );
+  if (!response.Body) {
+    throw new Error(
+      `No raw temporal classification found for export ${params.jobId} chunk ${params.chunkNumber}`,
+    );
   }
   return JSON.parse(await response.Body.transformToString());
 }

@@ -10,7 +10,7 @@ import type { BriefingRunnerPayload } from "../../src/briefings/briefingRunnerPa
 import { FakeInsightLoopModelClient } from "../../src/model/fakeInsightLoopModelClient.js";
 import type { InsightLoopModelPlan } from "../../src/model/insightLoopModelClient.js";
 import { FakeSemaphorMcpClient } from "../../src/semaphor/fakeSemaphorMcpClient.js";
-import { TEST_REPORT_CONTEXT } from "./reportContextFixture.js";
+import { TEST_PRESENTATION_EXECUTION_SNAPSHOT } from "./reportContextFixture.js";
 
 describe("executeBriefingRun", () => {
   it("runs the existing insight loop runtime and calls the complete callback", async () => {
@@ -852,7 +852,7 @@ function makePayload(
       scheduleExpr: null,
       jobConfig: {
         kind: "BRIEFING",
-        reportContext: TEST_REPORT_CONTEXT,
+        presentationExecutionSnapshot: TEST_PRESENTATION_EXECUTION_SNAPSHOT,
         source: { type: "project" },
         body: {
           type: "generated_analysis",

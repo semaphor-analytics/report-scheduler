@@ -31,6 +31,12 @@ import {
   resolveAggregateTableExportContext,
   type AggregateTablePresentationContext,
 } from './aggregate-table-row-presentation';
+import {
+  formatRawTemporalExportValue,
+  resolveRawTemporalExportPresentation,
+  type RawTemporalExportResolution,
+} from './raw-temporal-row-presentation';
+import type { RawTemporalChunkClassificationEvidence } from 'react-semaphor/format-utils';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -58,7 +64,7 @@ function isDateString(value: unknown): boolean {
  * intentionally outside this phase.
  */
 function getDateFormatPattern(
-  dateFormat: ColumnSettings['dateFormat']
+  dateFormat: ColumnSettings['dateFormat'],
 ): string {
   if (dateFormat?.useCustomFormat && dateFormat?.customFormat) {
     return dateFormat.customFormat;
@@ -71,7 +77,7 @@ function getDateFormatPattern(
  */
 function resolveDisplayTimezone(
   dateFormat: ColumnSettings['dateFormat'],
-  contextTimezone: string
+  contextTimezone: string,
 ): string {
   if (dateFormat?.timezone && dateFormat.timezone !== 'auto') {
     return dateFormat.timezone;
@@ -86,7 +92,7 @@ function numericFormatsByVisibleColumn(
   const formats = new Map<string, NumericCanonicalFormat>();
   for (const columnKey of visibleColumns) {
     const format = findResolvedNumericFormat({
-      snapshot: formatting,
+      snapshot: formatting.presentationExecutionSnapshot,
       scope: formatting.scope,
       target: { kind: 'column', columnKey },
     });
@@ -102,11 +108,13 @@ function temporalFormatsByVisibleColumn(
   const formats = new Map<string, ResolvedTemporalBucketFormat>();
   for (const columnKey of visibleColumns) {
     const format = findResolvedTemporalBucketFormat({
-      snapshot: formatting,
+      snapshot: formatting.presentationExecutionSnapshot,
       scope: formatting.scope,
       target: { kind: 'column', columnKey },
     });
-    if (format) formats.set(columnKey, format);
+    if (format) {
+      formats.set(columnKey, format);
+    }
   }
   return formats;
 }
@@ -157,6 +165,9 @@ function applicableTemporalFormatsByVisibleColumn(
         metadata,
         cardFormat: format,
         locale: format.locale,
+        ...(format.presentation.mode === 'auto'
+          ? { styles: format.presentation.styles }
+          : {}),
       }).format,
     );
   }
@@ -175,10 +186,18 @@ function formatCellValue(
   numericFormatsByColumn: ReadonlyMap<string, NumericCanonicalFormat>,
   temporalFormatsByColumn: ReadonlyMap<string, ResolvedTemporalBucketFormat>,
   temporalMetadataByColumn: ReadonlyMap<string, TemporalBucketMetadata>,
+  rawTemporalResolution: RawTemporalExportResolution,
 ): string {
   if (formatting.useFormattedValues === false) {
     return value === null || value === undefined ? '' : String(value);
   }
+
+  const rawTemporalValue = formatRawTemporalExportValue({
+    value,
+    columnKey,
+    resolution: rawTemporalResolution,
+  });
+  if (rawTemporalValue !== undefined) return rawTemporalValue;
 
   const temporalMetadata = temporalMetadataByColumn.get(columnKey);
   if (temporalMetadata) {
@@ -221,7 +240,7 @@ function formatCellValue(
         value.toISOString(),
         getDateFormatPattern(dateFormat),
         resolveDisplayTimezone(dateFormat, formatting.timezone),
-        dateFormat.sourceTimezone || 'auto'
+        dateFormat.sourceTimezone || 'auto',
       );
     }
     // No date format settings - return ISO string to preserve full timestamp
@@ -229,16 +248,13 @@ function formatCellValue(
   }
 
   // String that might be a date
-  if (
-    isDateString(value) &&
-    columnSettings?.dateFormat
-  ) {
+  if (isDateString(value) && columnSettings?.dateFormat) {
     const dateFormat = columnSettings.dateFormat;
     return formatDate(
       String(value),
       getDateFormatPattern(dateFormat),
       resolveDisplayTimezone(dateFormat, formatting.timezone),
-      dateFormat?.sourceTimezone || 'auto'
+      dateFormat?.sourceTimezone || 'auto',
     );
   }
 
@@ -267,7 +283,7 @@ function escapeCSVValue(value: string, delimiter: string): string {
 
 function getOwnColumnLabel(
   columnLabels: Record<string, string> | undefined,
-  field: string
+  field: string,
 ): string | undefined {
   if (
     !columnLabels ||
@@ -293,17 +309,17 @@ function getPivotColumnLabel(
     identity,
     columnKey: column?.key || column?.field || '',
   });
-  const resolvedMetricLabel = metricLabel || column?.label || column?.headerName;
+  const resolvedMetricLabel =
+    metricLabel || column?.label || column?.headerName;
   return presentPivotHeader({
     members,
     metricLabel: resolvedMetricLabel,
-    mode:
-      formatting.useFormattedValues === false ? 'canonical' : 'formatted',
+    mode: formatting.useFormattedValues === false ? 'canonical' : 'formatted',
     resolveTemporalFormat: (fieldId) => {
       const member = members.find((candidate) => candidate.fieldId === fieldId);
       if (!member?.temporalBucket) return undefined;
       const format = findResolvedTemporalBucketFormat({
-        snapshot: formatting,
+        snapshot: formatting.presentationExecutionSnapshot,
         scope: formatting.scope,
         target: { kind: 'field', fieldId, role: 'pivotby' },
       });
@@ -312,6 +328,9 @@ function getPivotColumnLabel(
             metadata: member.temporalBucket,
             cardFormat: format,
             locale: format.locale,
+            ...(format.presentation.mode === 'auto'
+              ? { styles: format.presentation.styles }
+              : {}),
           }).format
         : undefined;
     },
@@ -324,7 +343,7 @@ function getPivotColumnLabel(
 function getVisibleColumns(
   columns: ColumnInfo[],
   formatting: ExportFormattingConfig,
-  firstRow?: Record<string, unknown>
+  firstRow?: Record<string, unknown>,
 ): string[] {
   // Priority 1: Explicit visibleColumns from formatting
   if (formatting.visibleColumns?.length) {
@@ -354,6 +373,7 @@ function formatSingleRow(
   numericFormatsByColumn: ReadonlyMap<string, NumericCanonicalFormat>,
   temporalFormatsByColumn: ReadonlyMap<string, ResolvedTemporalBucketFormat>,
   temporalMetadataByColumn: ReadonlyMap<string, TemporalBucketMetadata>,
+  rawTemporalResolution: RawTemporalExportResolution,
   aggregateContext?: AggregateTablePresentationContext,
 ): string[] {
   const groupCellOverrides = resolveAggregateGroupCellOverrides({
@@ -370,6 +390,7 @@ function formatSingleRow(
         numericFormatsByColumn,
         temporalFormatsByColumn,
         temporalMetadataByColumn,
+        rawTemporalResolution,
       ),
   });
   return visibleColumns.map((field) => {
@@ -385,6 +406,7 @@ function formatSingleRow(
       numericFormatsByColumn,
       temporalFormatsByColumn,
       temporalMetadataByColumn,
+      rawTemporalResolution,
     );
   });
 }
@@ -403,9 +425,25 @@ export function formatRowsForExport(
     pivotResultKind?: 'canonical' | 'legacy_raw' | 'not_pivot';
   },
 ): string[][] {
-  const effectiveCardConfig = resolveEffectiveCardConfig(
-    context?.queryPayload,
-  );
+  return formatRowsForExportWithEvidence(data, columns, formatting, context)
+    .rows;
+}
+
+export function formatRowsForExportWithEvidence(
+  data: Record<string, unknown>[],
+  columns: ColumnInfo[],
+  formatting: ExportFormattingConfig,
+  context?: {
+    queryPayload?: CardConfig;
+    columnKeyMap?: QueryColumnKeyMap;
+    columnMetadata?: Record<string, PivotResultColumnClassification>;
+    pivotResultKind?: 'canonical' | 'legacy_raw' | 'not_pivot';
+  },
+): {
+  rows: string[][];
+  rawTemporalClassification?: RawTemporalChunkClassificationEvidence;
+} {
+  const effectiveCardConfig = resolveEffectiveCardConfig(context?.queryPayload);
   const pivotByColumns = effectiveCardConfig?.pivotByColumns;
   const expectedPivotFieldIds = Array.isArray(pivotByColumns)
     ? pivotByColumns.flatMap((field) => {
@@ -434,6 +472,12 @@ export function formatRowsForExport(
   // Determine visible columns once, with fallback to first record's keys
   const visibleColumns = getVisibleColumns(columns, formatting, data[0]);
   const visibleColumnKeys = new Set(visibleColumns);
+  const rawTemporalResolution = resolveRawTemporalExportPresentation({
+    records: data,
+    columns,
+    formatting,
+    queryPayload: context?.queryPayload,
+  });
   const numericFormatsByColumn = numericFormatsByVisibleColumn(
     formatting,
     visibleColumns,
@@ -474,18 +518,24 @@ export function formatRowsForExport(
         )
       : undefined;
 
-  return data.map((row) =>
-    formatSingleRow(
-      row,
-      visibleColumns,
-      visibleColumnKeys,
-      formatting,
-      numericFormatsByColumn,
-      applicableTemporalFormatsByColumn,
-      temporalMetadataByColumn,
-      aggregateContext,
+  return {
+    rows: data.map((row) =>
+      formatSingleRow(
+        row,
+        visibleColumns,
+        visibleColumnKeys,
+        formatting,
+        numericFormatsByColumn,
+        applicableTemporalFormatsByColumn,
+        temporalMetadataByColumn,
+        rawTemporalResolution,
+        aggregateContext,
+      ),
     ),
-  );
+    ...(rawTemporalResolution.sqlChunkEvidence
+      ? { rawTemporalClassification: rawTemporalResolution.sqlChunkEvidence }
+      : {}),
+  };
 }
 
 /**
@@ -499,20 +549,24 @@ export function generateCSV(
     includeHeaders: boolean;
     rawRecords?: Record<string, unknown>[];
     pivotResultKind?: 'canonical' | 'legacy_raw' | 'not_pivot';
-  }
+  },
 ): string {
   const { includeHeaders, rawRecords } = options;
   const delimiter = formatting.delimiter || ',';
   const lines: string[] = [];
-  const visibleColumns = getVisibleColumns(columns, formatting, rawRecords?.[0]);
+  const visibleColumns = getVisibleColumns(
+    columns,
+    formatting,
+    rawRecords?.[0],
+  );
 
   if (
     options.pivotResultKind !== 'canonical' &&
     options.pivotResultKind !== 'legacy_raw'
   ) {
     visibleColumns.forEach((field) => {
-      const column = columns.find((candidate) =>
-        (candidate.key || candidate.field) === field
+      const column = columns.find(
+        (candidate) => (candidate.key || candidate.field) === field,
       );
       if (column?.pivotIdentity) {
         requirePivotHeaderMembers({

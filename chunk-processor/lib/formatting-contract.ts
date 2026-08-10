@@ -1,6 +1,7 @@
 import {
   parsePresentationExecutionSnapshot,
   parsePresentationScope,
+  PresentationExecutionSnapshotError,
   validateCardExportPresentationSnapshot,
 } from 'react-semaphor/format-utils';
 import type { ExportFormattingConfig } from '../types';
@@ -9,14 +10,13 @@ const FORMATTING_KEYS = new Set([
   'scope',
   'useFormattedValues',
   'timezone',
-  'reportContext',
+  'presentationExecutionSnapshot',
   'delimiter',
   'includeHeaders',
   'columnSettings',
   'visibleColumns',
   'columnLabels',
   'tableTotalsLabelColumnKey',
-  'resolvedFormats',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -39,6 +39,14 @@ export function parseExportFormattingConfig(
 ): ExportFormattingConfig {
   if (!isRecord(input)) {
     throw new Error('formatting must be an object');
+  }
+  const retiredPresentationKey = ['reportContext', 'resolvedFormats'].find(
+    (key) => Object.prototype.hasOwnProperty.call(input, key),
+  );
+  if (retiredPresentationKey) {
+    throw new PresentationExecutionSnapshotError(
+      `formatting.${retiredPresentationKey} is retired; formatting.presentationExecutionSnapshot is authoritative.`,
+    );
   }
   const unknownKey = Object.keys(input).find((key) => !FORMATTING_KEYS.has(key));
   if (unknownKey) {
@@ -129,13 +137,12 @@ export function parseExportFormattingConfig(
     );
   }
 
-  const snapshot = parsePresentationExecutionSnapshot({
-    reportContext: input.reportContext,
-    resolvedFormats: input.resolvedFormats,
-  });
+  const snapshot = parsePresentationExecutionSnapshot(
+    input.presentationExecutionSnapshot,
+  );
   if (timezone !== snapshot.reportContext.calendar.tz) {
     throw new Error(
-      'formatting.timezone must equal reportContext.calendar.tz',
+      'formatting.timezone must equal presentationExecutionSnapshot.reportContext.calendar.tz',
     );
   }
   try {
@@ -149,8 +156,8 @@ export function parseExportFormattingConfig(
       useFormattedValues: input.useFormattedValues !== false,
     });
   } catch (error) {
-    throw new Error(
-      `formatting.${
+    throw new PresentationExecutionSnapshotError(
+      `formatting.presentationExecutionSnapshot.${
         error instanceof Error ? error.message : String(error)
       }`,
     );
@@ -159,7 +166,6 @@ export function parseExportFormattingConfig(
   return {
     ...common,
     scope,
-    reportContext: snapshot.reportContext,
-    resolvedFormats: snapshot.resolvedFormats,
+    presentationExecutionSnapshot: snapshot,
   };
 }

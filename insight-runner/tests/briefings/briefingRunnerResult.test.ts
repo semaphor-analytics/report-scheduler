@@ -5,7 +5,7 @@ import {
 } from "../../src/briefings/briefingRunnerResult.js";
 import type { BriefingRunnerPayload } from "../../src/briefings/briefingRunnerPayload.js";
 import type { InsightLoopRunResult } from "../../src/runtime/runState.js";
-import { TEST_REPORT_CONTEXT } from "./reportContextFixture.js";
+import { TEST_PRESENTATION_EXECUTION_SNAPSHOT } from "./reportContextFixture.js";
 
 describe("briefing runner result contract", () => {
   it("converts completed runs without a primary artifact into terminal failures", () => {
@@ -1169,7 +1169,7 @@ function makePayload(overrides: {
       scheduleExpr: null,
       jobConfig: {
         kind: "BRIEFING",
-        reportContext: TEST_REPORT_CONTEXT,
+        presentationExecutionSnapshot: TEST_PRESENTATION_EXECUTION_SNAPSHOT,
         source: { type: "project" },
         body: {
           type: "generated_analysis",

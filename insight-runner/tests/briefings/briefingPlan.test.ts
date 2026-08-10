@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { executeBriefingPlan } from "../../src/briefings/briefingPlan.js";
 import type { BriefingPlannerPayload } from "../../src/briefings/briefingRunnerPayload.js";
 import { FakeSemaphorMcpClient } from "../../src/semaphor/fakeSemaphorMcpClient.js";
-import { TEST_REPORT_CONTEXT } from "./reportContextFixture.js";
+import { TEST_PRESENTATION_EXECUTION_SNAPSHOT } from "./reportContextFixture.js";
 
 describe("executeBriefingPlan", () => {
   it("does not rank project domains with runner-side field heuristics", async () => {
@@ -305,7 +305,7 @@ function makePayload(): BriefingPlannerPayload {
       scheduleExpr: null,
       jobConfig: {
         kind: "BRIEFING",
-        reportContext: TEST_REPORT_CONTEXT,
+        presentationExecutionSnapshot: TEST_PRESENTATION_EXECUTION_SNAPSHOT,
         source: {
           type: "dashboard",
           dashboardId: "dash-1",

@@ -13,9 +13,49 @@ import type { CompactionInput, CompactionResult, ChunkResult } from './types';
 import { updateJobStatus, completeJob } from './lib/api-client';
 import { compactChunks, cleanupChunks } from './lib/compactor';
 import { resolveCompactionFooter } from './lib/footer';
+import { fetchRawTemporalClassificationByKey } from './lib/s3-client';
+import {
+  assertRawTemporalChunkClassificationAgreement,
+  parsePresentationExecutionSnapshot,
+  parsePresentationScope,
+  parseRawTemporalChunkClassificationEvidence,
+  type RawTemporalChunkClassificationEvidence,
+} from 'react-semaphor/format-utils';
 
-const SEMAPHOR_APP_URL = process.env.SEMAPHOR_APP_URL || 'https://semaphor.cloud';
+const SEMAPHOR_APP_URL =
+  process.env.SEMAPHOR_APP_URL || 'https://semaphor.cloud';
 const LAMBDA_API_KEY = process.env.LAMBDA_API_KEY || '';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function requiresRawTemporalEvidence(event: CompactionInput): boolean {
+  const formatting = event.formatting;
+  if (
+    !isRecord(formatting) ||
+    formatting.useFormattedValues === false ||
+    event.cardConfig.resultOwner !== 'freeform' ||
+    typeof event.cardConfig.sql !== 'string' ||
+    !event.cardConfig.sql.trim() ||
+    (typeof event.cardConfig.python === 'string' &&
+      event.cardConfig.python.trim())
+  ) {
+    return false;
+  }
+  const snapshot = parsePresentationExecutionSnapshot(
+    formatting.presentationExecutionSnapshot,
+  );
+  const scope = parsePresentationScope(formatting.scope);
+  return snapshot.resolvedFormats.some(
+    (entry) =>
+      entry.format.type === 'raw_temporal' &&
+      entry.target.kind === 'column' &&
+      entry.scope.dashboardId === scope.dashboardId &&
+      entry.scope.cardId === scope.cardId &&
+      entry.scope.attachmentIndex === scope.attachmentIndex,
+  );
+}
 
 function validateChunkResults(chunkResults: ChunkResult[]) {
   if (chunkResults.length === 0) {
@@ -45,7 +85,30 @@ function validateChunkResults(chunkResults: ChunkResult[]) {
   });
 }
 
-export async function handler(event: CompactionInput): Promise<CompactionResult> {
+function rawTemporalClassificationsMatch(
+  left: RawTemporalChunkClassificationEvidence,
+  right: RawTemporalChunkClassificationEvidence,
+): boolean {
+  const leftEntries = Object.entries(left.columns).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+  const rightEntries = Object.entries(right.columns).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+  return (
+    left.version === right.version &&
+    leftEntries.length === rightEntries.length &&
+    leftEntries.every(
+      ([columnKey, classification], index) =>
+        columnKey === rightEntries[index]?.[0] &&
+        classification === rightEntries[index]?.[1],
+    )
+  );
+}
+
+export async function handler(
+  event: CompactionInput,
+): Promise<CompactionResult> {
   const { jobId, chunkResults } = event;
 
   console.log(`Starting compaction for job ${jobId}`);
@@ -104,6 +167,71 @@ export async function handler(event: CompactionInput): Promise<CompactionResult>
       throw new Error('Unexpected table totals metadata sidecar');
     }
 
+    const chunksWithRawTemporalEvidence = successfulChunks.filter(
+      (result) => result.rawTemporalClassification !== undefined,
+    );
+    const chunksWithRawTemporalEvidenceKeys = successfulChunks.filter(
+      (result) => result.rawTemporalClassificationKey !== undefined,
+    );
+    const rawTemporalEvidenceRequired = requiresRawTemporalEvidence(event);
+    if (rawTemporalEvidenceRequired) {
+      if (chunksWithRawTemporalEvidence.length !== successfulChunks.length) {
+        throw new Error(
+          'Every chunk must return raw temporal classification evidence for a declared SQL export.',
+        );
+      }
+      if (
+        chunksWithRawTemporalEvidenceKeys.length !== successfulChunks.length
+      ) {
+        throw new Error(
+          'Every raw temporal chunk classification requires its S3 sidecar key.',
+        );
+      }
+      const verifiedRawTemporalEvidence = await Promise.all(
+        successfulChunks.map(async (result) => {
+          const sidecarKey = result.rawTemporalClassificationKey;
+          if (typeof sidecarKey !== 'string' || !sidecarKey.trim()) {
+            throw new Error(
+              `Chunk ${result.chunkId} has an invalid raw temporal classification sidecar key`,
+            );
+          }
+          const inlineEvidence =
+            parseRawTemporalChunkClassificationEvidence(
+              result.rawTemporalClassification,
+            );
+          const durableEvidence =
+            parseRawTemporalChunkClassificationEvidence(
+              await fetchRawTemporalClassificationByKey(sidecarKey),
+            );
+          if (
+            !rawTemporalClassificationsMatch(inlineEvidence, durableEvidence)
+          ) {
+            throw new Error(
+              `Chunk ${result.chunkId} raw temporal classification does not match its durable sidecar`,
+            );
+          }
+          return durableEvidence;
+        }),
+      );
+      assertRawTemporalChunkClassificationAgreement(verifiedRawTemporalEvidence);
+    } else if (
+      chunksWithRawTemporalEvidence.length > 0 ||
+      chunksWithRawTemporalEvidenceKeys.length > 0
+    ) {
+      throw new Error(
+        'Unexpected raw temporal classification evidence for this export.',
+      );
+    }
+    const rawTemporalClassificationKeys = chunksWithRawTemporalEvidenceKeys.map(
+      (result) => {
+        const key = result.rawTemporalClassificationKey;
+        if (typeof key !== 'string' || !key.trim()) {
+          throw new Error('Invalid raw temporal classification sidecar key');
+        }
+        return key;
+      },
+    );
+
     // Calculate total rows processed
     const totalRows = successfulChunks.reduce(
       (sum, result) => sum + result.rowsProcessed,
@@ -116,7 +244,9 @@ export async function handler(event: CompactionInput): Promise<CompactionResult>
       totalRows,
     });
 
-    console.log(`Compacting ${chunkKeys.length} chunks, ${totalRows} total rows`);
+    console.log(
+      `Compacting ${chunkKeys.length} chunks, ${totalRows} total rows`,
+    );
 
     // 3. Stream-compact all chunks into final gzipped file
     const { finalKey, totalBytes } = await compactChunks({
@@ -139,11 +269,15 @@ export async function handler(event: CompactionInput): Promise<CompactionResult>
 
     // 5. Clean up delta files (best-effort, don't fail the job if cleanup fails)
     try {
-      await cleanupChunks([...chunkKeys, ...totalsMetadataKeys]);
+      await cleanupChunks([
+        ...chunkKeys,
+        ...totalsMetadataKeys,
+        ...rawTemporalClassificationKeys,
+      ]);
     } catch (cleanupError) {
       console.warn(
         `Cleanup failed for job ${jobId}, but export succeeded:`,
-        cleanupError instanceof Error ? cleanupError.message : cleanupError
+        cleanupError instanceof Error ? cleanupError.message : cleanupError,
       );
     }
 
