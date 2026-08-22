@@ -1,8 +1,15 @@
 {
   "scripts": {
+    "local:export-runner:build": "npm --prefix chunk-processor run build && npm --prefix compaction-processor run build && npm --prefix mark-failed run build",
+    "local:export-runner": "npm run local:export-runner:build && LOCAL_EXPORT_RUNNER_REQUIRED=true node --env-file=.env.local-export-runner pdf-generation/local-function-url.js",
+    "local:export-runner:watch": "npm run local:export-runner:build && concurrently --kill-others-on-fail --names chunks,compaction,mark-failed,runner --prefix-colors blue,magenta,cyan,green \"npm --prefix chunk-processor run build -- --watch --preserveWatchOutput\" \"npm --prefix compaction-processor run build -- --watch --preserveWatchOutput\" \"npm --prefix mark-failed run build -- --watch --preserveWatchOutput\" \"LOCAL_EXPORT_RUNNER_REQUIRED=true node --watch --watch-preserve-output --env-file=.env.local-export-runner pdf-generation/local-function-url.js\"",
     "test:automation-dispatcher": "node --test automation-dispatcher/app.test.js"
   },
   "devDependencies": {
+    "concurrently": "^9.2.1",
     "esbuild": "^0.27.2"
+  },
+  "overrides": {
+    "shell-quote": "1.9.0"
   }
 }

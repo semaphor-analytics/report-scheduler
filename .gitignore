@@ -3,6 +3,7 @@ node_modules
 
 # Environment variables
 .env
+.env.local-export-runner
 
 # macOS
 .DS_Store

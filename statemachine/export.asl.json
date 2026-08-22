@@ -28,6 +28,10 @@
             "Resource": "${ChunkProcessorArn}",
             "Retry": [
               {
+                "ErrorEquals": ["ExportQueryRejectedError"],
+                "MaxAttempts": 0
+              },
+              {
                 "ErrorEquals": ["States.ALL"],
                 "MaxAttempts": 3,
                 "BackoffRate": 2,

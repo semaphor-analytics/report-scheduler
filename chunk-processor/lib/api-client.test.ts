@@ -1,4 +1,8 @@
-import { fetchChunkStatus, queryData } from './api-client';
+import {
+  ExportQueryRejectedError,
+  fetchChunkStatus,
+  queryData,
+} from './api-client';
 
 describe('queryData table totals projection', () => {
   beforeEach(() => {
@@ -47,6 +51,49 @@ describe('queryData table totals projection', () => {
       (global.fetch as jest.Mock).mock.calls[0][1].body,
     );
     expect(body.tableTotalsRequest).toEqual(tableTotalsRequest);
+  });
+
+  it('classifies an HTTP 400 query rejection as non-retryable', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => 'stable ordering is required',
+    }) as jest.Mock;
+
+    await expect(
+      queryData({
+        url: 'https://app.example.com',
+        token: 'token',
+        queryPayload: { cardType: 'table', cardConfig: {} },
+        chunkNumber: 1,
+        chunkSize: 100,
+      }),
+    ).rejects.toMatchObject({
+      name: 'ExportQueryRejectedError',
+      retryable: false,
+      message: 'Query failed (400): stable ordering is required',
+    } satisfies Partial<ExportQueryRejectedError>);
+  });
+
+  it('keeps server failures retryable', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: async () => 'temporarily unavailable',
+    }) as jest.Mock;
+
+    await expect(
+      queryData({
+        url: 'https://app.example.com',
+        token: 'token',
+        queryPayload: { cardType: 'table', cardConfig: {} },
+        chunkNumber: 1,
+        chunkSize: 100,
+      }),
+    ).rejects.toMatchObject({
+      name: 'Error',
+      message: 'Query failed (503): temporarily unavailable',
+    });
   });
 });
 

@@ -138,6 +138,56 @@ Then configure the following environment variables in your **semaphor-app** `.en
 
 **Important**: The `LAMBDA_API_KEY` must be the same value in both the report scheduler `.env` and the semaphor-app `.env`. This key authenticates Lambda-to-app API calls and signed Semaphor App calls to scheduler Function URLs such as `EmailSenderFunctionUrl`.
 
+### Unified Local Export Runner
+
+For ordinary local UI development, use one process for rendered PDF/CSV, Fast
+PDF, and asynchronous chunked CSV. Complete this safe one-time setup from the
+repository root:
+
+```bash
+cp .env.local-export-runner.example .env.local-export-runner
+# Edit only LAMBDA_API_KEY so it matches local semaphor-app.
+```
+
+Then normal startup is one command:
+
+```bash
+npm run local:export-runner
+```
+
+The command builds the current chunk, compaction, and failure handlers, then
+starts the runner at `http://127.0.0.1:3002`. Configure semaphor-app with:
+
+```bash
+LOCAL_EXPORT_RUNNER_URL=http://127.0.0.1:3002
+```
+
+When actively editing scheduler code, use the watch variant instead:
+
+```bash
+npm run local:export-runner:watch
+```
+
+It performs the same initial build, then continuously rebuilds all three
+TypeScript workers and restarts the runner when worker output or PDF/runner
+JavaScript changes. Avoid saving scheduler changes during an active chunked
+export: a development restart intentionally does not implement durable local
+orchestration recovery, so retry that export after the runner comes back.
+
+Do not configure AWS credentials, `EXPORT_STATE_MACHINE_ARN`,
+`S3_EXPORTS_BUCKET`, or `PDF_FUNCTION_URL` for this local path. The local URL
+takes precedence when present. Chunked jobs still use real app job/chunk state,
+query endpoints, formatting, callbacks, notifications, and downloads; only
+Step Functions and S3 are replaced by the local runner and filesystem.
+Chunked output is still compacted to the production-shaped gzip artifact, but
+the local download response streams a ready-to-open `export.csv`. Transient
+local chunk failures match production's initial attempt plus three retries
+without waiting through production backoff delays. An HTTP 400 query rejection
+is deterministic and fails after its first attempt in both environments.
+
+See `pdf-generation/README.md` for the complete beginner workflow, path
+selection rules, output location, and troubleshooting.
+
 ### Local Insight Runner Development
 
 For local Semaphor App development, you do not need Lambda. Run the same runner

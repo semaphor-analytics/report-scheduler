@@ -19,6 +19,20 @@ interface QueryDataParams {
 }
 
 /**
+ * A query request the app rejected as invalid. Repeating the same export chunk
+ * cannot make an HTTP 400 succeed, so both local orchestration and Step
+ * Functions must fail it without retrying.
+ */
+export class ExportQueryRejectedError extends Error {
+  readonly retryable = false;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'ExportQueryRejectedError';
+  }
+}
+
+/**
  * Query data from semaphor-app for a specific chunk.
  * Uses the export token which carries all security policies (CLS/RCLS/TLS).
  */
@@ -52,7 +66,11 @@ export async function queryData(params: QueryDataParams): Promise<QueryResponse>
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Query failed (${response.status}): ${errorText}`);
+    const message = `Query failed (${response.status}): ${errorText}`;
+    if (response.status === 400) {
+      throw new ExportQueryRejectedError(message);
+    }
+    throw new Error(message);
   }
 
   return response.json() as Promise<QueryResponse>;

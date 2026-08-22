@@ -7,6 +7,8 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { mkdir, readFile, writeFile } from 'fs/promises';
+import path from 'path';
 import type { FlatTableExportTotalsByColumnId } from 'react-semaphor/format-utils';
 import {
   parseRawTemporalChunkClassificationEvidence,
@@ -18,6 +20,29 @@ const s3Client = new S3Client({
 });
 
 const BUCKET_NAME = process.env.S3_BUCKET || '';
+const LOCAL_STORAGE_DIR = process.env.LOCAL_EXPORT_STORAGE_DIR?.trim() || '';
+
+function localObjectPath(key: string): string {
+  const root = path.resolve(LOCAL_STORAGE_DIR);
+  const candidate = path.resolve(root, key);
+  if (candidate !== root && !candidate.startsWith(`${root}${path.sep}`)) {
+    throw new Error(`Invalid local export object key: ${key}`);
+  }
+  return candidate;
+}
+
+async function writeLocalObject(
+  key: string,
+  content: string,
+): Promise<void> {
+  const filePath = localObjectPath(key);
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, content);
+}
+
+async function readLocalJson(key: string): Promise<unknown> {
+  return JSON.parse(await readFile(localObjectPath(key), 'utf8'));
+}
 
 interface UploadChunkParams {
   jobId: string;
@@ -35,6 +60,11 @@ export async function uploadChunk(params: UploadChunkParams): Promise<string> {
   // Pad chunk number to 3 digits (001, 002, etc.)
   const paddedNumber = String(chunkNumber).padStart(3, '0');
   const s3Key = `exports/${jobId}/deltas/${paddedNumber}.csv`;
+
+  if (LOCAL_STORAGE_DIR) {
+    await writeLocalObject(s3Key, content);
+    return s3Key;
+  }
 
   await s3Client.send(
     new PutObjectCommand({
@@ -57,6 +87,10 @@ export async function uploadTableTotalsMetadata(params: {
   totalsByColumnId: FlatTableExportTotalsByColumnId;
 }): Promise<string> {
   const s3Key = getTableTotalsMetadataKey(params.jobId);
+  if (LOCAL_STORAGE_DIR) {
+    await writeLocalObject(s3Key, JSON.stringify(params.totalsByColumnId));
+    return s3Key;
+  }
   await s3Client.send(
     new PutObjectCommand({
       Bucket: BUCKET_NAME,
@@ -71,6 +105,9 @@ export async function uploadTableTotalsMetadata(params: {
 export async function fetchTableTotalsMetadata(
   jobId: string,
 ): Promise<unknown> {
+  if (LOCAL_STORAGE_DIR) {
+    return readLocalJson(getTableTotalsMetadataKey(jobId));
+  }
   const response = await s3Client.send(
     new GetObjectCommand({
       Bucket: BUCKET_NAME,
@@ -103,6 +140,10 @@ export async function uploadRawTemporalClassification(params: {
     params.jobId,
     params.chunkNumber,
   );
+  if (LOCAL_STORAGE_DIR) {
+    await writeLocalObject(s3Key, JSON.stringify(evidence));
+    return s3Key;
+  }
   await s3Client.send(
     new PutObjectCommand({
       Bucket: BUCKET_NAME,
@@ -118,6 +159,11 @@ export async function fetchRawTemporalClassification(params: {
   jobId: string;
   chunkNumber: number;
 }): Promise<unknown> {
+  if (LOCAL_STORAGE_DIR) {
+    return readLocalJson(
+      getRawTemporalClassificationKey(params.jobId, params.chunkNumber),
+    );
+  }
   const response = await s3Client.send(
     new GetObjectCommand({
       Bucket: BUCKET_NAME,

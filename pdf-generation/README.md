@@ -87,81 +87,150 @@ For local development, install `qpdf` once with `brew install qpdf`.
 If `qpdf` is on your shell `PATH`, no extra environment variables are needed.
 Use `PDF_ENCRYPTION_BACKEND=pdf-lib` only if you need to force the legacy fallback.
 
-### End-to-End Local (Frontend -> semaphor-app -> Local PDF Function)
+### End-to-End Local (Frontend -> semaphor-app -> Unified Export Runner)
 
-Use this mode when you want to test the real export flow without deploying Lambda.
+Use this mode to test PDF and CSV export behavior from the real UI without
+deploying Lambda, Step Functions, or S3.
 
-1. Start the local PDF Function URL emulator:
-
-```bash
-cd /Users/rohit/code/semaphor/semaphor-report-scheduler/pdf-generation
-npm run local:function-url
-```
-
-For auto-restart on code changes:
+1. The first time only, create the dedicated local-only environment file. Do
+   not reuse the scheduler's general `.env`, which may point to production:
 
 ```bash
-npm run local:function-url:watch
+cd /Users/rohit/code/semaphor/semaphor-report-scheduler
+cp .env.local-export-runner.example .env.local-export-runner
+# Edit only LAMBDA_API_KEY so it matches local semaphor-app.
 ```
 
-To keep artifacts under the repo output folder, use:
+After that, startup is one command:
 
 ```bash
-npm run local:function-url:repo-output
+npm run local:export-runner
 ```
 
-With auto-restart + repo output:
+This one command builds the production chunk, compaction, and failure handlers
+before starting the HTTP runner at `http://127.0.0.1:3002`.
+
+For the normal edit-test loop, use:
 
 ```bash
-npm run local:function-url:watch:repo-output
+npm run local:export-runner:watch
 ```
 
-2. Point `semaphor-app` at the emulator and restart app server:
+The watch command first performs the same clean worker builds. It then watches
+the chunk, compaction, and failure TypeScript projects and restarts the runner
+when their compiled output or PDF/runner JavaScript changes. You do not need to
+stop, rebuild, or coordinate those processes yourself.
+
+Do not edit scheduler code while a chunked export is actively running. A watch
+restart interrupts that local in-memory orchestration; wait for it to finish,
+or retry the export after the runner restarts. This local-only workflow does
+not add production-style recovery machinery.
+
+2. Point semaphor-app at the runner and restart the app server:
 
 ```bash
-# in /Users/rohit/code/semaphor/semaphor-app/.env.development
-PDF_FUNCTION_URL=http://127.0.0.1:3002
+# in /Users/rohit/code/semaphor/semaphor-app/.env.local
+LOCAL_EXPORT_RUNNER_URL=http://127.0.0.1:3002
 ```
 
-3. Run your frontend and semaphor-app as usual:
-   - frontend: `http://localhost:5173`
-   - backend: `http://localhost:3000`
+`LOCAL_EXPORT_RUNNER_URL` takes precedence over both `PDF_FUNCTION_URL` and
+`EXPORT_STATE_MACHINE_ARN`. You do not need AWS credentials or an S3 bucket for
+this workflow.
 
-4. Trigger export from the UI. Generated files are written to:
+3. Run the frontend and semaphor-app as usual:
+
+- frontend: `http://localhost:5173`
+- backend: `http://localhost:3000`
+
+4. Trigger exports from the existing UI.
+
+| UI request | Local behavior |
+| --- | --- |
+| PDF or Fast PDF | Semaphor App sends it to the runner's existing GET/POST renderer |
+| Direct CSV at or below the shared direct limit | Remains in the browser/app; no worker is necessary |
+| Full-dataset CSV above the direct limit | App creates the real job and chunks, then posts the production Step Functions input to `/exports` |
+| Chunk processing | The runner invokes the production chunk handler against local semaphor-app and the configured Python data service |
+| Compaction and completion | The production compaction/callback handlers run; files use local storage and the normal notification/download UX |
+
+The runner is asynchronous for chunked exports: `/exports` acknowledges the
+job immediately, while progress continues through the existing app APIs. You
+can start several visual exports; each has its own app job and runner execution.
+The stored artifact remains the production-shaped `export.csv.gz`; the local
+download endpoint streams it as `export.csv` so Finder does not depend on
+macOS Archive Utility's gzip compatibility. Transient chunk failures match
+production's initial attempt plus three retries, but omit production backoff
+delays to keep the local feedback loop fast. An HTTP 400 query rejection is
+not retryable and fails after its first attempt locally and in production.
+
+5. Inspect the runner:
+
+```bash
+curl http://127.0.0.1:3002/health
+```
+
+Generated artifacts default to:
 
 ```bash
 $TMPDIR/semaphor-pdf-local-function
 ```
 
-Override this location by setting `LOCAL_PDF_OUTPUT_DIR=/your/path`.
+Override the location when starting the runner:
 
-The emulator returns a downloadable URL (`/files/...`) with the same response shape as Lambda (`{ url, layoutApplied? }`), including fast-path `POST` and URL-based `GET`.
+```bash
+LOCAL_EXPORT_OUTPUT_DIR=/your/path \
+npm run local:export-runner
+```
+
+The same override works with `npm run local:export-runner:watch`.
+
+The runner binds only to `127.0.0.1`. Chunked job submission requires the
+shared internal API key, and local artifact links are short-lived and signed.
+The runner also refuses to start unless `SEMAPHOR_APP_URL` is an HTTP loopback
+URL, preventing the local harness from querying a hosted environment.
+
+#### Scope of this local harness
+
+This is the canonical local UI export harness. It
+supports:
+
+- URL-rendered dashboard, visual, and table PDF through `GET`;
+- URL-rendered table CSV extraction through `GET`; and
+- structured-data Fast PDF generation through `POST`;
+- production chunk-handler query/formatting behavior;
+- production compaction, completion, failure, notification, and download
+  behavior; and
+- local equivalents for Step Functions orchestration and S3 object storage.
+
+It deliberately does not test AWS IAM, Lambda packaging, Step Functions service
+semantics, S3 permissions, or deployed network reachability. Use production-
+shaped builds and a deployed smoke test when those AWS boundaries are under
+review.
 
 Recommended local encrypted-PDF workflow:
 
 ```bash
 brew install qpdf
-cd /Users/rohit/code/semaphor/semaphor-report-scheduler/pdf-generation
-npm run local:function-url
+cd /Users/rohit/code/semaphor/semaphor-report-scheduler
+npm run local:export-runner
 ```
 
 If `qpdf` is not on your shell `PATH`, use:
 
 ```bash
-QPDF_BIN="$(which qpdf)" npm run local:function-url
+QPDF_BIN="$(which qpdf)" npm run local:export-runner
 ```
 
 If you need to force the legacy fallback:
 
 ```bash
-PDF_ENCRYPTION_BACKEND=pdf-lib npm run local:function-url
+PDF_ENCRYPTION_BACKEND=pdf-lib npm run local:export-runner
 ```
 
 Then in `semaphor-app`:
 
 ```bash
-# /Users/rohit/code/semaphor/semaphor-app/.env.development
-PDF_FUNCTION_URL=http://127.0.0.1:3002
+# /Users/rohit/code/semaphor/semaphor-app/.env.local
+LOCAL_EXPORT_RUNNER_URL=http://127.0.0.1:3002
 ```
 
 Restart `semaphor-app`, trigger an encrypted PDF export from the UI, and inspect

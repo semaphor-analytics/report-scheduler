@@ -19,7 +19,10 @@ export async function handler(event: MarkFailedInput): Promise<MarkFailedResult>
   // Extract error message from Step Functions error structure
   const errorMessage = extractErrorMessage(error);
 
-  console.log(`Marking job ${jobId} as failed: ${errorMessage}`);
+  console.log(`Marking job ${jobId} as failed`, {
+    errorMessage,
+    orchestrationError: error,
+  });
 
   try {
     // Call the fail endpoint in semaphor-app
@@ -62,7 +65,60 @@ export async function handler(event: MarkFailedInput): Promise<MarkFailedResult>
 /**
  * Extract a readable error message from Step Functions error object.
  */
-function extractErrorMessage(error: { Error: string; Cause: string } | undefined): string {
+function parseJsonRecord(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0
+    ? value.trim()
+    : null;
+}
+
+/**
+ * Remove the query transport wrapper while preserving the actionable message
+ * returned by semaphor-app. This parses a known JSON envelope; it does not
+ * inspect or interpret SQL text.
+ */
+export function normalizeExportFailureMessage(message: string): string {
+  const normalized = message.trim();
+  const queryPrefix = 'Query failed (';
+  const payloadSeparator = '): ';
+
+  if (!normalized.startsWith(queryPrefix)) {
+    return normalized;
+  }
+
+  const payloadStart = normalized.indexOf(payloadSeparator, queryPrefix.length);
+  if (payloadStart === -1) {
+    return normalized;
+  }
+
+  const payload = parseJsonRecord(
+    normalized.slice(payloadStart + payloadSeparator.length),
+  );
+  if (!payload) {
+    return normalized;
+  }
+
+  return (
+    nonEmptyString(payload.error) ||
+    nonEmptyString(payload.message) ||
+    normalized
+  );
+}
+
+export function extractErrorMessage(
+  error: { Error: string; Cause: string } | undefined,
+): string {
   if (!error) {
     return 'Unknown error occurred during export processing';
   }
@@ -71,21 +127,18 @@ function extractErrorMessage(error: { Error: string; Cause: string } | undefined
   const errorType = error.Error || 'Unknown';
 
   if (error.Cause) {
-    try {
-      const causeObj = JSON.parse(error.Cause);
-      // Lambda errors often have an errorMessage field
-      if (causeObj.errorMessage) {
-        return `${errorType}: ${causeObj.errorMessage}`;
+    const causeObj = parseJsonRecord(error.Cause);
+    if (causeObj) {
+      const causeMessage =
+        nonEmptyString(causeObj.errorMessage) ||
+        nonEmptyString(causeObj.message) ||
+        nonEmptyString(causeObj.error);
+      if (causeMessage) {
+        return normalizeExportFailureMessage(causeMessage);
       }
-      // Or it might be the full error object
-      if (causeObj.message) {
-        return `${errorType}: ${causeObj.message}`;
-      }
-      return `${errorType}: ${error.Cause}`;
-    } catch {
-      // Cause is not JSON, use as-is
-      return `${errorType}: ${error.Cause}`;
     }
+
+    return normalizeExportFailureMessage(error.Cause);
   }
 
   return errorType;

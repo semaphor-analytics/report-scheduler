@@ -9,17 +9,34 @@ import {
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { Readable, PassThrough } from 'stream';
+import { createReadStream, createWriteStream } from 'fs';
+import { mkdir, readFile, stat, unlink } from 'fs/promises';
+import path from 'path';
+import { pipeline } from 'stream/promises';
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || 'us-east-1',
 });
 
 const BUCKET_NAME = process.env.S3_BUCKET || '';
+const LOCAL_STORAGE_DIR = process.env.LOCAL_EXPORT_STORAGE_DIR?.trim() || '';
+
+function localObjectPath(key: string): string {
+  const root = path.resolve(LOCAL_STORAGE_DIR);
+  const candidate = path.resolve(root, key);
+  if (candidate !== root && !candidate.startsWith(`${root}${path.sep}`)) {
+    throw new Error(`Invalid local export object key: ${key}`);
+  }
+  return candidate;
+}
 
 /**
  * Get a readable stream for an S3 object.
  */
 export async function getObjectStream(key: string): Promise<Readable> {
+  if (LOCAL_STORAGE_DIR) {
+    return createReadStream(localObjectPath(key));
+  }
   const response = await s3Client.send(
     new GetObjectCommand({
       Bucket: BUCKET_NAME,
@@ -42,6 +59,9 @@ export async function getObjectStream(key: string): Promise<Readable> {
 export async function fetchRawTemporalClassificationByKey(
   key: string,
 ): Promise<unknown> {
+  if (LOCAL_STORAGE_DIR) {
+    return JSON.parse(await readFile(localObjectPath(key), 'utf8'));
+  }
   const response = await s3Client.send(
     new GetObjectCommand({
       Bucket: BUCKET_NAME,
@@ -65,6 +85,12 @@ export async function uploadStream(
   stream: PassThrough,
   contentType: string = 'application/gzip'
 ): Promise<number> {
+  if (LOCAL_STORAGE_DIR) {
+    const filePath = localObjectPath(key);
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await pipeline(stream, createWriteStream(filePath));
+    return (await stat(filePath)).size;
+  }
   const upload = new Upload({
     client: s3Client,
     params: {
@@ -90,6 +116,13 @@ export async function uploadStream(
  */
 export async function deleteObjects(keys: string[]): Promise<void> {
   if (keys.length === 0) return;
+
+  if (LOCAL_STORAGE_DIR) {
+    await Promise.all(
+      keys.map((key) => unlink(localObjectPath(key)).catch(() => undefined)),
+    );
+    return;
+  }
 
   // S3 DeleteObjects has a limit of 1000 objects per request
   const batches: string[][] = [];

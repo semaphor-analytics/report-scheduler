@@ -2,22 +2,57 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import http from 'http';
+import { createHmac, timingSafeEqual } from 'crypto';
+import { createGunzip } from 'zlib';
 import { fileURLToPath } from 'url';
 import { generatePdf } from './lib/pdf-generator.js';
 import { generateCsv } from './lib/csv-extractor.js';
 import { generatePdfFromData } from './lib/pdf-from-data-generator.js';
+import {
+  preloadLocalChunkedExportHandlers,
+  runLocalChunkedExport,
+  validateLocalChunkedExportInput,
+} from './lib/local-chunked-export-runner.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const OUTPUT_DIR = path.resolve(
-  process.env.LOCAL_PDF_OUTPUT_DIR ||
+  process.env.LOCAL_EXPORT_OUTPUT_DIR ||
+    process.env.LOCAL_PDF_OUTPUT_DIR ||
     path.join(os.tmpdir(), 'semaphor-pdf-local-function'),
 );
-const PORT = Number(process.env.LOCAL_PDF_FUNCTION_PORT || 3002);
-const HOST = process.env.LOCAL_PDF_FUNCTION_HOST || '127.0.0.1';
+const PORT = Number(
+  process.env.LOCAL_EXPORT_RUNNER_PORT ||
+    process.env.LOCAL_PDF_FUNCTION_PORT ||
+    3002,
+);
+const HOST = '127.0.0.1';
 const BASE_URL = `http://${HOST}:${PORT}`;
+const ACTIVE_EXPORTS = new Map();
 
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+process.env.LOCAL_EXPORT_STORAGE_DIR = OUTPUT_DIR;
+const semaphorAppUrl = new URL(
+  process.env.SEMAPHOR_APP_URL || 'http://127.0.0.1:3000',
+);
+if (
+  semaphorAppUrl.protocol !== 'http:' ||
+  (semaphorAppUrl.hostname !== '127.0.0.1' &&
+    semaphorAppUrl.hostname !== 'localhost')
+) {
+  throw new Error(
+    'The local export runner requires a loopback SEMAPHOR_APP_URL',
+  );
+}
+process.env.SEMAPHOR_APP_URL = semaphorAppUrl.toString().replace(/\/$/, '');
+if (process.env.LOCAL_EXPORT_RUNNER_REQUIRED === 'true') {
+  const apiKey = process.env.LAMBDA_API_KEY?.trim();
+  if (!apiKey || apiKey === 'replace-with-the-local-semaphor-app-key') {
+    throw new Error(
+      'Set LAMBDA_API_KEY in .env.local-export-runner before starting the unified runner',
+    );
+  }
+}
 
 function bool(value) {
   return String(value || '').toLowerCase() === 'true';
@@ -51,7 +86,12 @@ function sendJson(res, statusCode, payload) {
 
 export function resolveOutputFilePath(filename, outputDir = OUTPUT_DIR) {
   const requested = String(filename || '').trim();
-  if (!requested || requested === '.' || requested === path.sep) {
+  if (
+    !requested ||
+    requested === '.' ||
+    requested === path.sep ||
+    path.basename(requested) !== requested
+  ) {
     return null;
   }
 
@@ -91,6 +131,91 @@ function sendFile(res, filename) {
     'Content-Disposition': `attachment; filename="${safeDownloadName}"`,
   });
   fs.createReadStream(filepath).pipe(res);
+}
+
+export function resolveExportObjectPath(key, outputDir = OUTPUT_DIR) {
+  const requested = String(key || '').trim();
+  if (!requested) return null;
+  const outputRoot = path.resolve(outputDir);
+  const candidatePath = path.resolve(outputRoot, requested);
+  if (
+    candidatePath !== outputRoot &&
+    !candidatePath.startsWith(`${outputRoot}${path.sep}`)
+  ) {
+    return null;
+  }
+  return candidatePath;
+}
+
+export function isValidArtifactSignature(key, expires, signature) {
+  const apiKey = process.env.LAMBDA_API_KEY?.trim();
+  const expiresAt = Number(expires);
+  if (
+    !apiKey ||
+    !Number.isInteger(expiresAt) ||
+    expiresAt < Math.floor(Date.now() / 1000) ||
+    typeof signature !== 'string'
+  ) {
+    return false;
+  }
+  const expected = createHmac('sha256', apiKey)
+    .update(`${key}\n${expiresAt}`)
+    .digest();
+  let provided;
+  try {
+    provided = Buffer.from(signature, 'hex');
+  } catch {
+    return false;
+  }
+  return provided.length === expected.length && timingSafeEqual(provided, expected);
+}
+
+function sendExportObject(res, query) {
+  const key = query.get('key') || '';
+  if (
+    !isValidArtifactSignature(
+      key,
+      query.get('expires'),
+      query.get('signature'),
+    )
+  ) {
+    sendJson(res, 401, { error: 'Invalid or expired export download link' });
+    return;
+  }
+  const filepath = resolveExportObjectPath(key, OUTPUT_DIR);
+  if (!filepath) {
+    sendJson(res, 400, { error: 'Invalid export file path' });
+    return;
+  }
+  if (!fs.existsSync(filepath) || !fs.statSync(filepath).isFile()) {
+    sendJson(res, 404, { error: 'Export file not found' });
+    return;
+  }
+  res.writeHead(200, {
+    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Disposition': 'attachment; filename="export.csv"',
+    'Access-Control-Allow-Origin': '*',
+  });
+  const source = fs.createReadStream(filepath);
+  const gunzip = createGunzip();
+  const failDownload = (error) => {
+    console.error(
+      '[Local Export Runner] Failed to decompress local CSV artifact:',
+      error instanceof Error ? error.message : error,
+    );
+    res.destroy(error instanceof Error ? error : undefined);
+  };
+  source.on('error', failDownload);
+  gunzip.on('error', failDownload);
+  source.pipe(gunzip).pipe(res);
+}
+
+export function hasCompletedLocalExport(jobId, outputDir = OUTPUT_DIR) {
+  const filepath = resolveExportObjectPath(
+    `exports/${jobId}/final/export.csv.gz`,
+    outputDir,
+  );
+  return Boolean(filepath && fs.existsSync(filepath) && fs.statSync(filepath).isFile());
 }
 
 async function readRequestBody(req) {
@@ -196,6 +321,64 @@ async function handlePost(req, res) {
   });
 }
 
+function isAuthorizedExportRequest(req) {
+  const expected = process.env.LAMBDA_API_KEY?.trim();
+  return Boolean(expected && req.headers['x-api-key'] === expected);
+}
+
+async function handleChunkedExportPost(req, res) {
+  if (!process.env.LAMBDA_API_KEY?.trim()) {
+    sendJson(res, 500, {
+      error: 'LAMBDA_API_KEY is required for local chunked exports',
+    });
+    return;
+  }
+  if (!isAuthorizedExportRequest(req)) {
+    sendJson(res, 401, { error: 'Unauthorized' });
+    return;
+  }
+
+  let payload;
+  try {
+    payload = validateLocalChunkedExportInput(
+      JSON.parse((await readRequestBody(req)) || '{}'),
+    );
+  } catch (error) {
+    sendJson(res, 400, {
+      error: error instanceof Error ? error.message : 'Invalid export request',
+    });
+    return;
+  }
+
+  const executionId = `local-export:${payload.jobId}`;
+  if (
+    ACTIVE_EXPORTS.has(payload.jobId) ||
+    hasCompletedLocalExport(payload.jobId)
+  ) {
+    sendJson(res, 202, { accepted: true, executionId, replay: true });
+    return;
+  }
+
+  const execution = new Promise((resolve) => setImmediate(resolve))
+    .then(() => runLocalChunkedExport(payload))
+    .then((result) => {
+      console.log(
+        `[Local Export Runner] Completed ${payload.jobId}: ${result.finalS3Key}`,
+      );
+      return result;
+    })
+    .catch((error) => {
+      console.error(
+        `[Local Export Runner] Failed ${payload.jobId}:`,
+        error instanceof Error ? error.message : error,
+      );
+    })
+    .finally(() => ACTIVE_EXPORTS.delete(payload.jobId));
+  ACTIVE_EXPORTS.set(payload.jobId, execution);
+
+  sendJson(res, 202, { accepted: true, executionId });
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const parsedUrl = new URL(req.url || '/', BASE_URL);
@@ -209,7 +392,24 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         ok: true,
         outputDir: OUTPUT_DIR,
+        semaphorAppUrl: process.env.SEMAPHOR_APP_URL,
+        capabilities: ['rendered-pdf', 'rendered-csv', 'fast-pdf', 'chunked-csv'],
+        activeChunkedExports: ACTIVE_EXPORTS.size,
       });
+      return;
+    }
+
+    if (parsedUrl.pathname === '/export-files') {
+      sendExportObject(res, parsedUrl.searchParams);
+      return;
+    }
+
+    if (parsedUrl.pathname === '/exports') {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { error: 'Method not allowed' });
+        return;
+      }
+      await handleChunkedExportPost(req, res);
       return;
     }
 
@@ -245,9 +445,11 @@ const server = http.createServer(async (req, res) => {
 
 const isDirectRun = Boolean(process.argv[1]) && path.resolve(process.argv[1]) === __filename;
 if (isDirectRun) {
+  preloadLocalChunkedExportHandlers();
   server.listen(PORT, HOST, () => {
-    console.log(`Local PDF Function URL emulator running at ${BASE_URL}`);
+    console.log(`Local export runner running at ${BASE_URL}`);
     console.log(`Health check: ${BASE_URL}/health`);
     console.log(`Output directory: ${OUTPUT_DIR}`);
+    console.log(`Semaphor App: ${process.env.SEMAPHOR_APP_URL}`);
   });
 }
