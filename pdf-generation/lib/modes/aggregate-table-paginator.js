@@ -6,6 +6,13 @@ export async function extractAggregateTableData(page) {
     const table = document.querySelector('table[data-table-type="aggregate"]');
     if (!table) return null;
 
+    const getPdfNumericHint = (cell) => {
+      const value = cell.getAttribute('data-pdf-is-numeric');
+      if (value === 'true') return true;
+      if (value === 'false') return false;
+      return null;
+    };
+
     // Extract header rows
     const thead = table.querySelector('thead');
     const headers = [];
@@ -18,7 +25,8 @@ export async function extractAggregateTableData(page) {
             colspan: cell.colSpan || 1,
             rowspan: cell.rowSpan || 1,
             className: cell.className,
-            columnId: cell.getAttribute('data-column-id')
+            columnId: cell.getAttribute('data-column-id'),
+            pdfIsNumeric: getPdfNumericHint(cell),
           }))
         });
       });
@@ -41,6 +49,7 @@ export async function extractAggregateTableData(page) {
             colspan: cell.colSpan || 1,
             rowspan: cell.rowSpan || 1,
             className: cell.className,
+            columnId: cell.getAttribute('data-column-id'),
             isHeader: cell.tagName === 'TH'
           }))
         };
@@ -58,7 +67,8 @@ export async function extractAggregateTableData(page) {
           cells: Array.from(totalRow.querySelectorAll('td, th')).map(cell => ({
             text: cell.textContent?.trim() || '',
             colspan: cell.colSpan || 1,
-            className: cell.className
+            className: cell.className,
+            columnId: cell.getAttribute('data-column-id')
           }))
         };
       }
@@ -74,6 +84,7 @@ export async function extractAggregateTableData(page) {
 
     return { headers, rows, grandTotal, metadata };
   });
+
 }
 
 export function paginateAggregateTable(data, options = {}) {

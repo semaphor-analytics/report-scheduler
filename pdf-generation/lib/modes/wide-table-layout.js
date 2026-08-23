@@ -1,7 +1,9 @@
 import { normalizePageSize } from '../page-size-utils.js';
+import { buildPdfTableModel } from './table-column-semantics.js';
+import { getColumnWidthBounds } from './table-column-widths.js';
+import { getTableHorizontalInsetPx } from './table-page-geometry.js';
 
 const DPI = 96;
-const MM_TO_PX = DPI / 25.4;
 
 const PAGE_SIZES_PX = {
   Letter: { width: 8.5 * DPI, height: 11 * DPI },
@@ -19,35 +21,15 @@ const PAGE_SIZES_PX = {
 
 // Ordered by printable landscape width (narrow -> wide)
 const WIDER_PAGE_ORDER = ['Letter', 'Legal', 'A3', 'Tabloid'];
-
-const MIN_WIDTHS_PX = {
-  rowNumber: 44,
-  boolean: 56,
-  numeric: 96,
-  datetime: 84,
-  id: 96,
-  text: 120,
-};
-
-const NUMERIC_WIDTH_ESTIMATE = {
-  charPx: 8,
-  paddingPx: 22,
-  maxChars: 24,
-};
+const WIDE_TABLE_STRATEGIES = new Set([
+  'auto',
+  'fit',
+  'horizontal_paginate',
+]);
 
 function normalizeCellText(value) {
   if (value === null || value === undefined) return '';
   return String(value);
-}
-
-function hasMeaningfulText(value) {
-  return normalizeCellText(value).trim().length > 0;
-}
-
-function isMissingLike(value) {
-  const normalized = normalizeCellText(value).trim().toLowerCase();
-  if (!normalized) return true;
-  return ['-', '—', '–', 'n/a', 'na', 'null', 'none'].includes(normalized);
 }
 
 function normalizeOrientation(orientation) {
@@ -80,693 +62,8 @@ function getPageDimensions(pageSize, orientation) {
 
 function getPrintableWidthPx(pageSize, orientation) {
   const dims = getPageDimensions(pageSize, orientation);
-  const horizontalPdfMargins = (10 + 10) * MM_TO_PX;
-  const horizontalBodyPadding = 40;
   const safety = 8;
-  return Math.max(200, dims.width - horizontalPdfMargins - horizontalBodyPadding - safety);
-}
-
-function expandCells(cells = []) {
-  const expanded = [];
-  cells.forEach((cell) => {
-    const span = Math.max(1, Number(cell.colspan || 1));
-    const base = {
-      text: normalizeCellText(cell.text),
-      colspan: 1,
-      rowspan: 1,
-      className: cell.className || '',
-      columnId: cell.columnId || null,
-      isHeader: Boolean(cell.isHeader),
-      isNumeric: Boolean(cell.isNumeric),
-      measuredWidthPx: Number(cell.measuredWidthPx) || null,
-    };
-    expanded.push(base);
-    for (let i = 1; i < span; i += 1) {
-      expanded.push({
-        text: '',
-        colspan: 1,
-        rowspan: 1,
-        className: cell.className || '',
-        columnId: null,
-        isHeader: Boolean(cell.isHeader),
-        isNumeric: Boolean(cell.isNumeric),
-        measuredWidthPx: null,
-      });
-    }
-  });
-  return expanded;
-}
-
-function normalizeRowCells(cells = [], leafCount) {
-  const normalized = [];
-  let cursor = 0;
-
-  cells.forEach((cell) => {
-    const span = Math.max(1, Number(cell.colspan || 1));
-    const base = {
-      text: normalizeCellText(cell.text),
-      colspan: 1,
-      rowspan: 1,
-      className: cell.className || '',
-      columnId: cell.columnId || null,
-      isHeader: Boolean(cell.isHeader),
-      isNumeric: Boolean(cell.isNumeric),
-      measuredWidthPx: Number(cell.measuredWidthPx) || null,
-    };
-    if (cursor < leafCount) {
-      normalized[cursor] = base;
-    }
-    for (let i = 1; i < span; i += 1) {
-      if (cursor + i >= leafCount) break;
-      normalized[cursor + i] = {
-        text: '',
-        colspan: 1,
-        rowspan: 1,
-        className: cell.className || '',
-        columnId: null,
-        isHeader: Boolean(cell.isHeader),
-        isNumeric: Boolean(cell.isNumeric),
-        measuredWidthPx: null,
-      };
-    }
-    cursor += span;
-  });
-
-  while (normalized.length < leafCount) {
-    normalized.push({
-      text: '',
-      colspan: 1,
-      rowspan: 1,
-      className: '',
-      columnId: null,
-      isHeader: false,
-      isNumeric: false,
-      measuredWidthPx: null,
-    });
-  }
-
-  return normalized.slice(0, leafCount);
-}
-
-function createEmptyCell() {
-  return {
-    text: '',
-    colspan: 1,
-    rowspan: 1,
-    className: '',
-    columnId: null,
-    isHeader: false,
-    isNumeric: false,
-    measuredWidthPx: null,
-  };
-}
-
-function normalizeRowsWithRowspan(rows = [], leafCount) {
-  const carryByColumn = Array.from({ length: leafCount }, () => 0);
-
-  return rows.map((row) => {
-    const normalized = Array.from({ length: leafCount }, () => null);
-    const rowCells = row?.cells || [];
-    let cursor = 0;
-
-    const fillCarriedSlots = () => {
-      while (cursor < leafCount && carryByColumn[cursor] > 0) {
-        normalized[cursor] = createEmptyCell();
-        carryByColumn[cursor] -= 1;
-        cursor += 1;
-      }
-    };
-
-    fillCarriedSlots();
-
-    rowCells.forEach((cell) => {
-      fillCarriedSlots();
-
-      if (cursor >= leafCount) {
-        return;
-      }
-
-      const colspan = Math.max(1, Number(cell.colspan || 1));
-      const rowspan = Math.max(1, Number(cell.rowspan || 1));
-
-      for (let spanOffset = 0; spanOffset < colspan; spanOffset += 1) {
-        const targetIndex = cursor + spanOffset;
-        if (targetIndex >= leafCount) {
-          break;
-        }
-
-        if (spanOffset === 0) {
-          normalized[targetIndex] = {
-            text: normalizeCellText(cell.text),
-            colspan: 1,
-            rowspan: 1,
-            className: cell.className || '',
-            columnId: cell.columnId || null,
-            isHeader: Boolean(cell.isHeader),
-            isNumeric: Boolean(cell.isNumeric),
-            measuredWidthPx: Number(cell.measuredWidthPx) || null,
-          };
-        } else {
-          normalized[targetIndex] = {
-            text: '',
-            colspan: 1,
-            rowspan: 1,
-            className: cell.className || '',
-            columnId: null,
-            isHeader: Boolean(cell.isHeader),
-            isNumeric: Boolean(cell.isNumeric),
-            measuredWidthPx: null,
-          };
-        }
-
-        if (rowspan > 1) {
-          carryByColumn[targetIndex] = Math.max(carryByColumn[targetIndex], rowspan - 1);
-        }
-      }
-
-      cursor += colspan;
-    });
-
-    while (cursor < leafCount) {
-      if (carryByColumn[cursor] > 0) {
-        normalized[cursor] = createEmptyCell();
-        carryByColumn[cursor] -= 1;
-      } else if (!normalized[cursor]) {
-        normalized[cursor] = createEmptyCell();
-      }
-      cursor += 1;
-    }
-
-    for (let i = 0; i < leafCount; i += 1) {
-      if (!normalized[i]) {
-        normalized[i] = createEmptyCell();
-      }
-    }
-
-    return normalized;
-  });
-}
-
-function isBooleanLike(value) {
-  const normalized = normalizeCellText(value).trim().toLowerCase();
-  return ['true', 'false', 'yes', 'no', 'y', 'n', 'on', 'off'].includes(normalized);
-}
-
-function isDateLike(value) {
-  const text = normalizeCellText(value).trim();
-  if (!text) return false;
-  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return true;
-  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(text)) return true;
-  if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(text)) return true;
-  return false;
-}
-
-function isIdLike(value) {
-  const text = normalizeCellText(value).trim();
-  if (!text) return false;
-  if (text.includes(' ')) return false;
-  return /^[a-z0-9_.:-]{8,}$/i.test(text);
-}
-
-function isNumericLike(value) {
-  if (typeof value === 'number') return true;
-  const normalized = normalizeCellText(value)
-    .trim()
-    .replace(/^\((.*)\)$/, '-$1')
-    .replace(/[$,%\s]/g, '')
-    .replace(/,/g, '');
-  if (!normalized) return false;
-  return /^-?\d+(\.\d+)?$/.test(normalized);
-}
-
-function getColumnMeta(columnsMeta, columnId, index) {
-  if (!Array.isArray(columnsMeta)) return null;
-  const exactMatch = columnsMeta.find((col) => col?.columnId && col.columnId === columnId);
-  if (exactMatch) return exactMatch;
-  const indexed = columnsMeta[index];
-  if (indexed) return indexed;
-  return null;
-}
-
-function getColumnMeasuredWidth(columnsMeta, columnId, index) {
-  const columnMeta = getColumnMeta(columnsMeta, columnId, index);
-  if (!columnMeta) return null;
-  if (Number.isFinite(columnMeta.measuredWidthPx)) {
-    return Number(columnMeta.measuredWidthPx);
-  }
-  return null;
-}
-
-function inferColumnType(headerCell, sampleValues) {
-  if (headerCell?.isNumeric) return 'numeric';
-
-  const nonEmpty = sampleValues.filter((value) => !isMissingLike(value));
-  if (nonEmpty.length === 0) return 'text';
-
-  const numericRatio =
-    nonEmpty.filter((value) => isNumericLike(value)).length / nonEmpty.length;
-  if (numericRatio >= 0.8) return 'numeric';
-
-  const booleanRatio =
-    nonEmpty.filter((value) => isBooleanLike(value)).length / nonEmpty.length;
-  if (booleanRatio >= 0.8) return 'boolean';
-
-  const dateRatio = nonEmpty.filter((value) => isDateLike(value)).length / nonEmpty.length;
-  if (dateRatio >= 0.7) return 'datetime';
-
-  const idRatio = nonEmpty.filter((value) => isIdLike(value)).length / nonEmpty.length;
-  if (idRatio >= 0.7) return 'id';
-
-  return 'text';
-}
-
-function getMinWidthForType(type) {
-  return MIN_WIDTHS_PX[type] || MIN_WIDTHS_PX.text;
-}
-
-function clampColumnWidth(minWidth, measuredWidthPx) {
-  if (!Number.isFinite(measuredWidthPx) || measuredWidthPx <= 0) {
-    return minWidth;
-  }
-  const boosted = measuredWidthPx * 1.1;
-  return Math.min(Math.max(minWidth, boosted), minWidth * 3);
-}
-
-function estimateNumericWidthPx(sampleValues = [], grandTotalValue = '') {
-  const values = [...sampleValues, grandTotalValue]
-    .map((value) => normalizeCellText(value).replace(/\s+/g, '').trim())
-    .filter(Boolean);
-  if (values.length === 0) return MIN_WIDTHS_PX.numeric;
-  const maxChars = values.reduce((max, value) => Math.max(max, value.length), 0);
-  const boundedChars = Math.min(NUMERIC_WIDTH_ESTIMATE.maxChars, maxChars);
-  const estimated =
-    boundedChars * NUMERIC_WIDTH_ESTIMATE.charPx + NUMERIC_WIDTH_ESTIMATE.paddingPx;
-  return Math.max(MIN_WIDTHS_PX.numeric, estimated);
-}
-
-function hasCellValue(cell) {
-  return hasMeaningfulText(cell?.text);
-}
-
-function shouldSuppressEmptyColumns(tableData, options = {}) {
-  if (options.suppressEmptyColumns === false) {
-    return false;
-  }
-  return String(tableData?.metadata?.tableType || '').toLowerCase() === 'data';
-}
-
-function filterTrulyEmptyColumns(columns, normalizedRows, normalizedGrandTotal) {
-  // Preserve schema for legitimate empty-result reports. When there are no rows
-  // and no grand total evidence, we cannot infer truly empty columns.
-  if (normalizedRows.length === 0 && !normalizedGrandTotal) {
-    return {
-      columns,
-      normalizedRows,
-      normalizedGrandTotal,
-      hiddenEmptyColumns: [],
-    };
-  }
-
-  const keepSourceIndices = columns
-    .filter((column) => {
-      const sourceIndex = column.index;
-      const hasValueInRows = normalizedRows.some((rowCells) =>
-        hasCellValue(rowCells?.[sourceIndex]),
-      );
-      if (hasValueInRows) return true;
-      return hasCellValue(normalizedGrandTotal?.[sourceIndex]);
-    })
-    .map((column) => column.index);
-
-  // Keep at least one data column to avoid generating an empty table.
-  if (keepSourceIndices.length === 0 && columns.length > 0) {
-    keepSourceIndices.push(columns[0].index);
-  }
-
-  if (keepSourceIndices.length === columns.length) {
-    return {
-      columns,
-      normalizedRows,
-      normalizedGrandTotal,
-      hiddenEmptyColumns: [],
-    };
-  }
-
-  const keepSourceSet = new Set(keepSourceIndices);
-  const hiddenEmptyColumns = columns
-    .filter((column) => !keepSourceSet.has(column.index))
-    .map((column) => ({
-      columnId: column.columnId,
-      label: column.label,
-    }));
-
-  const reindexedColumns = keepSourceIndices
-    .map((sourceIndex) => columns.find((column) => column.index === sourceIndex))
-    .filter(Boolean)
-    .map((column, index) => ({
-      ...column,
-      index,
-    }));
-
-  const filteredRows = normalizedRows.map((rowCells = []) =>
-    keepSourceIndices.map((sourceIndex) => cloneCell(rowCells[sourceIndex])),
-  );
-
-  const filteredGrandTotal = normalizedGrandTotal
-    ? keepSourceIndices.map((sourceIndex) => cloneCell(normalizedGrandTotal[sourceIndex]))
-    : null;
-
-  return {
-    columns: reindexedColumns,
-    normalizedRows: filteredRows,
-    normalizedGrandTotal: filteredGrandTotal,
-    hiddenEmptyColumns,
-  };
-}
-
-function extractLeafHeaderCells(headers = []) {
-  if (!headers.length) return [];
-  const headerRows = headers.map((headerRow) => {
-    if (Array.isArray(headerRow)) return headerRow;
-    if (Array.isArray(headerRow?.cells)) return headerRow.cells;
-    return [];
-  });
-
-  if (!headerRows.length) return [];
-
-  const rowCount = headerRows.length;
-  const matrix = Array.from({ length: rowCount }, () => []);
-
-  const createBaseCell = (cell = {}) => ({
-    text: normalizeCellText(cell.text),
-    colspan: 1,
-    rowspan: 1,
-    className: cell.className || '',
-    columnId: cell.columnId || null,
-    isHeader: Boolean(cell.isHeader),
-    isNumeric: Boolean(cell.isNumeric),
-    measuredWidthPx: Number(cell.measuredWidthPx) || null,
-  });
-
-  const createContinuationCell = (cell = {}) => ({
-    text: '',
-    colspan: 1,
-    rowspan: 1,
-    className: cell.className || '',
-    columnId: null,
-    isHeader: Boolean(cell.isHeader),
-    isNumeric: Boolean(cell.isNumeric),
-    measuredWidthPx: null,
-  });
-
-  headerRows.forEach((rowCells, rowIndex) => {
-    let colIndex = 0;
-
-    rowCells.forEach((cell) => {
-      while (matrix[rowIndex][colIndex] !== undefined) {
-        colIndex += 1;
-      }
-
-      const spanCols = Math.max(1, Number(cell?.colspan || 1));
-      const spanRows = Math.max(1, Number(cell?.rowspan || 1));
-
-      for (let rowOffset = 0; rowOffset < spanRows; rowOffset += 1) {
-        const targetRow = rowIndex + rowOffset;
-        if (targetRow >= rowCount) break;
-
-        for (let colOffset = 0; colOffset < spanCols; colOffset += 1) {
-          const targetCol = colIndex + colOffset;
-          if (matrix[targetRow][targetCol] !== undefined) continue;
-
-          matrix[targetRow][targetCol] =
-            colOffset === 0 ? createBaseCell(cell) : createContinuationCell(cell);
-        }
-      }
-
-      colIndex += spanCols;
-    });
-  });
-
-  const leafRowIndex = rowCount - 1;
-  const leafCount = matrix.reduce((max, row) => Math.max(max, row.length), 0);
-  const leafCells = [];
-  const isPlaceholderCell = (cell) =>
-    cell &&
-    !cell.columnId &&
-    !normalizeCellText(cell.text).trim() &&
-    !cell.measuredWidthPx;
-
-  for (let colIndex = 0; colIndex < leafCount; colIndex += 1) {
-    let resolved = matrix[leafRowIndex][colIndex];
-
-    if (!resolved || isPlaceholderCell(resolved)) {
-      for (let rowIndex = leafRowIndex - 1; rowIndex >= 0; rowIndex -= 1) {
-        if (matrix[rowIndex][colIndex] && !isPlaceholderCell(matrix[rowIndex][colIndex])) {
-          resolved = matrix[rowIndex][colIndex];
-          break;
-        }
-      }
-    }
-
-    leafCells.push(
-      resolved || {
-        text: '',
-        colspan: 1,
-        rowspan: 1,
-        className: '',
-        columnId: null,
-        isHeader: false,
-        isNumeric: false,
-        measuredWidthPx: null,
-      },
-    );
-  }
-
-  return leafCells;
-}
-
-function buildLegacyColumns(tableData) {
-  const metadata = tableData?.metadata || {};
-  const metadataColumns = Array.isArray(metadata.columns) ? metadata.columns : [];
-
-  if (metadataColumns.length > 0) {
-    return metadataColumns.map((column, index) => {
-      const isNumeric = Boolean(column?.isNumeric);
-      const type = isNumeric ? 'numeric' : 'text';
-      const minWidthPx = getMinWidthForType(type);
-      const measuredWidthPx = Number(column?.measuredWidthPx) || null;
-      return {
-        index,
-        columnId: column?.columnId || `col_${index + 1}`,
-        label: column?.label || `Column ${index + 1}`,
-        type,
-        minWidthPx,
-        widthPx: clampColumnWidth(minWidthPx, measuredWidthPx),
-        isNumeric,
-      };
-    });
-  }
-
-  const leafHeaders = extractLeafHeaderCells(tableData?.headers || []);
-  if (leafHeaders.length > 0) {
-    return leafHeaders.map((headerCell, index) => {
-      const isNumeric = Boolean(headerCell?.isNumeric);
-      const type = isNumeric ? 'numeric' : 'text';
-      const minWidthPx = getMinWidthForType(type);
-      const measuredWidthPx = Number(headerCell?.measuredWidthPx) || null;
-      return {
-        index,
-        columnId: headerCell?.columnId || `col_${index + 1}`,
-        label: headerCell?.text || `Column ${index + 1}`,
-        type,
-        minWidthPx,
-        widthPx: clampColumnWidth(minWidthPx, measuredWidthPx),
-        isNumeric,
-      };
-    });
-  }
-
-  const fallbackCount = Math.max(0, Number(metadata.totalColumns || 0));
-  return Array.from({ length: fallbackCount }).map((_, index) => ({
-    index,
-    columnId: `col_${index + 1}`,
-    label: `Column ${index + 1}`,
-    type: 'text',
-    minWidthPx: MIN_WIDTHS_PX.text,
-    widthPx: MIN_WIDTHS_PX.text,
-    isNumeric: false,
-  }));
-}
-
-function buildColumns(tableData, options = {}) {
-  const headers = tableData?.headers || [];
-  const rows = tableData?.rows || [];
-  const metadata = tableData?.metadata || {};
-  const pivotTableData = isPivotTableData(tableData);
-
-  const leafHeaders = extractLeafHeaderCells(headers);
-  const maxCellsInRows = rows.reduce((max, row) => {
-    const expandedCount = expandCells(row.cells || []).length;
-    return Math.max(max, expandedCount);
-  }, 0);
-  const leafCount = Math.max(
-    leafHeaders.length,
-    Number(metadata.totalColumns || 0),
-    maxCellsInRows,
-  );
-
-  const normalizedRows = normalizeRowsWithRowspan(rows, leafCount);
-  const normalizedGrandTotal = tableData?.grandTotal
-    ? normalizeRowCells(tableData.grandTotal.cells || [], leafCount)
-    : null;
-  const columnsMeta = metadata.columns;
-
-  const columns = [];
-  for (let index = 0; index < leafCount; index += 1) {
-    const headerCell = leafHeaders[index] || {};
-    const columnMeta = getColumnMeta(columnsMeta, headerCell.columnId, index);
-    const label =
-      (pivotTableData
-        ? normalizeCellText(headerCell.text) ||
-          normalizeCellText(columnMeta?.label)
-        : normalizeCellText(headerCell.text) ||
-          normalizeCellText(columnMeta?.label)) ||
-      `Column ${index + 1}`;
-    const columnId = headerCell.columnId || columnMeta?.columnId || `col_${index + 1}`;
-    const sampleValues = normalizedRows
-      .slice(0, 50)
-      .map((rowCells) => rowCells[index]?.text ?? '');
-    const grandTotalValue = normalizedGrandTotal?.[index]?.text ?? '';
-    const type = inferColumnType(
-      { ...headerCell, isNumeric: Boolean(headerCell?.isNumeric || columnMeta?.isNumeric) },
-      [...sampleValues, grandTotalValue],
-    );
-    const minWidthPx = getMinWidthForType(type);
-    const measuredWidthPx = getColumnMeasuredWidth(columnsMeta, columnId, index);
-    let widthPx = clampColumnWidth(minWidthPx, measuredWidthPx);
-    if (type === 'numeric') {
-      widthPx = Math.max(widthPx, estimateNumericWidthPx(sampleValues, grandTotalValue));
-    }
-
-    columns.push({
-      index,
-      columnId,
-      label,
-      type,
-      minWidthPx,
-      widthPx,
-      isNumeric: type === 'numeric',
-    });
-  }
-
-  if (shouldSuppressEmptyColumns(tableData, options)) {
-    return filterTrulyEmptyColumns(columns, normalizedRows, normalizedGrandTotal);
-  }
-
-  return {
-    columns,
-    normalizedRows,
-    normalizedGrandTotal,
-    hiddenEmptyColumns: [],
-  };
-}
-
-function isPivotTableData(tableData) {
-  const metadata = tableData?.metadata || {};
-  const tableType = String(metadata.tableType || '').toLowerCase();
-  if (tableType === 'pivot') {
-    return true;
-  }
-
-  return metadata.pivotLevels !== undefined || metadata.rowLevels !== undefined;
-}
-
-function parsePositiveInt(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return 0;
-  return Math.max(0, Math.trunc(parsed));
-}
-
-function getPivotRowHeaderCountFromBody(tableData, columns = []) {
-  const rows = Array.isArray(tableData?.rows) ? tableData.rows : [];
-  const firstDataRow = rows.find(
-    (row) => String(row?.type || 'data').toLowerCase() === 'data' && Array.isArray(row?.cells),
-  );
-
-  if (!firstDataRow) {
-    return null;
-  }
-
-  const sawAnyHeaderCells = (firstDataRow.cells || []).some((cell) => Boolean(cell?.isHeader));
-  let leadingCount = 0;
-  for (const cell of firstDataRow.cells || []) {
-    if (!cell?.isHeader) {
-      break;
-    }
-    leadingCount += Math.max(1, Number(cell?.colspan || 1));
-  }
-
-  if (leadingCount === 0 && !sawAnyHeaderCells) {
-    return null;
-  }
-
-  return Math.min(leadingCount, columns.length);
-}
-
-function getPivotRowHeaderCount(tableData, columns = []) {
-  const metadata = tableData?.metadata || {};
-  const configured = parsePositiveInt(metadata.rowLevels);
-  if (configured > 0) {
-    return Math.min(configured, columns.length);
-  }
-
-  const bodyDerived = getPivotRowHeaderCountFromBody(tableData, columns);
-  if (bodyDerived !== null) {
-    if (bodyDerived > 0) {
-      return bodyDerived;
-    }
-    return 0;
-  }
-
-  const firstHeaderRow = Array.isArray(tableData?.headers) ? tableData.headers[0] : null;
-  const headerCells = Array.isArray(firstHeaderRow?.cells) ? firstHeaderRow.cells : [];
-  const headerRowCount = Array.isArray(tableData?.headers) ? tableData.headers.length : 0;
-  const leafHeaders = extractLeafHeaderCells(tableData?.headers || []);
-
-  let leadingCount = 0;
-  for (const cell of headerCells) {
-    const columnId = String(cell?.columnId || '');
-    const isRowLevel = /^rowLevel\d+$/i.test(columnId);
-    const spanWidth = Math.max(1, Number(cell?.colspan || 1));
-    const spansFullHeader =
-      headerRowCount > 1 &&
-      Math.max(1, Number(cell?.rowspan || 1)) >= headerRowCount;
-    const isNonNumericFullHeightCell = spansFullHeader && cell?.isNumeric !== true;
-
-    if (!isRowLevel && !isNonNumericFullHeightCell) {
-      break;
-    }
-
-    leadingCount += spanWidth;
-  }
-
-  if (leadingCount === 0 && headerCells.length > 0) {
-    const firstCell = headerCells[0];
-    const firstCellColspan = Math.max(1, Number(firstCell?.colspan || 1));
-    const firstCellRowspan = Math.max(1, Number(firstCell?.rowspan || 1));
-    const firstCellLooksGroupedDimension =
-      firstCellColspan > 1 &&
-      firstCellRowspan < Math.max(1, headerRowCount) &&
-      leafHeaders
-        .slice(0, firstCellColspan)
-        .every((cell) => cell && cell.isNumeric !== true);
-
-    if (firstCellLooksGroupedDimension) {
-      return Math.min(firstCellColspan, columns.length);
-    }
-  }
-
-  return Math.min(leadingCount, columns.length);
+  return Math.max(200, dims.width - getTableHorizontalInsetPx() - safety);
 }
 
 function buildCandidateLayouts(pageSize, orientation) {
@@ -808,6 +105,33 @@ function getWidestCandidate(candidates = []) {
   }, null);
 }
 
+function sumColumnWidths(columns, widthKey = 'widthPx') {
+  return columns.reduce(
+    (sum, column) => sum + (Number(column?.[widthKey]) || 0),
+    0,
+  );
+}
+
+function allocateFitColumnWidths(columns, printableWidthPx) {
+  const preferredWidthPx = sumColumnWidths(columns);
+  if (preferredWidthPx <= printableWidthPx) {
+    return columns.map((column) => column.widthPx);
+  }
+
+  const minimumWidthPx = sumColumnWidths(columns, 'minWidthPx');
+  if (minimumWidthPx >= printableWidthPx) {
+    return columns.map((column) => column.minWidthPx);
+  }
+
+  const shrinkNeededPx = preferredWidthPx - printableWidthPx;
+  const shrinkCapacityPx = preferredWidthPx - minimumWidthPx;
+  return columns.map((column) => {
+    const capacityPx = Math.max(0, column.widthPx - column.minWidthPx);
+    const shrinkPx = shrinkNeededPx * (capacityPx / shrinkCapacityPx);
+    return Math.max(column.minWidthPx, column.widthPx - shrinkPx);
+  });
+}
+
 function selectAnchorColumns(columns, printableWidthPx) {
   const maxAnchorWidth = printableWidthPx * 0.35;
   const anchors = [];
@@ -828,28 +152,17 @@ function selectAnchorColumns(columns, printableWidthPx) {
   return anchors;
 }
 
-function buildBands(columns, printableWidthPx, tableData = null) {
-  const rowNumberWidth = MIN_WIDTHS_PX.rowNumber;
-  const minDynamicWidth = MIN_WIDTHS_PX.text;
-  let preservePivotAnchors = false;
-  let configuredPivotAnchorIndices = [];
-  let anchorIndices;
-  if (isPivotTableData(tableData)) {
-    const pivotAnchorCount = getPivotRowHeaderCount(tableData, columns);
-    preservePivotAnchors = pivotAnchorCount > 0;
-    configuredPivotAnchorIndices =
-      pivotAnchorCount > 0
-        ? columns.slice(0, pivotAnchorCount).map((column) => column.index)
-        : [];
-    anchorIndices =
-      pivotAnchorCount > 0
-        ? [...configuredPivotAnchorIndices]
-        : selectAnchorColumns(columns, printableWidthPx);
-  } else {
-    anchorIndices = selectAnchorColumns(columns, printableWidthPx);
-  }
+function buildBands(columns, printableWidthPx, pivotAnchorCount = 0) {
+  const minDynamicWidth = getColumnWidthBounds('text').min;
+  const preservePivotAnchors = pivotAnchorCount > 0;
+  const configuredPivotAnchorIndices = preservePivotAnchors
+    ? columns.slice(0, pivotAnchorCount).map((column) => column.index)
+    : [];
+  let anchorIndices = preservePivotAnchors
+    ? [...configuredPivotAnchorIndices]
+    : selectAnchorColumns(columns, printableWidthPx);
   const getAnchorWidth = (indices) =>
-    indices.reduce((sum, index) => sum + (columns[index]?.widthPx || 0), rowNumberWidth);
+    indices.reduce((sum, index) => sum + (columns[index]?.widthPx || 0), 0);
   const buildDynamicIndices = () =>
     columns
       .map((column) => column.index)
@@ -897,7 +210,7 @@ function buildBands(columns, printableWidthPx, tableData = null) {
   let currentWidth = 0;
 
   dynamicIndices.forEach((index) => {
-    const rawWidth = columns[index]?.widthPx || MIN_WIDTHS_PX.text;
+    const rawWidth = columns[index]?.widthPx || getColumnWidthBounds('text').min;
     const width = Math.min(rawWidth, availableForDynamic);
     dynamicWidthByIndex[index] = width;
     if (current.length > 0 && currentWidth + width > availableForDynamic) {
@@ -920,7 +233,6 @@ function buildBands(columns, printableWidthPx, tableData = null) {
 
   return {
     anchorIndices,
-    rowNumberWidth,
     bands,
     dynamicWidthByIndex,
   };
@@ -957,490 +269,73 @@ function formatSelectedColumnRanges(selectedIndices = [], totalColumns = 0) {
   return `Columns ${ranges.join(', ')} of ${Math.max(1, Number(totalColumns) || 1)}`;
 }
 
-function cloneCell(cell = {}) {
-  return {
-    text: normalizeCellText(cell.text),
-    colspan: 1,
-    rowspan: 1,
-    className: cell.className || '',
-    columnId: cell.columnId || null,
-    isHeader: Boolean(cell.isHeader),
-    isNumeric: Boolean(cell.isNumeric),
-  };
-}
-
-function withClassToken(className, token) {
-  const parts = String(className || '')
-    .split(/\s+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (!parts.includes(token)) {
-    parts.push(token);
-  }
-  return parts.join(' ');
-}
-
-function isSubtotalLike(row) {
-  return String(row?.type || '').toLowerCase().includes('subtotal');
-}
-
-function formatRowNumber(row, fallbackIndex) {
-  if (isSubtotalLike(row)) return '';
-  if (typeof row?.index === 'number' && Number.isFinite(row.index)) {
-    return String(row.index + 1);
-  }
-  return String(fallbackIndex + 1);
-}
-
-function buildBandHeaderCells(
+function buildBandColumnDescriptors(
   columns,
   selectedIndices,
-  includeRowNumber,
-  rowNumberWidth,
   widthOverridesByIndex = {},
 ) {
-  const cells = [];
-  const descriptors = [];
-
-  if (includeRowNumber) {
-    descriptors.push({
-      columnId: '__row_number__',
-      label: 'Row #',
-      widthPx: rowNumberWidth,
-      isNumeric: true,
-      sourceIndex: null,
-    });
-    cells.push({
-      text: 'Row #',
-      colspan: 1,
-      rowspan: 1,
-      className: 'numeric',
-      columnId: '__row_number__',
-      isHeader: true,
-      isNumeric: true,
-    });
-  }
-
-  selectedIndices.forEach((index) => {
+  return selectedIndices.map((index) => {
     const column = columns[index];
     const overrideWidth = Number(widthOverridesByIndex[index]);
     const widthPx =
       Number.isFinite(overrideWidth) && overrideWidth > 0
         ? overrideWidth
         : column.widthPx;
-    descriptors.push({
+    return {
       columnId: column.columnId,
       label: column.label,
       widthPx,
       isNumeric: column.isNumeric,
       sourceIndex: index,
-    });
-    cells.push({
-      text: column.label,
-      colspan: 1,
-      rowspan: 1,
-      className: column.isNumeric ? 'numeric' : '',
-      columnId: column.columnId,
-      isHeader: true,
-      isNumeric: column.isNumeric,
-    });
-  });
-
-  return { cells, descriptors };
-}
-
-function buildPivotHeaderPlacements(headers = []) {
-  const headerRows = headers.map((headerRow) => {
-    if (Array.isArray(headerRow)) return { cells: headerRow };
-    return headerRow || { cells: [] };
-  });
-  const rowCount = headerRows.length;
-  const occupied = Array.from({ length: rowCount }, () => []);
-  const placements = [];
-
-  headerRows.forEach((headerRow, rowIndex) => {
-    let colIndex = 0;
-
-    (headerRow.cells || []).forEach((cell, cellIndex) => {
-      while (occupied[rowIndex][colIndex] !== undefined) {
-        colIndex += 1;
-      }
-
-      const colspan = Math.max(1, Number(cell?.colspan || 1));
-      const rowspan = Math.max(1, Number(cell?.rowspan || 1));
-      const id = `${rowIndex}:${cellIndex}:${cell?.columnId || cell?.text || 'cell'}`;
-
-      for (let rowOffset = 0; rowOffset < rowspan; rowOffset += 1) {
-        const targetRow = rowIndex + rowOffset;
-        if (targetRow >= rowCount) break;
-
-        for (let colOffset = 0; colOffset < colspan; colOffset += 1) {
-          occupied[targetRow][colIndex + colOffset] = id;
-        }
-      }
-
-      placements.push({
-        id,
-        rowIndex,
-        startCol: colIndex,
-        endCol: colIndex + colspan - 1,
-        rowspan,
-        cell,
-      });
-
-      colIndex += colspan;
-    });
-  });
-
-  return { headerRows, placements };
-}
-
-function buildPivotBandHeaders(
-  headers,
-  selectedIndices,
-  includeRowNumber,
-  rowNumberWidth,
-) {
-  const { headerRows, placements } = buildPivotHeaderPlacements(headers);
-  const selectedSet = new Set(selectedIndices);
-  const sourceToOutput = new Map();
-  let outputIndex = 0;
-
-  if (includeRowNumber) {
-    outputIndex += 1;
-  }
-
-  selectedIndices.forEach((sourceIndex) => {
-    sourceToOutput.set(sourceIndex, outputIndex);
-    outputIndex += 1;
-  });
-
-  const bandHeaders = headerRows.map((headerRow, rowIndex) => ({
-    headerType: headerRow.headerType,
-    headerRowIndex:
-      headerRow.headerRowIndex !== undefined ? headerRow.headerRowIndex : rowIndex,
-    repeatHeader: headerRow.repeatHeader,
-    cells: [],
-  }));
-
-  if (includeRowNumber && bandHeaders.length > 0) {
-    bandHeaders[0].cells.push({
-      sortIndex: 0,
-      text: 'Row #',
-      colspan: 1,
-      rowspan: bandHeaders.length,
-      className: 'numeric',
-      columnId: '__row_number__',
-      isHeader: true,
-      isNumeric: true,
-      measuredWidthPx: rowNumberWidth,
-    });
-  }
-
-  placements.forEach((placement) => {
-    const includedOutputIndices = [];
-
-    for (let sourceIndex = placement.startCol; sourceIndex <= placement.endCol; sourceIndex += 1) {
-      if (!selectedSet.has(sourceIndex)) {
-        continue;
-      }
-
-      const mappedIndex = sourceToOutput.get(sourceIndex);
-      if (mappedIndex === undefined) {
-        continue;
-      }
-
-      includedOutputIndices.push(mappedIndex);
-    }
-
-    if (includedOutputIndices.length === 0) {
-      return;
-    }
-
-    bandHeaders[placement.rowIndex].cells.push({
-      sortIndex: includedOutputIndices[0],
-      text: normalizeCellText(placement.cell?.text),
-      colspan: includedOutputIndices.length,
-      rowspan: placement.rowspan,
-      className: placement.cell?.className || '',
-      columnId: placement.cell?.columnId || null,
-      isHeader: true,
-      isNumeric: Boolean(placement.cell?.isNumeric),
-      measuredWidthPx: Number(placement.cell?.measuredWidthPx) || null,
-    });
-  });
-
-  return bandHeaders.map((headerRow) => ({
-    headerType: headerRow.headerType,
-    headerRowIndex: headerRow.headerRowIndex,
-    repeatHeader: headerRow.repeatHeader,
-    cells: (headerRow.cells || [])
-      .sort((a, b) => a.sortIndex - b.sortIndex)
-      .map(({ sortIndex, ...cell }) => cell),
-  }));
-}
-
-function canBuildPivotBandHeaders(
-  headers = [],
-  selectedIndices = [],
-  includeRowNumber = false,
-  rowNumberWidth = MIN_WIDTHS_PX.rowNumber,
-) {
-  if (!Array.isArray(headers) || headers.length === 0) {
-    return false;
-  }
-
-  const { placements } = buildPivotHeaderPlacements(headers);
-  if (placements.length === 0) {
-    return false;
-  }
-
-  const rowCount = headers.length;
-  const coversAllSelectedColumns = selectedIndices.every((selectedIndex) => {
-    for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
-      const hasPlacementForRow = placements.some((placement) => {
-        const rowStart = placement.rowIndex;
-        const rowEnd = placement.rowIndex + Math.max(1, Number(placement.rowspan || 1)) - 1;
-        return (
-          placement.startCol <= selectedIndex &&
-          placement.endCol >= selectedIndex &&
-          rowStart <= rowIndex &&
-          rowEnd >= rowIndex
-        );
-      });
-
-      if (!hasPlacementForRow) {
-        return false;
-      }
-    }
-
-    return true;
-  });
-
-  if (!coversAllSelectedColumns) {
-    return false;
-  }
-
-  const selectedSet = new Set(selectedIndices);
-  const sourceToOutput = new Map();
-  let outputIndex = includeRowNumber ? 1 : 0;
-  selectedIndices.forEach((sourceIndex) => {
-    sourceToOutput.set(sourceIndex, outputIndex);
-    outputIndex += 1;
-  });
-
-  const hasContiguousHeaderSpans = placements.every((placement) => {
-    const includedOutputIndices = [];
-
-    for (let sourceIndex = placement.startCol; sourceIndex <= placement.endCol; sourceIndex += 1) {
-      if (!selectedSet.has(sourceIndex)) {
-        continue;
-      }
-
-      const mappedIndex = sourceToOutput.get(sourceIndex);
-      if (mappedIndex === undefined) {
-        continue;
-      }
-
-      includedOutputIndices.push(mappedIndex);
-    }
-
-    if (includedOutputIndices.length <= 1) {
-      return true;
-    }
-
-    for (let index = 1; index < includedOutputIndices.length; index += 1) {
-      if (includedOutputIndices[index] !== includedOutputIndices[index - 1] + 1) {
-        return false;
-      }
-    }
-
-    return true;
-  });
-
-  if (!hasContiguousHeaderSpans) {
-    return false;
-  }
-
-  const bandHeaders = buildPivotBandHeaders(
-    headers,
-    selectedIndices,
-    includeRowNumber,
-    rowNumberWidth,
-  );
-
-  return bandHeaders.every(
-    (headerRow) => Array.isArray(headerRow?.cells) && headerRow.cells.length > 0,
-  );
-}
-
-function buildBandRows(
-  rows,
-  normalizedRows,
-  columns,
-  selectedIndices,
-  includeRowNumber,
-) {
-  const numericByIndex = new Map(
-    columns.filter((column) => column.isNumeric).map((column) => [column.index, true]),
-  );
-
-  return rows.map((row, rowIndex) => {
-    const normalized = normalizedRows[rowIndex] || [];
-    const cells = [];
-
-    if (includeRowNumber) {
-      cells.push({
-        text: formatRowNumber(row, rowIndex),
-        colspan: 1,
-        rowspan: 1,
-        className: 'numeric row-number',
-        columnId: '__row_number__',
-        isHeader: false,
-        isNumeric: true,
-      });
-    }
-
-    selectedIndices.forEach((index) => {
-      const cloned = cloneCell(normalized[index]);
-      if (numericByIndex.get(index)) {
-        cloned.isNumeric = true;
-        cloned.className = withClassToken(cloned.className, 'numeric');
-      }
-      cells.push(cloned);
-    });
-
-    return {
-      ...row,
-      cells,
     };
   });
-}
-
-function buildBandGrandTotal(
-  normalizedGrandTotal,
-  columns,
-  selectedIndices,
-  includeRowNumber,
-) {
-  if (!normalizedGrandTotal) return null;
-  const numericByIndex = new Map(
-    columns.filter((column) => column.isNumeric).map((column) => [column.index, true]),
-  );
-  const cells = [];
-
-  if (includeRowNumber) {
-    cells.push({
-      text: '',
-      colspan: 1,
-      rowspan: 1,
-      className: 'numeric row-number',
-      columnId: '__row_number__',
-      isHeader: false,
-      isNumeric: true,
-    });
-  }
-
-  selectedIndices.forEach((index) => {
-    const cloned = cloneCell(normalizedGrandTotal[index]);
-    if (numericByIndex.get(index)) {
-      cloned.isNumeric = true;
-      cloned.className = withClassToken(cloned.className, 'numeric');
-    }
-    cells.push(cloned);
-  });
-
-  return { cells };
 }
 
 export function buildWideTableLayout(tableData, options = {}) {
   const requestedPageSize = normalizePageSize(options.pageSize || 'Letter');
   const requestedOrientation = normalizeOrientation(options.orientation || 'portrait');
-  const strategy = options.wideTableStrategy || 'auto';
-  // Wide layout is the default behavior for modern table exports.
-  // Legacy mode is available only via explicit opt-out.
-  const shouldApplyEngine = strategy !== 'legacy';
+  const requestedStrategy = String(options.wideTableStrategy || 'auto');
+  const strategy = WIDE_TABLE_STRATEGIES.has(requestedStrategy)
+    ? requestedStrategy
+    : 'auto';
 
-  if (!shouldApplyEngine) {
-    const columns = buildLegacyColumns(tableData);
-    return {
-      sections: [
-        {
-          headers: tableData.headers || [],
-          rows: tableData.rows || [],
-          grandTotal: tableData.grandTotal || null,
-          bandLabel: null,
-          columns: columns.map((column) => ({
-            columnId: column.columnId,
-            label: column.label,
-            widthPx: column.widthPx,
-            isNumeric: column.isNumeric,
-          })),
-        },
-      ],
-      layoutApplied: {
-        requestedPageSize,
-        requestedOrientation,
-        effectivePageSize: requestedPageSize,
-        effectiveOrientation: requestedOrientation,
-        usedBanding: false,
-        bandCount: 1,
-        totalColumns: columns.length,
-        anchorColumns: [],
-        autoAdjustedLayout: false,
-        strategyApplied: 'legacy',
-      },
-    };
-  }
-
+  const tableModel = buildPdfTableModel(tableData, options);
   const {
     columns,
-    normalizedRows,
-    normalizedGrandTotal,
     hiddenEmptyColumns,
-  } = buildColumns(tableData, options);
-  const requiredWidthPx = columns.reduce((sum, column) => sum + column.widthPx, 0);
+    isPivotTable,
+    pivotAnchorCount,
+  } = tableModel;
+  const minimumRequiredWidthPx = sumColumnWidths(columns, 'minWidthPx');
   const candidates = buildCandidateLayouts(requestedPageSize, requestedOrientation);
-  let chosen = candidates.find((candidate) => requiredWidthPx <= candidate.printableWidthPx);
+  let chosen = candidates.find(
+    (candidate) => minimumRequiredWidthPx <= candidate.printableWidthPx,
+  );
 
   if (strategy === 'fit' && !chosen) {
     chosen = getWidestCandidate(candidates);
   }
 
   if (chosen && strategy !== 'horizontal_paginate') {
+    const fitWidths = allocateFitColumnWidths(columns, chosen.printableWidthPx);
     const selectedIndices = columns.map((column) => column.index);
     const hasSuppressedColumns = hiddenEmptyColumns.length > 0;
-    const { cells: fitHeaderCells } = buildBandHeaderCells(
-      columns,
-      selectedIndices,
-      false,
-      MIN_WIDTHS_PX.rowNumber,
-    );
-    const fitRows = buildBandRows(
-      tableData.rows || [],
-      normalizedRows,
-      columns,
-      selectedIndices,
-      false,
-    );
-    const fitGrandTotal = buildBandGrandTotal(
-      normalizedGrandTotal,
-      columns,
-      selectedIndices,
-      false,
-    );
+    const projection = tableModel.project(selectedIndices, {
+      preserveHeaderHierarchy: !hasSuppressedColumns,
+      preserveBodySpans: !hasSuppressedColumns,
+    });
 
     return {
       sections: [
         {
-          headers: hasSuppressedColumns ? [{ cells: fitHeaderCells }] : tableData.headers || [],
-          rows: hasSuppressedColumns ? fitRows : tableData.rows || [],
-          grandTotal: hasSuppressedColumns ? fitGrandTotal : tableData.grandTotal || null,
+          headers: projection.headers,
+          rows: projection.rows,
+          grandTotal: projection.grandTotal,
           bandLabel: null,
-          columns: columns.map((column) => ({
+          columns: columns.map((column, index) => ({
             columnId: column.columnId,
             label: column.label,
-            widthPx: column.widthPx,
+            widthPx: fitWidths[index],
             isNumeric: column.isNumeric,
           })),
         },
@@ -1465,53 +360,30 @@ export function buildWideTableLayout(tableData, options = {}) {
   }
 
   const fallback = chosen || getWidestCandidate(candidates);
-  const bandingPlan = buildBands(columns, fallback.printableWidthPx, tableData);
+  const bandingPlan = buildBands(
+    columns,
+    fallback.printableWidthPx,
+    pivotAnchorCount,
+  );
   const anchorLabels = bandingPlan.anchorIndices.map((index) => columns[index]?.label).filter(Boolean);
   const sections = bandingPlan.bands.map((dynamicIndices, bandIndex) => {
     const selectedIndices = [...bandingPlan.anchorIndices, ...dynamicIndices];
-    const { cells: headerCells, descriptors } = buildBandHeaderCells(
+    const descriptors = buildBandColumnDescriptors(
       columns,
       selectedIndices,
-      true,
-      bandingPlan.rowNumberWidth,
       bandingPlan.dynamicWidthByIndex,
     );
-    const rows = buildBandRows(
-      tableData.rows || [],
-      normalizedRows,
-      columns,
-      selectedIndices,
-      true,
-    );
-    const isPivotTable = isPivotTableData(tableData);
-    const grandTotal = buildBandGrandTotal(
-      normalizedGrandTotal,
-      columns,
-      selectedIndices,
-      true,
-    );
+    const projection = tableModel.project(selectedIndices, {
+      preserveHeaderHierarchy: isPivotTable,
+      preserveBodySpans: false,
+    });
 
     const bandLabel = formatSelectedColumnRanges(selectedIndices, columns.length);
-    const headers =
-      isPivotTable &&
-      canBuildPivotBandHeaders(
-        tableData.headers || [],
-        selectedIndices,
-        true,
-        bandingPlan.rowNumberWidth,
-      )
-        ? buildPivotBandHeaders(
-            tableData.headers || [],
-            selectedIndices,
-            true,
-            bandingPlan.rowNumberWidth,
-          )
-        : [{ cells: headerCells }];
 
     return {
-      headers,
-      rows,
-      grandTotal,
+      headers: projection.headers,
+      rows: projection.rows,
+      grandTotal: projection.grandTotal,
       bandLabel,
       bandIndex: bandIndex + 1,
       columns: descriptors.map((descriptor) => ({

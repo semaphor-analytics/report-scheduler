@@ -51,7 +51,7 @@ describe('subtotal grouping render', () => {
     const { html } = renderAggregateTableHtml(pages, {
       reportTitle: 'Aggregate Test',
       timezone: 'UTC',
-      wideTableStrategy: 'legacy',
+      wideTableStrategy: 'fit',
     });
 
     const groupCount =
@@ -59,13 +59,50 @@ describe('subtotal grouping render', () => {
     expect(groupCount).toBe(2);
     expect(html).toContain('<tbody class="group grand-total-group">');
     expect(html).toMatch(
-      /<tbody class="group">[\s\S]*A1[\s\S]*A2[\s\S]*Subtotal A[\s\S]*<\/tbody>/,
+      /<tbody class="group subtotal-tail">[\s\S]*A1[\s\S]*A2[\s\S]*Subtotal A[\s\S]*<\/tbody>/,
     );
     expect(html).toMatch(
-      /<tbody class="group">[\s\S]*B1[\s\S]*Subtotal B[\s\S]*<\/tbody>/,
+      /<tbody class="group subtotal-tail">[\s\S]*B1[\s\S]*Subtotal B[\s\S]*<\/tbody>/,
     );
-    expect(html).toContain('<tr class="row-even">');
+    expect(html).not.toContain('row-even');
     expect(html).toContain('font-variant-numeric: tabular-nums;');
+  });
+
+  it('lets large aggregate groups begin below the report header while protecting the subtotal tail', () => {
+    const detailRows = Array.from({ length: 30 }, (_, index) => ({
+      type: 'data',
+      cells: [
+        { text: `A${index + 1}` },
+        { text: String(index + 1), className: 'numeric' },
+      ],
+    }));
+    const pages = [
+      {
+        headers: [{ cells: createHeaderCells(['Group', 'Value']) }],
+        rows: [
+          ...detailRows,
+          {
+            type: 'subtotal',
+            cells: [{ text: 'Subtotal A' }, { text: '465', className: 'numeric' }],
+          },
+        ],
+        metadata: { tableType: 'aggregate' },
+      },
+    ];
+
+    const { html } = renderAggregateTableHtml(pages, {
+      reportTitle: 'Aggregate Pagination CSS',
+      timezone: 'UTC',
+      wideTableStrategy: 'fit',
+    });
+
+    expect(html).toContain('<tbody class="group">');
+    expect(html).toContain('<tbody class="group subtotal-tail">');
+    expect(html).toContain('tbody.group.subtotal-tail {');
+    expect(html).toMatch(/tr\s*{\s*break-inside: auto;/);
+    expect(html).not.toContain('tr.rowspan-source');
+    expect(html).toContain('tbody.group.subtotal-tail:first-of-type {');
+    expect(html).not.toContain('tbody.group,\n            tr {');
   });
 
   it('keeps pivot subtotals grouped with their detail rows in table body sections', () => {
@@ -94,7 +131,7 @@ describe('subtotal grouping render', () => {
     const { html } = renderPivotTableHtml(pages, {
       reportTitle: 'Pivot Test',
       timezone: 'UTC',
-      wideTableStrategy: 'legacy',
+      wideTableStrategy: 'fit',
     });
 
     const groupCount =
@@ -107,7 +144,7 @@ describe('subtotal grouping render', () => {
     expect(html).toMatch(
       /<tbody class="group(?: subtotal-tail)?">[\s\S]*West[\s\S]*Subtotal West[\s\S]*<\/tbody>/,
     );
-    expect(html).toContain('<tr class="row-even">');
+    expect(html).not.toContain('row-even');
     expect(html).toContain('font-variant-numeric: tabular-nums;');
   });
 
@@ -131,17 +168,18 @@ describe('subtotal grouping render', () => {
     const { html } = renderPivotTableHtml(pages, {
       reportTitle: 'Pivot Pagination CSS',
       timezone: 'UTC',
-      wideTableStrategy: 'legacy',
+      wideTableStrategy: 'fit',
     });
 
     expect(html).toContain('<tbody class="group">');
     expect(html).toContain('<tbody class="group subtotal-tail">');
     expect(html).toContain('tbody.group.subtotal-tail {');
-    expect(html).toContain('tr {\n              break-inside: auto;');
-    expect(html).toContain('tr.subtotal,\n            tr.grand-total {');
+    expect(html).toMatch(/tr\s*{\s*break-inside: auto;/);
+    expect(html).not.toContain('tr.rowspan-source');
+    expect(html).toMatch(/tr\.subtotal,\s*tr\.grand-total\s*{/);
   });
 
-  it('does not split a pivot subtotal group when a rowspan would cross the tbody boundary', () => {
+  it('flattens body rowspans into blank continuation cells for safe pagination', () => {
     const pages = [
       {
         headers: [{ cells: createHeaderCells(['Group', 'Region', 'Sales']) }],
@@ -174,14 +212,16 @@ describe('subtotal grouping render', () => {
     const { html } = renderPivotTableHtml(pages, {
       reportTitle: 'Pivot Rowspan Group',
       timezone: 'UTC',
-      wideTableStrategy: 'legacy',
+      wideTableStrategy: 'fit',
     });
 
-    expect(html).toContain('rowspan="3"');
+    expect(html).not.toContain('rowspan="3"');
+    expect((html.match(/<th[^>]*>\s*<\/th>/g) || []).length).toBe(2);
+    expect((html.match(/<tbody class="group">/g) || []).length).toBe(1);
     expect((html.match(/<tbody class="group subtotal-tail">/g) || []).length).toBe(1);
   });
 
-  it('repeats pivot band labels at the top and bottom of each overflow section', () => {
+  it('renders one pivot band label above each overflow section', () => {
     const pages = [
       {
         headers: [
@@ -246,9 +286,7 @@ describe('subtotal grouping render', () => {
 
     expect(layoutApplied.usedBanding).toBe(true);
     expect((html.match(/class="band-label"/g) || []).length).toBe(layoutApplied.bandCount);
-    expect((html.match(/<tfoot class="band-footer">/g) || []).length).toBe(
-      layoutApplied.bandCount,
-    );
-    expect(html).toContain('tfoot.band-footer { display: table-footer-group; }');
+    expect((html.match(/<tfoot class="band-footer">/g) || []).length).toBe(0);
+    expect(html).not.toContain('tfoot.band-footer');
   });
 });

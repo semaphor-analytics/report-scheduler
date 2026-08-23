@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest';
-import { paginateDataTable } from '../lib/modes/data-table-paginator.js';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  extractDataTableData,
+  paginateDataTable,
+} from '../lib/modes/data-table-paginator.js';
 
 describe('data table paginator', () => {
   it('preserves the supplied grand total beside paginated data rows', () => {
@@ -20,5 +23,31 @@ describe('data table paginator', () => {
     expect(pages).toHaveLength(1);
     expect(pages[0].grandTotal).toBe(grandTotal);
     expect(pages[0].rows).toHaveLength(1);
+  });
+
+  it('preserves raw header semantics for the authoritative table model', async () => {
+    const page = {
+      evaluate: vi.fn().mockResolvedValue({
+        headers: [
+          {
+            cells: [
+              { text: 'SO #s', columnId: 'so_numbers', isNumeric: false },
+              { text: 'Amount', columnId: 'amount', isNumeric: true },
+            ],
+          },
+        ],
+        rows: [],
+        grandTotal: null,
+        metadata: { tableType: 'data', totalColumns: 2 },
+      }),
+    };
+
+    const result = await extractDataTableData(page);
+
+    expect(result.headers[0].cells).toEqual([
+      expect.objectContaining({ columnId: 'so_numbers', isNumeric: false }),
+      expect.objectContaining({ columnId: 'amount', isNumeric: true }),
+    ]);
+    expect(result.metadata).not.toHaveProperty('columns');
   });
 });

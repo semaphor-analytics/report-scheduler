@@ -37,6 +37,7 @@ export async function extractDataTableData(page) {
             colspan: cell.colSpan || 1,
             rowspan: cell.rowSpan || 1,
             className: cell.className,
+            columnId: cell.getAttribute('data-column-id'),
             isHeader: cell.tagName === 'TH',
             isNumeric: cell.classList.contains('numeric')
           }))
@@ -70,6 +71,7 @@ export async function extractDataTableData(page) {
 
     return { headers, rows, grandTotal, metadata };
   });
+
 }
 
 export function paginateDataTable(data, options = {}) {

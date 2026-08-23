@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPivotColumnHintsFromStructure } from '../lib/modes/pivot-table-paginator.js';
+import { buildPdfTableModel } from '../lib/modes/table-column-semantics.js';
 
 describe('pivot-table-paginator', () => {
   it('builds pivot column hints from the full leaf structure, including row headers', () => {
@@ -63,7 +63,7 @@ describe('pivot-table-paginator', () => {
       grandTotal: null,
     };
 
-    const columnHints = buildPivotColumnHintsFromStructure(tableData);
+    const columnHints = buildPdfTableModel(tableData).columns;
 
     expect(columnHints).toHaveLength(3);
     expect(columnHints[0]).toEqual(
@@ -72,9 +72,9 @@ describe('pivot-table-paginator', () => {
         columnId: 'rowLevel0',
         label: 'Counterparty Name',
         isNumeric: false,
-        measuredWidthPx: 240,
       }),
     );
+    expect(columnHints[0].widthPx).toBeLessThanOrEqual(240);
     expect(columnHints[1]).toEqual(
       expect.objectContaining({
         index: 1,
@@ -142,7 +142,7 @@ describe('pivot-table-paginator', () => {
       grandTotal: null,
     };
 
-    const columnHints = buildPivotColumnHintsFromStructure(tableData);
+    const columnHints = buildPdfTableModel(tableData).columns;
 
     expect(columnHints).toHaveLength(2);
     expect(columnHints[1]).toEqual(
@@ -150,8 +150,8 @@ describe('pivot-table-paginator', () => {
         columnId: 'status_bucket',
         label: 'Status',
         isNumeric: false,
-        measuredWidthPx: 180,
       }),
     );
+    expect(columnHints[1].widthPx).toBeLessThan(180);
   });
 });

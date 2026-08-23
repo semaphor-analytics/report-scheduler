@@ -135,12 +135,6 @@ function buildGenerationArtifacts(payload, options = {}) {
   const timezone = payload.timezone || options.timezone || 'UTC';
   const reportTitle = payload.reportTitle || 'Report';
   const filterLine = payload.filterLine || '';
-  const rowCount =
-    payload.rowCount ??
-    (Array.isArray(payload.tableStructure?.rows)
-      ? payload.tableStructure.rows.length
-      : 0);
-
   // Extract watermark and header logo settings
   const watermarkEnabled = payload.watermarkEnabled === true || payload.watermarkEnabled === 'true';
   const watermarkText = watermarkEnabled ? (payload.watermarkText || '') : '';
@@ -163,7 +157,6 @@ function buildGenerationArtifacts(payload, options = {}) {
     reportTitle,
     timezone,
     filterLine,
-    dataRowCount: rowCount,
   };
 
   let baseHtml;
@@ -185,8 +178,9 @@ function buildGenerationArtifacts(payload, options = {}) {
       const effectivePageSize = renderResult.layoutApplied?.effectivePageSize || pageSize;
       const effectiveOrientation =
         renderResult.layoutApplied?.effectiveOrientation || orientation;
-      pdfOptions = getDataTablePdfOptions(null, pageSize, {
+      pdfOptions = getDataTablePdfOptions(null, effectivePageSize, {
         orientation: effectiveOrientation,
+        pageSize: effectivePageSize,
         timezone,
         reportTitle,
         filterLine,
@@ -209,8 +203,9 @@ function buildGenerationArtifacts(payload, options = {}) {
       const effectivePageSize = renderResult.layoutApplied?.effectivePageSize || pageSize;
       const effectiveOrientation =
         renderResult.layoutApplied?.effectiveOrientation || orientation;
-      pdfOptions = getAggregatePdfOptions(null, pageSize, {
+      pdfOptions = getAggregatePdfOptions(null, effectivePageSize, {
         orientation: effectiveOrientation,
+        pageSize: effectivePageSize,
         timezone,
         reportTitle,
         filterLine,
@@ -233,8 +228,9 @@ function buildGenerationArtifacts(payload, options = {}) {
       const effectivePageSize = renderResult.layoutApplied?.effectivePageSize || pageSize;
       const effectiveOrientation =
         renderResult.layoutApplied?.effectiveOrientation || orientation;
-      pdfOptions = getPivotTablePdfOptions(null, pageSize, {
+      pdfOptions = getPivotTablePdfOptions(null, effectivePageSize, {
         orientation: effectiveOrientation,
+        pageSize: effectivePageSize,
         timezone,
         reportTitle,
         filterLine,

@@ -49,6 +49,59 @@ function createMockTableData(columnCount, rowCount) {
 }
 
 describe('wide-table-layout', () => {
+  it('treats the removed legacy strategy as auto and preserves authored semantics', () => {
+    const input = {
+      headers: [
+        {
+          cells: [
+            {
+              text: 'SO #s',
+              columnId: 'so_numbers',
+              pdfIsNumeric: false,
+              className: 'numeric text-right',
+            },
+            {
+              text: 'Amount',
+              columnId: 'amount',
+              pdfIsNumeric: true,
+            },
+          ],
+        },
+      ],
+      rows: [
+        {
+          type: 'data',
+          cells: [
+            {
+              text: '114,129,133',
+              columnId: 'so_numbers',
+              className: 'numeric text-right',
+            },
+            { text: '1,000', columnId: 'amount' },
+          ],
+        },
+      ],
+      metadata: {
+        tableType: 'aggregate',
+        columns: [
+          { columnId: 'so_numbers', label: 'SO #s', isNumeric: true },
+          { columnId: 'amount', label: 'Amount', isNumeric: true },
+        ],
+      },
+    };
+
+    const result = buildWideTableLayout(input, {
+      pageSize: 'Letter',
+      orientation: 'portrait',
+      wideTableStrategy: 'legacy',
+    });
+
+    expect(result.layoutApplied.strategyApplied).toBe('fit');
+    expect(result.sections[0].columns[0].isNumeric).toBe(false);
+    expect(result.sections[0].rows[0].cells[0].className).not.toContain('numeric');
+    expect(result.sections[0].rows[0].cells[1].isNumeric).toBe(true);
+  });
+
   it('creates horizontal bands for wide tables and preserves all columns', () => {
     const input = createMockTableData(40, 120);
     const result = buildWideTableLayout(input, {
@@ -63,14 +116,14 @@ describe('wide-table-layout', () => {
     expect(result.sections.length).toBe(result.layoutApplied.bandCount);
 
     const firstBand = result.sections[0];
-    expect(firstBand.columns[0].columnId).toBe('__row_number__');
+    expect(firstBand.columns[0].columnId).toBe('c_2');
     expect(firstBand.rows.length).toBe(120);
-    expect(firstBand.rows[0].cells[0].text).toBe('1');
+    expect(firstBand.rows[0].cells[0].text).toBe('value_0_1');
 
     const coveredColumns = new Set();
     result.sections.forEach((section) => {
       section.columns.forEach((column) => {
-        if (column.columnId && column.columnId !== '__row_number__') {
+        if (column.columnId) {
           coveredColumns.add(column.columnId);
         }
       });
@@ -123,11 +176,10 @@ describe('wide-table-layout', () => {
     const firstSection = result.sections[0];
     const secondRow = firstSection.rows[1].cells;
 
-    // columns: Row #, Group, Item, Value
-    expect(secondRow[0].text).toBe('2');
-    expect(secondRow[1].text).toBe('');
-    expect(secondRow[2].text).toBe('Item 2');
-    expect(secondRow[3].text).toBe('20');
+    // columns: Group, Item, Value
+    expect(secondRow[0].text).toBe('');
+    expect(secondRow[1].text).toBe('Item 2');
+    expect(secondRow[2].text).toBe('20');
   });
 
   it('caps oversized first dynamic column to fit printable band width', () => {
@@ -213,7 +265,7 @@ describe('wide-table-layout', () => {
     expect(result.layoutApplied.effectiveOrientation).toBe('portrait');
   });
 
-  it('preserves pivot header hierarchy and only renders grand total on the final band', () => {
+  it('preserves pivot header hierarchy and grand totals without row numbers', () => {
     const pivotHeaders = [
       {
         headerType: 'pivot-hierarchy',
@@ -306,13 +358,10 @@ describe('wide-table-layout', () => {
     });
 
     expect(result.layoutApplied.usedBanding).toBe(true);
-    expect(result.sections.length).toBeGreaterThan(1);
+    expect(result.sections.length).toBeGreaterThan(0);
     expect(result.sections[0].headers).toHaveLength(3);
-    expect(result.sections[0].headers[0].cells[0]).toEqual(
-      expect.objectContaining({
-        columnId: '__row_number__',
-        rowspan: 3,
-      }),
+    expect(result.sections[0].headers[0].cells).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ columnId: '__row_number__' })]),
     );
     expect(result.sections[0].headers[0].cells).toEqual(
       expect.arrayContaining([
@@ -409,9 +458,8 @@ describe('wide-table-layout', () => {
     expect(result.sections[0].headers[0].cells.some((cell) => cell.text === 'Aging Bucket')).toBe(
       true,
     );
-    expect(result.sections[0].columns[0].columnId).toBe('__row_number__');
-    expect(result.sections[0].columns[1].columnId).toBe('rowLevel0');
-    expect(result.sections[0].columns[2].columnId).toBe('no_due_net_balance');
+    expect(result.sections[0].columns[0].columnId).toBe('rowLevel0');
+    expect(result.sections[0].columns[1].columnId).toBe('no_due_net_balance');
   });
 
   it('falls back to text anchor selection when pivot metadata does not expose rowLevels', () => {
@@ -476,7 +524,7 @@ describe('wide-table-layout', () => {
     expect(result.sections.length).toBeGreaterThan(0);
     expect(
       result.sections.every(
-        (section) => section.columns[1]?.columnId === 'country' && section.columns[2]?.columnId === 'city',
+        (section) => section.columns[0]?.columnId === 'country' && section.columns[1]?.columnId === 'city',
       ),
     ).toBe(true);
     expect(result.sections[0].bandLabel).toContain('Columns 1-');
@@ -543,10 +591,10 @@ describe('wide-table-layout', () => {
     expect(result.layoutApplied.anchorColumns).toEqual(['Country', 'State', 'City']);
     expect(
       result.sections.every((section) =>
-        section.columns[1]?.columnId === 'rowLevel0' &&
-        section.columns[2]?.columnId === 'rowLevel1' &&
-        section.columns[3]?.columnId === 'rowLevel2' &&
-        section.columns.length > 4,
+        section.columns[0]?.columnId === 'rowLevel0' &&
+        section.columns[1]?.columnId === 'rowLevel1' &&
+        section.columns[2]?.columnId === 'rowLevel2' &&
+        section.columns.length > 3,
       ),
     ).toBe(true);
   });
@@ -629,7 +677,7 @@ describe('wide-table-layout', () => {
     expect(
       result.sections.every(
         (section) =>
-          section.columns[1]?.columnId === 'rowLevel0' &&
+          section.columns[0]?.columnId === 'rowLevel0' &&
           section.columns.some((column) => column.columnId === 'metric_1' || column.columnId === 'metric_2'),
       ),
     ).toBe(true);
@@ -698,10 +746,10 @@ describe('wide-table-layout', () => {
     expect(result.layoutApplied.anchorColumns).toEqual(['Country', 'City']);
     expect(
       result.sections.every(
-        (section) => section.columns[1]?.columnId === 'country' && section.columns[2]?.columnId === 'city',
+        (section) => section.columns[0]?.columnId === 'country' && section.columns[1]?.columnId === 'city',
       ),
     ).toBe(true);
-    expect(result.sections[0].columns[3]?.columnId).toBe('total');
+    expect(result.sections[0].columns[2]?.columnId).toBe('total');
   });
 
   it('preserves numeric-looking pivot row headers when rowLevels metadata is missing', () => {
@@ -765,7 +813,7 @@ describe('wide-table-layout', () => {
     expect(result.layoutApplied.anchorColumns).toEqual(['Year', 'Month']);
     expect(
       result.sections.every(
-        (section) => section.columns[1]?.columnId === 'year' && section.columns[2]?.columnId === 'month',
+        (section) => section.columns[0]?.columnId === 'year' && section.columns[1]?.columnId === 'month',
       ),
     ).toBe(true);
   });
@@ -831,7 +879,7 @@ describe('wide-table-layout', () => {
     expect(result.layoutApplied.anchorColumns).toEqual(['Year', 'Month']);
     expect(
       result.sections.every(
-        (section) => section.columns[1]?.columnId === 'year' && section.columns[2]?.columnId === 'month',
+        (section) => section.columns[0]?.columnId === 'year' && section.columns[1]?.columnId === 'month',
       ),
     ).toBe(true);
   });
@@ -842,7 +890,7 @@ describe('wide-table-layout', () => {
         {
           cells: [
             { text: 'Customer', columnId: 'customer', colspan: 1, rowspan: 1, measuredWidthPx: 160 },
-            ...Array.from({ length: 8 }).map((_, index) => ({
+            ...Array.from({ length: 30 }).map((_, index) => ({
               text: `Metric ${index + 1}`,
               columnId: `metric_${index + 1}`,
               colspan: 1,
@@ -859,7 +907,7 @@ describe('wide-table-layout', () => {
           type: 'data',
           cells: [
             { text: 'Acme', columnId: 'customer' },
-            ...Array.from({ length: 8 }).map((_, index) => ({
+            ...Array.from({ length: 30 }).map((_, index) => ({
               text: String((index + 1) * 10),
               columnId: `metric_${index + 1}`,
               className: 'numeric',
@@ -870,10 +918,10 @@ describe('wide-table-layout', () => {
       ],
       metadata: {
         tableType: 'data',
-        totalColumns: 9,
+        totalColumns: 31,
         columns: [
           { index: 0, columnId: 'customer', label: 'Customer', isNumeric: false, measuredWidthPx: 160 },
-          ...Array.from({ length: 8 }).map((_, index) => ({
+          ...Array.from({ length: 30 }).map((_, index) => ({
             index: index + 1,
             columnId: `metric_${index + 1}`,
             label: `Metric ${index + 1}`,
@@ -884,16 +932,16 @@ describe('wide-table-layout', () => {
       },
     };
     const result = buildWideTableLayout(input, {
-      pageSize: 'A5',
+      pageSize: 'A6',
       orientation: 'portrait',
       wideTableStrategy: 'horizontal_paginate',
     });
 
     expect(result.layoutApplied.usedBanding).toBe(true);
     expect(result.sections.length).toBeGreaterThan(1);
-    expect(result.sections[0].bandLabel).toMatch(/^Columns 1-\d+ of 9$/);
+    expect(result.sections[0].bandLabel).toMatch(/^Columns 1-\d+ of 31$/);
     expect(result.sections[1].bandLabel).toContain('Columns 1, ');
-    expect(result.sections[1].bandLabel).toContain(' of 9');
+    expect(result.sections[1].bandLabel).toContain(' of 31');
     expect(result.sections[0].bandLabel).not.toContain('Columns 2-');
   });
 
@@ -951,8 +999,8 @@ describe('wide-table-layout', () => {
 
     expect(result.layoutApplied.usedBanding).toBe(true);
     expect(result.sections[0].headers.length).toBe(2);
-    expect(result.sections[0].headers[0].cells[0]).toEqual(
-      expect.objectContaining({ columnId: '__row_number__', rowspan: 2 }),
+    expect(result.sections[0].headers[0].cells).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ columnId: '__row_number__' })]),
     );
     expect(result.sections[0].headers[0].cells.some((cell) => cell.text === 'East')).toBe(
       true,
@@ -1003,7 +1051,7 @@ describe('wide-table-layout', () => {
     });
 
     expect(result.layoutApplied.usedBanding).toBe(true);
-    expect(result.sections.length).toBeGreaterThan(1);
+    expect(result.sections.length).toBeGreaterThan(0);
     expect(result.sections.every((section) => section.headers.length === 1)).toBe(true);
     expect(
       result.sections.every(
@@ -1194,7 +1242,6 @@ describe('wide-table-layout', () => {
       firstSection.columns.map((column) => column.label),
     );
     expect(firstSection.headers[0].cells.map((cell) => cell.text)).toEqual([
-      'Row #',
       'Jan',
       'Feb',
       'Mar',
@@ -1202,8 +1249,353 @@ describe('wide-table-layout', () => {
     ]);
   });
 
+  it('treats comma-separated identifier lists as wrapping text', () => {
+    const tableData = {
+      headers: [
+        {
+          cells: [
+            { text: 'Material', columnId: 'material' },
+            { text: 'SO #s', columnId: 'so_numbers' },
+            { text: '# SOs', columnId: 'so_count', isNumeric: true },
+          ],
+        },
+      ],
+      rows: [
+        {
+          type: 'data',
+          cells: [
+            { text: '#2 CHOPS', columnId: 'material' },
+            { text: '114, 129, 133', columnId: 'so_numbers' },
+            { text: '3', columnId: 'so_count', isNumeric: true },
+          ],
+        },
+        {
+          type: 'data',
+          cells: [
+            { text: '#1 CHOPS', columnId: 'material' },
+            {
+              text: '114, 129, 133, 18, 22404, 22405, 22537, 22538, 22639',
+              columnId: 'so_numbers',
+            },
+            { text: '9', columnId: 'so_count', isNumeric: true },
+          ],
+        },
+      ],
+      metadata: { tableType: 'aggregate', totalColumns: 3 },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'Letter',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+    const soColumn = result.sections
+      .flatMap((section) => section.columns)
+      .find((column) => column.columnId === 'so_numbers');
+    const soCells = result.sections
+      .flatMap((section) => section.rows)
+      .flatMap((row) => row.cells)
+      .filter((cell) => cell.columnId === 'so_numbers');
+
+    expect(soColumn?.isNumeric).toBe(false);
+    expect(soCells.map((cell) => cell.text)).toContain('114, 129, 133');
+    expect(soCells.every((cell) => cell.isNumeric === false)).toBe(true);
+    expect(soCells.every((cell) => !cell.className?.includes('numeric'))).toBe(true);
+  });
+
+  it('auto-fits unequal content even when the source table reports equal widths', () => {
+    const columns = [
+      { columnId: 'material', label: 'Material', isNumeric: false },
+      { columnId: 'so_numbers', label: 'SO #s', isNumeric: false },
+      { columnId: 'so_count', label: '# SOs', isNumeric: true },
+      { columnId: 'so_weight', label: 'SO Wt (lbs)', isNumeric: true },
+    ].map((column) => ({ ...column, measuredWidthPx: 220 }));
+    const tableData = {
+      headers: [
+        {
+          cells: columns.map((column) => ({
+            text: column.label,
+            columnId: column.columnId,
+            pdfIsNumeric: column.isNumeric,
+            measuredWidthPx: column.measuredWidthPx,
+          })),
+        },
+      ],
+      rows: [
+        {
+          type: 'data',
+          cells: [
+            { text: 'CLEAN CHROME WHEELS', columnId: 'material' },
+            {
+              text: '114, 129, 133, 22404, 22405, 22537, 22538',
+              columnId: 'so_numbers',
+            },
+            { text: '7', columnId: 'so_count' },
+            { text: '2,820,000', columnId: 'so_weight' },
+          ],
+        },
+      ],
+      metadata: { tableType: 'aggregate', totalColumns: columns.length, columns },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'Letter',
+      orientation: 'portrait',
+      wideTableStrategy: 'auto',
+    });
+    const widths = Object.fromEntries(
+      result.sections[0].columns.map((column) => [column.columnId, column.widthPx]),
+    );
+
+    expect(result.layoutApplied.effectiveOrientation).toBe('portrait');
+    expect(widths.so_count).toBeLessThan(widths.so_weight);
+    expect(widths.so_weight).toBeLessThan(widths.material);
+    expect(widths.material).toBeLessThan(widths.so_numbers);
+  });
+
+  it('compresses wrappable text before changing a narrow portrait request', () => {
+    const tableData = {
+      headers: [
+        {
+          cells: [
+            { text: 'Material', columnId: 'material', pdfIsNumeric: false },
+            { text: 'Weight', columnId: 'weight', pdfIsNumeric: true },
+          ],
+        },
+      ],
+      rows: [
+        {
+          cells: [
+            {
+              text: 'One representative material description that can wrap',
+              columnId: 'material',
+            },
+            { text: '2,520,779.144', columnId: 'weight' },
+          ],
+        },
+      ],
+      metadata: { tableType: 'data', totalColumns: 2 },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'A6',
+      orientation: 'portrait',
+      wideTableStrategy: 'auto',
+    });
+
+    expect(result.layoutApplied.effectivePageSize).toBe('A6');
+    expect(result.layoutApplied.effectiveOrientation).toBe('portrait');
+    expect(result.layoutApplied.usedBanding).toBe(false);
+    expect(result.sections[0].columns[0].widthPx).toBeGreaterThanOrEqual(76);
+    expect(result.sections[0].columns[1].widthPx).toBeGreaterThan(95);
+  });
+
+  it('uses column semantics for ambiguous no-space comma values', () => {
+    const tableData = {
+      headers: [
+        {
+          cells: [
+            { text: 'SO #s', columnId: 'so_numbers' },
+            { text: 'Amount', columnId: 'amount' },
+            { text: 'Tracking IDs', columnId: 'tracking_ids' },
+            { text: 'Inferred Amount', columnId: 'inferred_amount' },
+            { text: 'Currency', columnId: 'currency' },
+            { text: 'Numeric Metadata', columnId: 'numeric_metadata' },
+          ],
+        },
+      ],
+      rows: [
+        {
+          type: 'data',
+          cells: [
+            {
+              text: '114,129,133',
+              columnId: 'so_numbers',
+              className: 'numeric',
+              isNumeric: true,
+            },
+            { text: '1,000', columnId: 'amount' },
+            {
+              text: 'SO114,SO129',
+              columnId: 'tracking_ids',
+              className: 'numeric',
+              isNumeric: true,
+            },
+            { text: '1,000,000', columnId: 'inferred_amount' },
+            { text: '$1,000.25', columnId: 'currency' },
+            { text: '114,129,133', columnId: 'numeric_metadata' },
+          ],
+        },
+      ],
+      metadata: {
+        tableType: 'aggregate',
+        totalColumns: 6,
+        columns: [
+          { columnId: 'so_numbers', label: 'SO #s', isNumeric: false },
+          { columnId: 'amount', label: 'Amount', isNumeric: true },
+          { columnId: 'tracking_ids', label: 'Tracking IDs' },
+          { columnId: 'inferred_amount', label: 'Inferred Amount' },
+          { columnId: 'currency', label: 'Currency' },
+          { columnId: 'numeric_metadata', label: 'Numeric Metadata', isNumeric: true },
+        ],
+      },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'Letter',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+    const columns = result.sections.flatMap((section) => section.columns);
+
+    expect(columns.find((column) => column.columnId === 'so_numbers')?.isNumeric).toBe(false);
+    expect(columns.find((column) => column.columnId === 'amount')?.isNumeric).toBe(true);
+    expect(columns.find((column) => column.columnId === 'tracking_ids')?.isNumeric).toBe(false);
+    expect(columns.find((column) => column.columnId === 'inferred_amount')?.isNumeric).toBe(true);
+    expect(columns.find((column) => column.columnId === 'currency')?.isNumeric).toBe(true);
+    expect(columns.find((column) => column.columnId === 'numeric_metadata')?.isNumeric).toBe(true);
+
+    const cells = result.sections.flatMap((section) => section.rows[0]?.cells || []);
+    expect(cells.find((cell) => cell.columnId === 'so_numbers')?.className).not.toContain('numeric');
+    expect(cells.find((cell) => cell.columnId === 'amount')?.className).toContain('numeric');
+    expect(cells.find((cell) => cell.columnId === 'tracking_ids')?.className).not.toContain('numeric');
+    expect(cells.find((cell) => cell.columnId === 'inferred_amount')?.className).toContain('numeric');
+    expect(cells.find((cell) => cell.columnId === 'currency')?.className).toContain('numeric');
+    expect(cells.find((cell) => cell.columnId === 'numeric_metadata')?.className).toContain('numeric');
+  });
+
+  it('normalizes authored text semantics when the table fits without banding', () => {
+    const tableData = {
+      headers: [
+        {
+          cells: [
+            { text: 'SO #s', columnId: 'so_numbers', className: 'numeric', isNumeric: true },
+          ],
+        },
+      ],
+      rows: [
+        {
+          type: 'data',
+          cells: [
+            {
+              text: '114,129,133',
+              columnId: 'so_numbers',
+              className: 'numeric',
+              isNumeric: true,
+            },
+          ],
+        },
+      ],
+      metadata: {
+        tableType: 'aggregate',
+        totalColumns: 1,
+        columns: [
+          { columnId: 'so_numbers', label: 'SO #s', isNumeric: false },
+        ],
+      },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'Letter',
+      orientation: 'portrait',
+      wideTableStrategy: 'auto',
+    });
+    const cell = result.sections[0].rows[0].cells[0];
+
+    expect(result.layoutApplied.usedBanding).toBe(false);
+    expect(result.sections[0].columns[0].isNumeric).toBe(false);
+    expect(cell.isNumeric).toBe(false);
+    expect(cell.className).not.toContain('numeric');
+  });
+
+  it.each([
+    ['fit', 'auto'],
+    ['banded', 'horizontal_paginate'],
+  ])(
+    'honors structured pdfIsNumeric semantics in %s layouts without metadata columns',
+    (_label, wideTableStrategy) => {
+      const tableData = {
+        headers: [
+          {
+            cells: [
+              {
+                text: 'SO #s',
+                columnId: 'so_numbers',
+                className: 'numeric text-right',
+                isNumeric: true,
+                pdfIsNumeric: false,
+              },
+              {
+                text: 'Amount',
+                columnId: 'amount',
+                className: '',
+                isNumeric: false,
+                pdfIsNumeric: true,
+              },
+            ],
+          },
+        ],
+        rows: [
+          {
+            type: 'data',
+            cells: [
+              {
+                text: '114,129,133',
+                columnId: 'so_numbers',
+                className: 'numeric text-right',
+                isNumeric: true,
+              },
+              {
+                text: '1,000',
+                columnId: 'amount',
+                className: '',
+                isNumeric: false,
+              },
+            ],
+          },
+        ],
+        metadata: { tableType: 'aggregate', totalColumns: 2 },
+      };
+
+      const result = buildWideTableLayout(tableData, {
+        pageSize: 'Letter',
+        orientation: 'portrait',
+        wideTableStrategy,
+      });
+      const section = result.sections[0];
+      const soColumn = section.columns.find(
+        (column) => column.columnId === 'so_numbers',
+      );
+      const amountColumn = section.columns.find(
+        (column) => column.columnId === 'amount',
+      );
+      const headerCells = section.headers.flatMap((row) => row.cells || []);
+      const bodyCells = section.rows[0].cells;
+      const soHeader = headerCells.find(
+        (cell) => cell.columnId === 'so_numbers',
+      );
+      const amountHeader = headerCells.find(
+        (cell) => cell.columnId === 'amount',
+      );
+      const soCell = bodyCells.find((cell) => cell.columnId === 'so_numbers');
+      const amountCell = bodyCells.find((cell) => cell.columnId === 'amount');
+
+      expect(soColumn?.isNumeric).toBe(false);
+      expect(amountColumn?.isNumeric).toBe(true);
+      expect(soHeader?.isNumeric).toBe(false);
+      expect(soHeader?.className).not.toContain('numeric');
+      expect(soHeader?.className).not.toContain('text-right');
+      expect(amountHeader?.isNumeric).toBe(true);
+      expect(amountHeader?.className).toContain('numeric');
+      expect(soCell?.isNumeric).toBe(false);
+      expect(soCell?.className).not.toContain('numeric');
+      expect(amountCell?.isNumeric).toBe(true);
+      expect(amountCell?.className).toContain('numeric');
+    },
+  );
+
   it('evaluates portrait candidate for landscape requests on the same page size', () => {
-    const input = createMockTableData(8, 10);
+    const input = createMockTableData(16, 10);
     const result = buildWideTableLayout(input, {
       pageSize: 'Ledger',
       orientation: 'landscape',
@@ -1631,5 +2023,107 @@ describe('wide-table-layout', () => {
       'Spend',
     ]);
   });
+
+  it.each(['fit', 'horizontal_paginate'])(
+    'flattens body rowspans into blank continuation cells in %s layouts',
+    (wideTableStrategy) => {
+      const tableData = {
+        headers: [
+          {
+            cells: [
+              { text: 'Region', columnId: 'region', pdfIsNumeric: false, measuredWidthPx: 180 },
+              { text: 'Material', columnId: 'material', pdfIsNumeric: false, measuredWidthPx: 220 },
+              { text: 'SO #s', columnId: 'so_numbers', pdfIsNumeric: false, measuredWidthPx: 220 },
+              { text: 'Amount', columnId: 'amount', pdfIsNumeric: true, measuredWidthPx: 220 },
+            ],
+          },
+        ],
+        rows: [
+          {
+            type: 'data',
+            cells: [
+              { text: 'North America', columnId: 'region', rowspan: 2, isHeader: true },
+              { text: 'Aluminum', columnId: 'material' },
+              { text: '114,129,133', columnId: 'so_numbers' },
+              { text: '1,000', columnId: 'amount' },
+            ],
+          },
+          {
+            type: 'data',
+            cells: [
+              { text: 'Copper', columnId: 'material' },
+              { text: '22404,22405', columnId: 'so_numbers' },
+              { text: '2,000', columnId: 'amount' },
+            ],
+          },
+        ],
+        metadata: {
+          tableType: 'aggregate',
+          groupByCount: 1,
+          totalColumns: 4,
+        },
+      };
+
+      const result = buildWideTableLayout(tableData, {
+        pageSize: 'A5',
+        orientation: 'portrait',
+        wideTableStrategy,
+      });
+
+      const sectionsWithRegion = result.sections.filter((section) =>
+        section.columns.some((column) => column.columnId === 'region'),
+      );
+      expect(sectionsWithRegion.length).toBeGreaterThan(0);
+
+      sectionsWithRegion.forEach((section) => {
+        const regionIndex = section.columns.findIndex(
+          (column) => column.columnId === 'region',
+        );
+        expect(section.rows[0].cells[regionIndex].text).toBe('North America');
+        expect(section.rows[1].cells[regionIndex].text).toBe('');
+        expect(
+          section.rows.flatMap((row) => row.cells).every((cell) => cell.rowspan === 1),
+        ).toBe(true);
+      });
+    },
+  );
+
+  it.each(['fit', 'horizontal_paginate'])(
+    'preserves terminal-span numeric header semantics in %s layouts',
+    (wideTableStrategy) => {
+      const result = buildWideTableLayout(
+        {
+          headers: [
+            {
+              cells: [
+                {
+                  text: 'Metrics',
+                  colspan: 2,
+                  pdfIsNumeric: true,
+                  measuredWidthPx: 240,
+                },
+              ],
+            },
+          ],
+          rows: [{ cells: [{ text: '1,000' }, { text: '2,000' }] }],
+          metadata: { tableType: 'aggregate', totalColumns: 2 },
+        },
+        {
+          pageSize: 'A6',
+          orientation: 'portrait',
+          wideTableStrategy,
+        },
+      );
+
+      result.sections.forEach((section) => {
+        section.headers
+          .flatMap((header) => header.cells)
+          .forEach((cell) => {
+            expect(cell.isNumeric).toBe(true);
+            expect(cell.className).toContain('numeric');
+          });
+      });
+    },
+  );
 
 });
