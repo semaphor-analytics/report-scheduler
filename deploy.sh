@@ -8,6 +8,9 @@ install_dependencies() {
   echo "Installing root dependencies (including dev tools)..."
   NPM_CONFIG_OMIT= npm ci --include=dev
 
+  echo "Building the structured Fast PDF policy adapter..."
+  npm run build:pdf-export-policy
+
   echo "Installing pdf-generation dependencies..."
   (cd pdf-generation && npm ci)
 

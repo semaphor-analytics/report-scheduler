@@ -15,3 +15,6 @@ dist/
 local-test/output/
 output/
 pdf-generation/output/
+
+# Generated from the React-free react-semaphor export policy at build time
+pdf-generation/lib/generated/pdf-export-policy.js

@@ -5,6 +5,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
+    "pretest": "npm --prefix .. run build:pdf-export-policy",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:wide-layout": "vitest run __tests__/wide-table-layout.test.js",
@@ -12,9 +13,15 @@
     "test:path-safety": "vitest run __tests__/local-function-url-path.test.js",
     "manual:test-validation": "node scripts/manual/test-validation.js",
     "manual:test-performance": "node scripts/manual/test-performance.js",
+    "premanual:measure-fast-pdf-envelope": "npm --prefix .. run build:pdf-export-policy",
+    "manual:measure-fast-pdf-envelope": "node scripts/manual/measure-fast-pdf-envelope.js",
+    "prelocal:function-url": "npm --prefix .. run build:pdf-export-policy",
     "local:function-url": "node local-function-url.js",
+    "prelocal:function-url:watch": "npm --prefix .. run build:pdf-export-policy",
     "local:function-url:watch": "node --watch local-function-url.js",
+    "prelocal:function-url:repo-output": "npm --prefix .. run build:pdf-export-policy",
     "local:function-url:repo-output": "LOCAL_PDF_OUTPUT_DIR=./output/local-function-url node local-function-url.js",
+    "prelocal:function-url:watch:repo-output": "npm --prefix .. run build:pdf-export-policy",
     "local:function-url:watch:repo-output": "LOCAL_PDF_OUTPUT_DIR=./output/local-function-url node --watch local-function-url.js"
   },
   "keywords": [],

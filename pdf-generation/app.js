@@ -8,6 +8,11 @@ import { generatePdf } from './lib/pdf-generator.js';
 import { generateCsv } from './lib/csv-extractor.js';
 import { generatePdfFromData } from './lib/pdf-from-data-generator.js';
 import { deliveryBlockingErrorResponseFields } from './lib/delivery-render-error.js';
+import {
+  assertFastPdfOutputLimit,
+  assertFastPdfPageLimit,
+  parseStructuredFastPdfRequest,
+} from './lib/fast-pdf-safety.js';
 
 // Initialize S3 client
 const s3 = new S3Client({});
@@ -326,12 +331,13 @@ function scheduledDeliveryBlockingFailure(event, error) {
  */
 async function handleDataDirectRequest(event) {
   try {
-    // Parse request body
-    const payload = JSON.parse(event.body);
+    const { payload, requestBytes, rowCount } =
+      parseStructuredFastPdfRequest(event);
     console.log('Data-direct payload received:', {
       cardType: payload.cardType,
       reportTitle: payload.reportTitle,
-      rows: payload.tableStructure?.rows?.length || 0,
+      requestBytes,
+      rows: rowCount,
     });
 
     // Validate payload
@@ -345,14 +351,13 @@ async function handleDataDirectRequest(event) {
     payload.timezone = payload.timezone || 'UTC';
     payload.filterLine = payload.filterLine || '';
     payload.wideTableStrategy = payload.wideTableStrategy || 'auto';
-    payload.rowCount =
-      typeof payload.rowCount === 'number'
-        ? payload.rowCount
-        : payload.tableStructure?.rows?.length || 0;
-
+    let generatedPageCount = 0;
     const options = {
       isLambda: true,
       wideTableStrategy: payload.wideTableStrategy,
+      validatePreparedPdf: async preparedPdf => {
+        generatedPageCount = await assertFastPdfPageLimit(preparedPdf);
+      },
     };
 
     console.log('Generating PDF from data with options:', options);
@@ -361,11 +366,12 @@ async function handleDataDirectRequest(event) {
     let pdfBuffer = await generatePdfFromData(payload, options);
     const layoutApplied = pdfBuffer?.layoutApplied || null;
 
-    if (!pdfBuffer || pdfBuffer.length === 0) {
-      throw new Error('Empty PDF buffer generated');
-    }
+    const outputBytes = assertFastPdfOutputLimit(pdfBuffer);
 
-    console.log('PDF generated successfully:', pdfBuffer.length, 'bytes');
+    console.log('PDF generated successfully:', {
+      generatedPageCount,
+      outputBytes,
+    });
 
     // Upload to S3
     const bucketName = process.env.S3_BUCKET_NAME;
@@ -412,7 +418,12 @@ async function handleDataDirectRequest(event) {
   } catch (error) {
     console.error('Data-direct PDF generation error:', error);
     return {
-      statusCode: error.message?.includes('invalid') ? 400 : 500,
+      statusCode:
+        Number.isInteger(error?.statusCode)
+          ? error.statusCode
+          : error.message?.includes('invalid')
+            ? 400
+            : 500,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message: error.message || 'Internal server error',

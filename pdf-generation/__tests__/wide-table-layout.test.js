@@ -1991,6 +1991,75 @@ describe('wide-table-layout', () => {
     ]);
   });
 
+  it('preserves blank aggregate group continuations across horizontal bands', () => {
+    const columns = [
+      { columnId: 'group', label: 'Group', isNumeric: false },
+      { columnId: 'material', label: 'Material', isNumeric: false },
+      ...Array.from({ length: 20 }, (_, index) => ({
+        columnId: `metric_${index + 1}`,
+        label: `Metric ${index + 1}`,
+        isNumeric: true,
+      })),
+    ];
+    const makeCells = (group, material, multiplier) => [
+      { text: group, columnId: 'group', isNumeric: false },
+      { text: material, columnId: 'material', isNumeric: false },
+      ...Array.from({ length: 20 }, (_, index) => ({
+        text: String((index + 1) * multiplier),
+        columnId: `metric_${index + 1}`,
+        isNumeric: true,
+      })),
+    ];
+    const tableData = {
+      headers: [
+        {
+          cells: columns.map((column) => ({
+            text: column.label,
+            columnId: column.columnId,
+            isNumeric: column.isNumeric,
+            measuredWidthPx: column.isNumeric ? 240 : 180,
+          })),
+        },
+      ],
+      rows: [
+        { type: 'data', cells: makeCells('ALUMINUM', '6061', 1) },
+        { type: 'data', cells: makeCells('', 'CLEAN RIMS', 2) },
+        { type: 'data', cells: makeCells('COPPER', 'CLEAN RIMS', 3) },
+      ],
+      metadata: {
+        tableType: 'aggregate',
+        totalColumns: columns.length,
+        groupByCount: 2,
+        columns: columns.map((column, index) => ({
+          ...column,
+          index,
+          measuredWidthPx: column.isNumeric ? 240 : 180,
+        })),
+      },
+    };
+
+    const result = buildWideTableLayout(tableData, {
+      pageSize: 'A6',
+      orientation: 'portrait',
+      wideTableStrategy: 'horizontal_paginate',
+    });
+
+    expect(result.layoutApplied.usedBanding).toBe(true);
+    expect(result.sections.length).toBeGreaterThan(1);
+    expect(
+      result.sections.every((section) => {
+        const groupCells = section.rows.map((row) =>
+          row.cells.find((cell) => cell.columnId === 'group'),
+        );
+        return (
+          groupCells[0]?.text === 'ALUMINUM' &&
+          groupCells[1]?.text === '' &&
+          groupCells[2]?.text === 'COPPER'
+        );
+      }),
+    ).toBe(true);
+  });
+
   it('preserves all columns when data table has zero rows', () => {
     const tableData = {
       headers: [

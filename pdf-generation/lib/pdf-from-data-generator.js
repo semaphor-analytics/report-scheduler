@@ -76,16 +76,20 @@ export async function generatePdfFromData(payload, options = {}) {
       );
     }
 
+    pdfBuffer = await applyPdfMetadata(pdfBuffer, {
+      title: payload.reportTitle,
+    });
+
+    if (typeof options.validatePreparedPdf === 'function') {
+      await options.validatePreparedPdf(pdfBuffer);
+    }
+
     if (payload.password) {
       console.log('Applying password protection');
       pdfBuffer = await encryptPdfBuffer(pdfBuffer, payload.password, {
         metadata: {
           title: payload.reportTitle,
         },
-      });
-    } else {
-      pdfBuffer = await applyPdfMetadata(pdfBuffer, {
-        title: payload.reportTitle,
       });
     }
 

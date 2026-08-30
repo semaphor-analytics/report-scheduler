@@ -46,9 +46,15 @@ A serverless file generation service that converts web pages to PDFs or exports 
 ### Install Dependencies
 
 ```bash
+# From the scheduler repository root, install the shared policy build tools
+# and the PDF service dependencies.
+npm ci --include=dev
+npm --prefix pdf-generation ci
 cd pdf-generation
-npm install
 ```
+
+The root install is required because the PDF test and local-runner commands
+generate the React-free export-policy adapter before starting.
 
 For encrypted PDF work with the Node-based local harness, install `qpdf` on your
 machine:
@@ -363,6 +369,9 @@ node test-local.js --url "https://example.com/visual?isPdfRender=true" --visual 
 ### Build and Deploy
 
 ```bash
+# From the scheduler repository root, generate the tiny shared-policy adapter.
+npm run build:pdf-export-policy
+
 # Build with container (required for Lambda layers)
 sam build --use-container
 
@@ -372,8 +381,8 @@ sam deploy
 # Deploy without confirmation (CI/CD friendly)
 sam deploy --no-confirm-changeset
 
-# Combined build and deploy without confirmation
-sam build --use-container; sam deploy --no-confirm-changeset
+# Deploy the completed build without confirmation
+sam deploy --no-confirm-changeset
 
 # Deploy with specific stack name and region
 sam deploy --stack-name pdf-generation-prod --region us-east-1
@@ -663,7 +672,8 @@ sam local invoke GeneratePdfFunction --event event.json
 ### 3. Build and Deploy
 
 ```bash
-# Build
+# From the scheduler repository root, generate the policy adapter and build.
+npm run build:pdf-export-policy
 sam build --use-container
 
 # Deploy to dev
@@ -856,8 +866,10 @@ node test-local.js --url "https://semaphor.cloud/view/dashboard/[dashboard-id]?t
 
 ```bash
 # 1. Install dependencies first
-cd /Users/rohit/code/semaphor/semaphor-report-scheduler/pdf-generation
-npm install
+cd /path/to/semaphor-report-scheduler
+npm ci --include=dev
+npm --prefix pdf-generation ci
+cd pdf-generation
 
 # 2. Test CSV generation with a real table URL
 node test-local.js --url "YOUR_TABLE_URL_WITH_TOKEN" --format csv

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
+  applyPdfMetadataMock,
   closeBrowserMock,
   encryptPdfBufferMock,
   launchBrowserMock,
@@ -9,6 +10,7 @@ const {
   renderDataTableHtmlMock,
   setContentMock,
 } = vi.hoisted(() => {
+  const applyPdfMetadataMock = vi.fn(async pdfBuffer => pdfBuffer);
   const setContentMock = vi.fn();
   const pagePdfMock = vi.fn();
   const newPageMock = vi.fn(async () => ({
@@ -26,6 +28,7 @@ const {
   }));
 
   return {
+    applyPdfMetadataMock,
     closeBrowserMock,
     encryptPdfBufferMock,
     launchBrowserMock,
@@ -46,7 +49,7 @@ vi.mock('../pdf-encrypt.js', () => ({
 }));
 
 vi.mock('../lib/pdf-metadata.js', () => ({
-  applyPdfMetadata: vi.fn(async pdfBuffer => pdfBuffer),
+  applyPdfMetadata: applyPdfMetadataMock,
 }));
 
 vi.mock('../lib/modes/data-table-paginator.js', () => ({
@@ -85,6 +88,7 @@ const { generatePdfFromData } = await import('../lib/pdf-from-data-generator.js'
 
 describe('pdf-from-data-generator', () => {
   beforeEach(() => {
+    applyPdfMetadataMock.mockClear();
     closeBrowserMock.mockClear();
     encryptPdfBufferMock.mockClear();
     launchBrowserMock.mockClear();
@@ -109,6 +113,9 @@ describe('pdf-from-data-generator', () => {
 
     await generatePdfFromData(payload, {});
 
+    expect(applyPdfMetadataMock).toHaveBeenCalledWith(expect.any(Buffer), {
+      title: 'Fast Path Report',
+    });
     expect(encryptPdfBufferMock).toHaveBeenCalledTimes(1);
     expect(encryptPdfBufferMock).toHaveBeenCalledWith(
       expect.any(Buffer),
@@ -119,5 +126,24 @@ describe('pdf-from-data-generator', () => {
         },
       }
     );
+  });
+
+  it('validates generated pages after metadata and before encryption', async () => {
+    const validatePreparedPdf = vi.fn(async () => {});
+    const payload = {
+      cardType: 'table',
+      password: 'secret',
+      reportTitle: 'Lifecycle report',
+      tableStructure: {
+        headers: ['Name'],
+        rows: [['Revenue']],
+        metadata: {},
+      },
+    };
+
+    await generatePdfFromData(payload, { validatePreparedPdf });
+
+    expect(applyPdfMetadataMock).toHaveBeenCalledBefore(validatePreparedPdf);
+    expect(validatePreparedPdf).toHaveBeenCalledBefore(encryptPdfBufferMock);
   });
 });
