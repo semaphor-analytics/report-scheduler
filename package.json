@@ -9,7 +9,7 @@
   "devDependencies": {
     "concurrently": "^9.2.1",
     "esbuild": "^0.27.2",
-    "react-semaphor": "0.1.475"
+    "react-semaphor": "0.1.476"
   },
   "overrides": {
     "shell-quote": "1.9.0"

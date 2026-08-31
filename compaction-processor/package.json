@@ -11,7 +11,7 @@
     "@aws-sdk/client-s3": "^3.450.0",
     "@aws-sdk/lib-storage": "^3.450.0",
     "esbuild": "^0.27.3",
-    "react-semaphor": "0.1.475"
+    "react-semaphor": "0.1.476"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
