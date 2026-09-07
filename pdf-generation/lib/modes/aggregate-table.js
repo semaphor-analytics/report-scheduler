@@ -255,6 +255,13 @@ export function renderAggregateTableHtml(pages, options = {}) {
             padding: ${TABLE_PDF_DENSITY.headerCellPadding};
           }
 
+          /* Hidden wins collapsed-border conflict with the preceding cell's
+             bottom edge. Keep separate cells for normal page fragmentation. */
+          tbody td.pdf-group-continuation,
+          tbody th.pdf-group-continuation {
+            border-top-style: hidden;
+          }
+
           thead th {
             background: #f3f3f3;
             color: #111;

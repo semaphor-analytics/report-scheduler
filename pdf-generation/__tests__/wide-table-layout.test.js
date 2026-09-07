@@ -1991,7 +1991,7 @@ describe('wide-table-layout', () => {
     ]);
   });
 
-  it('preserves blank aggregate group continuations across horizontal bands', () => {
+  it.each(['fit', 'horizontal_paginate'])('preserves marked aggregate group continuations in %s', (wideTableStrategy) => {
     const columns = [
       { columnId: 'group', label: 'Group', isNumeric: false },
       { columnId: 'material', label: 'Material', isNumeric: false },
@@ -2002,7 +2002,7 @@ describe('wide-table-layout', () => {
       })),
     ];
     const makeCells = (group, material, multiplier) => [
-      { text: group, columnId: 'group', isNumeric: false },
+      { text: group, columnId: 'group', isNumeric: false, className: group === '' ? 'pdf-group-continuation' : '' },
       { text: material, columnId: 'material', isNumeric: false },
       ...Array.from({ length: 20 }, (_, index) => ({
         text: String((index + 1) * multiplier),
@@ -2041,11 +2041,13 @@ describe('wide-table-layout', () => {
     const result = buildWideTableLayout(tableData, {
       pageSize: 'A6',
       orientation: 'portrait',
-      wideTableStrategy: 'horizontal_paginate',
+      wideTableStrategy,
     });
 
-    expect(result.layoutApplied.usedBanding).toBe(true);
-    expect(result.sections.length).toBeGreaterThan(1);
+    if (wideTableStrategy === 'horizontal_paginate') {
+      expect(result.layoutApplied.usedBanding).toBe(true);
+      expect(result.sections.length).toBeGreaterThan(1);
+    }
     expect(
       result.sections.every((section) => {
         const groupCells = section.rows.map((row) =>
@@ -2054,6 +2056,9 @@ describe('wide-table-layout', () => {
         return (
           groupCells[0]?.text === 'ALUMINUM' &&
           groupCells[1]?.text === '' &&
+          groupCells[1]?.className === 'pdf-group-continuation' &&
+          !groupCells[0]?.className.includes('pdf-group-continuation') &&
+          !groupCells[2]?.className.includes('pdf-group-continuation') &&
           groupCells[2]?.text === 'COPPER'
         );
       }),
