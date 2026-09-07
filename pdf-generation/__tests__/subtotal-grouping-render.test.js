@@ -15,6 +15,28 @@ function createHeaderCells(labels) {
 }
 
 describe('subtotal grouping render', () => {
+  it.each([
+    ['aggregate', renderAggregateTableHtml],
+    ['pivot', renderPivotTableHtml],
+  ])('styles only explicitly marked %s group continuations', (tableType, render) => {
+    const input = {
+      headers: [{ cells: createHeaderCells(['Customer', 'Value']) }],
+      rows: [
+        { cells: [{ text: 'A' }, { text: '10' }] },
+        { cells: [{ text: '', className: 'pdf-group-continuation' }, { text: '20' }] },
+        { type: 'subtotal', cells: [{ text: 'Subtotal A' }, { text: '30' }] },
+        { cells: [{ text: '' }, { text: '40' }] },
+      ],
+      metadata: { tableType, rowLevels: 1, groupByCount: 1 },
+    };
+    const { html } = render([input], { wideTableStrategy: 'fit' });
+    expect(html).toContain('tbody td.pdf-group-continuation,');
+    expect(html).toContain('border-top-style: hidden;');
+    expect(html.match(/class="pdf-group-continuation\s*"/g)).toHaveLength(1);
+    expect(html).not.toMatch(/rowspan="[2-9]/);
+    expect(html).toMatch(/tr\s*{\s*break-inside: auto;/);
+  });
+
   it('keeps aggregate subtotals grouped with their detail rows in table body sections', () => {
     const pages = [
       {

@@ -16,6 +16,7 @@ import {
 import { TABLE_PDF_DENSITY } from './table-density.js';
 import {
   BOUNDED_SUBTOTAL_PRINT_CSS,
+  GROUPED_TABLE_CONTINUATION_CSS,
   buildTableReportHeaderHtml,
   escapeHtml,
   getPaginationRowClassName,
@@ -281,6 +282,8 @@ export function renderPivotTableHtml(pages, options = {}) {
             font-weight: 600;
             padding: ${TABLE_PDF_DENSITY.headerCellPadding};
           }
+
+          ${GROUPED_TABLE_CONTINUATION_CSS}
 
           tbody td.numeric,
           tbody th.numeric {

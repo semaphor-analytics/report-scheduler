@@ -15,6 +15,7 @@ import {
 import { TABLE_PDF_DENSITY } from './table-density.js';
 import {
   BOUNDED_SUBTOTAL_PRINT_CSS,
+  GROUPED_TABLE_CONTINUATION_CSS,
   buildTableReportHeaderHtml,
   escapeHtml,
   getPaginationRowClassName,
@@ -255,12 +256,7 @@ export function renderAggregateTableHtml(pages, options = {}) {
             padding: ${TABLE_PDF_DENSITY.headerCellPadding};
           }
 
-          /* Hidden wins collapsed-border conflict with the preceding cell's
-             bottom edge. Keep separate cells for normal page fragmentation. */
-          tbody td.pdf-group-continuation,
-          tbody th.pdf-group-continuation {
-            border-top-style: hidden;
-          }
+          ${GROUPED_TABLE_CONTINUATION_CSS}
 
           thead th {
             background: #f3f3f3;

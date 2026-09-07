@@ -1991,7 +1991,12 @@ describe('wide-table-layout', () => {
     ]);
   });
 
-  it.each(['fit', 'horizontal_paginate'])('preserves marked aggregate group continuations in %s', (wideTableStrategy) => {
+  it.each([
+    ['aggregate', 'fit'],
+    ['aggregate', 'horizontal_paginate'],
+    ['pivot', 'fit'],
+    ['pivot', 'horizontal_paginate'],
+  ])('preserves marked %s group continuations in %s', (tableType, wideTableStrategy) => {
     const columns = [
       { columnId: 'group', label: 'Group', isNumeric: false },
       { columnId: 'material', label: 'Material', isNumeric: false },
@@ -2027,9 +2032,10 @@ describe('wide-table-layout', () => {
         { type: 'data', cells: makeCells('COPPER', 'CLEAN RIMS', 3) },
       ],
       metadata: {
-        tableType: 'aggregate',
+        tableType,
         totalColumns: columns.length,
         groupByCount: 2,
+        rowLevels: 2,
         columns: columns.map((column, index) => ({
           ...column,
           index,

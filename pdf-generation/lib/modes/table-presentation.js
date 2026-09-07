@@ -66,6 +66,15 @@ export const TABLE_REPORT_HEADER_CSS = `
   }
 `;
 
+export const GROUPED_TABLE_CONTINUATION_CSS = `
+  /* Hidden wins collapsed-border conflict with the preceding cell's
+     bottom edge. Keep separate cells for normal page fragmentation. */
+  tbody td.pdf-group-continuation,
+  tbody th.pdf-group-continuation {
+    border-top-style: hidden;
+  }
+`;
+
 export const BOUNDED_SUBTOTAL_PRINT_CSS = `
   thead {
     display: table-header-group;
