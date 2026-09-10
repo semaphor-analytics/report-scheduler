@@ -6,9 +6,11 @@ import {
   S3Client,
   GetObjectCommand,
   DeleteObjectsCommand,
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
-import { Readable, PassThrough } from 'stream';
+import { Readable, PassThrough, addAbortSignal } from 'stream';
 import { createReadStream, createWriteStream } from 'fs';
 import { mkdir, readFile, stat, unlink } from 'fs/promises';
 import path from 'path';
@@ -33,22 +35,24 @@ function localObjectPath(key: string): string {
 /**
  * Get a readable stream for an S3 object.
  */
-export async function getObjectStream(key: string): Promise<Readable> {
+export async function getObjectStream(key: string, signal?: AbortSignal): Promise<Readable> {
+  signal?.throwIfAborted();
   if (LOCAL_STORAGE_DIR) {
-    return createReadStream(localObjectPath(key));
+    return createReadStream(localObjectPath(key), { signal });
   }
   const response = await s3Client.send(
     new GetObjectCommand({
       Bucket: BUCKET_NAME,
       Key: key,
-    })
+    }), { abortSignal: signal }
   );
 
   if (!response.Body) {
     throw new Error(`No body returned for S3 object: ${key}`);
   }
 
-  return response.Body as Readable;
+  const stream = response.Body as Readable;
+  return signal ? addAbortSignal(signal, stream) : stream;
 }
 
 /**
@@ -83,16 +87,43 @@ export async function fetchRawTemporalClassificationByKey(
 export async function uploadStream(
   key: string,
   stream: PassThrough,
-  contentType: string = 'application/gzip'
+  contentType: string = 'application/gzip',
+  signal?: AbortSignal,
 ): Promise<number> {
+  signal?.throwIfAborted();
+  if (signal) addAbortSignal(signal, stream);
   if (LOCAL_STORAGE_DIR) {
     const filePath = localObjectPath(key);
     await mkdir(path.dirname(filePath), { recursive: true });
-    await pipeline(stream, createWriteStream(filePath));
+    signal?.throwIfAborted();
+    await pipeline(stream, createWriteStream(filePath), { signal });
     return (await stat(filePath)).size;
   }
+  // Upload.abort() only races done() in the installed SDK. Cancel actual sends
+  // instead, and await done() so its concurrent requests and cleanup settle.
+  const client: S3Client = signal ? Object.create(s3Client) : s3Client;
+  if (signal) {
+    client.send = (async (command: Parameters<S3Client['send']>[0]) => {
+      const abortSignal = command instanceof AbortMultipartUploadCommand
+        ? AbortSignal.timeout(30_000) : signal;
+      try {
+        return await s3Client.send(command, { abortSignal });
+      } catch (error) {
+        // The SDK cleans up part failures, but not a rejected completion send.
+        if (command instanceof CompleteMultipartUploadCommand) {
+          const { Bucket, Key, UploadId } = command.input;
+          await s3Client.send(new AbortMultipartUploadCommand({ Bucket, Key, UploadId }), {
+            abortSignal: AbortSignal.timeout(30_000),
+          }).catch(() => undefined);
+          // NoSuchUpload may mean completion won; normal retention owns that
+          // object. Cleanup must never delete it or replace the original error.
+        }
+        throw error;
+      }
+    }) as S3Client['send'];
+  }
   const upload = new Upload({
-    client: s3Client,
+    client,
     params: {
       Bucket: BUCKET_NAME,
       Key: key,
@@ -103,7 +134,8 @@ export async function uploadStream(
     },
   });
 
-  const result = await upload.done();
+  await upload.done();
+  signal?.throwIfAborted();
 
   // Get the size from the completed upload
   // The Upload class doesn't directly return size, so we track it during streaming

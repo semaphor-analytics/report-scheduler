@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
   FAST_PDF_POLICY,
   PDF_SAFETY_LIMIT_EXCEEDED,
@@ -42,8 +43,23 @@ function eventWithRows(rowCount, advisoryRowCount = rowCount) {
 }
 
 describe('structured Fast PDF handler safety responses', () => {
+  afterEach(() => vi.unstubAllEnvs());
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('returns uploaded artifact coordinates and actual bytes for downstream delivery', async () => {
+    vi.stubEnv('S3_BUCKET_NAME', 'reports-test');
+    const pdf = Buffer.from('%PDF-1.7 test');
+    mocks.generatePdfFromData.mockResolvedValue(pdf);
+    vi.mocked(getSignedUrl).mockResolvedValue('https://signed.test/report.pdf');
+    const response = await handler(eventWithRows(1));
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toMatchObject({
+      url: 'https://signed.test/report.pdf', s3Bucket: 'reports-test',
+      s3Key: expect.stringMatching(/^pdfs\/.+\.pdf$/),
+      contentType: 'application/pdf', sizeBytes: pdf.length,
+    });
   });
 
   it('returns the stable terminal code for actual row overflow before Chromium', async () => {

@@ -122,12 +122,37 @@ function validatePayload(payload) {
   if (invalidAttachment) {
     return 'each attachment requires presignedUrl and name';
   }
+  if (attachments.some(attachment => !Number.isSafeInteger(attachment.maxBytes) || attachment.maxBytes < 0)) {
+    return 'each attachment requires a nonnegative maxBytes admission bound';
+  }
 
   if (!payload.html && !payload.text) {
     return 'Either html or text is required';
   }
 
   return null;
+}
+
+// Fetch transparently decodes HTTP gzip. Count those decoded bytes while reading,
+// never arrayBuffer() an unbounded response or trust compressed Content-Length.
+async function readAttachment(response, maxBytes) {
+  if (!response.body) throw new Error('Attachment response has no body');
+  const reader = response.body.getReader();
+  const chunks = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > maxBytes) throw new Error('Attachment exceeds its admitted byte limit');
+      chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks, bytes);
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
 }
 
 exports.handler = async (event) => {
@@ -193,7 +218,7 @@ exports.handler = async (event) => {
         );
       }
 
-      const attachmentBuffer = Buffer.from(await attachmentResponse.arrayBuffer());
+      const attachmentBuffer = await readAttachment(attachmentResponse, attachment.maxBytes);
       resendAttachments.push({
         filename: attachment.name,
         content: attachmentBuffer,

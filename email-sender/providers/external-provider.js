@@ -71,6 +71,7 @@ function createExternalProvider({
           return {
             name: attachment.name,
             contentType: attachment.contentType,
+            maxBytes: attachment.maxBytes,
             s3Bucket: attachment.s3Bucket,
             s3Key: attachment.s3Key,
             presignedUrl,

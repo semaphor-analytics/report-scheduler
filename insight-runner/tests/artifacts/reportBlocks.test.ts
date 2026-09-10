@@ -3,6 +3,31 @@ import { buildReportPlan } from "../../src/artifacts/reportBlocks.js";
 import { parseInsightLoopMarkdown } from "../../src/definition/parseInsightLoopMarkdown.js";
 
 describe("buildReportPlan", () => {
+  it("reads Matrix measure formats from window descriptors without resident result metadata", () => {
+    const format = { type: "currency", currency: "EUR", maximumFractionDigits: 3 };
+    const plan = buildReportPlan({
+      definition: parseInsightLoopMarkdown("# Revenue\n\nShow revenue."),
+      answer: { title: "Revenue", findings: [{ claim: "Revenue is available.", evidenceIds: ["ev_matrix"] }], limitations: [], nextActions: [] },
+      evidence: { runId: "matrix-run", entries: [{
+        id: "ev_matrix", type: "tool_call", summary: "Matrix window", createdAt: "2026-09-09T00:00:00.000Z",
+        query: { queryPath: "semaphor_analyze", resultSample: [{ revenue: 1234.5 }], analyticsExecutionResult: {
+          status: "answered",
+          validation: { ok: true, errors: [], warnings: [], repairHints: [] },
+          result: { kind: "matrix", window: {
+            queryIdentity: "query", descriptors: { levels: [], measures: [{
+              id: "00000000-0000-4000-8000-000000000001", nativeDataType: "numeric",
+              column: { key: "revenue", name: "revenue", label: "Revenue", dataType: "number", role: "measure" },
+              semanticFormat: format,
+            }] },
+            capabilities: { dialect: "postgres", aggregates: ["SUM"] }, pages: [], blocks: [], failures: [],
+          } },
+        } },
+      }] },
+    });
+    expect(plan.blocks).toContainEqual(expect.objectContaining({
+      type: "metric", target: { kind: "column", columnKey: "revenue" }, authoredFormat: expect.objectContaining(format),
+    }));
+  });
   it("builds structured blocks including evidence-backed tables", () => {
     const plan = buildReportPlan({
       definition: parseInsightLoopMarkdown("# Weekly Revenue\n\nExplain revenue."),

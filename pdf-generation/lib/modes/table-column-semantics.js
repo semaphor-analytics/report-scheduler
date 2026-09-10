@@ -702,6 +702,9 @@ export function buildPdfTableModel(tableData = {}, options = {}) {
     tableData.grandTotal ? getExpandedCellCount(tableData.grandTotal.cells || []) : 0,
   );
   const physicalRows = normalizePhysicalRows(rows, leafCount);
+  // Authored before/after totals may live anywhere in the bounded body. Never
+  // let the ordinary detail sample hide a wider numeric total near the tail.
+  const widthSampleRows = physicalRows.filter((_, index) => index < 50 || rows[index]?.type === 'subtotal');
   const physicalGrandTotal = normalizePhysicalTotal(tableData.grandTotal, leafCount);
   const columnsMeta = Array.isArray(metadata.columns) ? metadata.columns : [];
 
@@ -722,11 +725,12 @@ export function buildPdfTableModel(tableData = {}, options = {}) {
       normalizeCellText(headerCell.text) ||
       normalizeCellText(columnMeta?.label) ||
       `Column ${sourceIndex + 1}`;
-    const sampleValues = physicalRows
-      .slice(0, 50)
+    const sampleValues = widthSampleRows
       .map((row) => row[sourceIndex]?.text ?? '');
     const totalValue = physicalGrandTotal?.[sourceIndex]?.text ?? '';
     const type = inferColumnType(headerCell, columnMeta, [...sampleValues, totalValue]);
+    // Inferred numeric appearance is not a declaration of exact-value integrity.
+    const declaredNumeric = resolvePdfNumericSemantic(headerCell, columnMeta) === true;
     const typeMinWidthPx = getColumnWidthBounds(type).min;
     const measuredWidthPx = Number.isFinite(columnMeta?.measuredWidthPx)
       ? Number(columnMeta.measuredWidthPx)
@@ -736,9 +740,11 @@ export function buildPdfTableModel(tableData = {}, options = {}) {
     const widthPx = estimateColumnWidthPx({
       type,
       label,
-      sampleValues,
+      sampleValues: declaredNumeric
+        ? physicalRows.map(row => row[sourceIndex]?.text ?? '') : sampleValues,
       grandTotalValue: totalValue,
       measuredWidthPx,
+      declaredNumeric,
     });
     const minWidthPx = type === 'numeric' ? widthPx : typeMinWidthPx;
 
@@ -751,6 +757,7 @@ export function buildPdfTableModel(tableData = {}, options = {}) {
       minWidthPx,
       widthPx,
       isNumeric: type === 'numeric',
+      declaredNumeric,
     };
   });
   const isPivotTable = isPivotTableMetadata(metadata);

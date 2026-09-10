@@ -1,5 +1,6 @@
 const AWS = require('aws-sdk');
 const crypto = require('crypto');
+const { gunzipSync } = require('node:zlib');
 const s3 = new AWS.S3();
 
 const { getEmailSenderConfig } = require('./lib/config');
@@ -71,6 +72,7 @@ function normalizeArtifacts(rawAttachments) {
       rawName: attachmentName,
       format,
       contentType,
+      ...(attachment?.contentEncoding === 'gzip' ? { contentEncoding: 'gzip' } : {}),
       s3Bucket,
       s3Key,
       sizeBytes:
@@ -88,6 +90,7 @@ function buildDownloadLinks(attachments, expiresInSeconds) {
       Key: attachment.s3Key,
       Expires: expiresInSeconds,
       ResponseContentDisposition: `attachment; filename="${attachment.name}"`,
+      ...(attachment.contentEncoding ? { ResponseContentEncoding: attachment.contentEncoding, ResponseContentType: attachment.contentType } : {}),
     }),
   }));
 }
@@ -96,11 +99,13 @@ function buildExternalPayloadAttachments(attachments, expiresInSeconds) {
   return attachments.map((attachment) => ({
     name: attachment.name,
     contentType: attachment.contentType,
+    maxBytes: attachment.resolvedSizeBytes,
     presignedUrl: s3.getSignedUrl('getObject', {
       Bucket: attachment.s3Bucket,
       Key: attachment.s3Key,
       Expires: expiresInSeconds,
       ResponseContentDisposition: `attachment; filename="${attachment.name}"`,
+      ...(attachment.contentEncoding ? { ResponseContentEncoding: attachment.contentEncoding, ResponseContentType: attachment.contentType } : {}),
     }),
     s3Bucket: attachment.s3Bucket,
     s3Key: attachment.s3Key,
@@ -108,7 +113,7 @@ function buildExternalPayloadAttachments(attachments, expiresInSeconds) {
   }));
 }
 
-async function resolveAttachmentSizeBytes(attachment) {
+async function resolveAttachmentSizeBytes(attachment, storage) {
   if (
     typeof attachment?.sizeBytes === 'number' &&
     Number.isFinite(attachment.sizeBytes) &&
@@ -117,7 +122,7 @@ async function resolveAttachmentSizeBytes(attachment) {
     return attachment.sizeBytes;
   }
 
-  const objectHead = await s3
+  const objectHead = await storage
     .headObject({
       Bucket: attachment.s3Bucket,
       Key: attachment.s3Key,
@@ -134,11 +139,11 @@ async function resolveAttachmentSizeBytes(attachment) {
   return contentLength;
 }
 
-async function resolveAttachmentsWithSize(attachments) {
+async function resolveAttachmentsWithSize(attachments, storage) {
   const resolved = await Promise.all(
     attachments.map(async (attachment) => ({
       ...attachment,
-      resolvedSizeBytes: await resolveAttachmentSizeBytes(attachment),
+      resolvedSizeBytes: await resolveAttachmentSizeBytes(attachment, storage),
     }))
   );
 
@@ -194,23 +199,34 @@ function estimateSesRawMessageSizeBytes({
   return estimated + SES_MIME_SIZE_SAFETY_BUFFER_BYTES;
 }
 
-async function attachSesBuffers(attachments) {
+async function bufferAttachments(attachments, maxBytes, storage) {
   const bufferedAttachments = [];
+  let retainedBytes = 0;
 
   for (const attachment of attachments) {
-    const objectData = await s3
+    const objectData = await storage
       .getObject({
         Bucket: attachment.s3Bucket,
         Key: attachment.s3Key,
       })
       .promise();
-    const fileBuffer = Buffer.isBuffer(objectData.Body)
+    const storedBuffer = Buffer.isBuffer(objectData.Body)
       ? objectData.Body
       : Buffer.from(objectData.Body || '');
+    const remaining = maxBytes - retainedBytes;
+    if (remaining <= 0 || storedBuffer.length > remaining) {
+      const error = new Error('Attachments exceed the email byte budget');
+      error.code = 'ERR_BUFFER_TOO_LARGE';
+      throw error;
+    }
+    const fileBuffer = attachment.contentEncoding === 'gzip'
+      ? gunzipSync(storedBuffer, { maxOutputLength: remaining }) : storedBuffer;
+    retainedBytes += fileBuffer.length;
 
     bufferedAttachments.push({
       ...attachment,
       fileBuffer,
+      resolvedSizeBytes: fileBuffer.length,
     });
   }
 
@@ -285,6 +301,7 @@ async function prepareEmailDelivery({
   scheduleId,
   leaseOwner,
   config,
+  storage = s3,
 }) {
   let attachmentsForProvider = artifacts;
   let totalAttachmentBytes = 0;
@@ -303,8 +320,8 @@ async function prepareEmailDelivery({
     downloadLinks,
   });
 
-  if (provider.name === 'SES') {
-    const resolved = await resolveAttachmentsWithSize(artifacts);
+  if (provider.name === 'SES' || provider.name === 'EXTERNAL') {
+    const resolved = await resolveAttachmentsWithSize(artifacts, storage);
     const sizedArtifacts = resolved.attachments;
     totalAttachmentBytes = resolved.totalAttachmentBytes;
     const longestRecipient = getLongestRecipient(emailContext.recipientEmails);
@@ -318,6 +335,23 @@ async function prepareEmailDelivery({
       attachments: sizedArtifacts,
     });
 
+    let buffered;
+    if (estimatedSesRawSizeBytes <= config.emailMaxRawSizeBytes) {
+      try {
+        buffered = provider.name === 'SES' || sizedArtifacts.some(artifact => artifact.contentEncoding === 'gzip')
+          ? (await bufferAttachments(sizedArtifacts, config.emailMaxRawSizeBytes, storage)).attachments
+          : sizedArtifacts;
+        // Compressed object length is not the delivered MIME length.
+        estimatedSesRawSizeBytes = estimateSesRawMessageSizeBytes({
+          from: emailContext.senderEmail, to: longestRecipient ? [longestRecipient] : [],
+          subject: emailContext.emailSubject, textBody: emailBodies.textBody,
+          htmlBody: emailBodies.htmlBody, attachments: buffered,
+        });
+      } catch (error) {
+        if (error.code !== 'ERR_BUFFER_TOO_LARGE') throw error;
+        estimatedSesRawSizeBytes = config.emailMaxRawSizeBytes + 1;
+      }
+    }
     if (estimatedSesRawSizeBytes > config.emailMaxRawSizeBytes) {
       usedLinkFallback = true;
       attachmentsForProvider = [];
@@ -336,14 +370,10 @@ async function prepareEmailDelivery({
         downloadLinks,
       });
     } else {
-      const withBuffers = await attachSesBuffers(sizedArtifacts);
-      attachmentsForProvider = withBuffers.attachments;
+      attachmentsForProvider = provider.name === 'SES' ? buffered : buildExternalPayloadAttachments(
+        buffered, EXTERNAL_PROVIDER_URL_EXPIRY_SECONDS,
+      );
     }
-  } else if (provider.name === 'EXTERNAL') {
-    attachmentsForProvider = buildExternalPayloadAttachments(
-      artifacts,
-      EXTERNAL_PROVIDER_URL_EXPIRY_SECONDS
-    );
   }
 
   return {

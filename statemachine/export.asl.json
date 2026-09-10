@@ -1,7 +1,84 @@
 {
   "Comment": "Semaphor Export Processor - Parallel chunk processing with compaction v2",
-  "StartAt": "ProcessChunks",
+  "StartAt": "ChooseAcquisition",
   "States": {
+    "ChooseAcquisition": {
+      "Type": "Choice",
+      "Choices": [{ "Variable": "$.acquisition", "IsPresent": true, "Next": "ValidateContinuation" }],
+      "Default": "ProcessChunks"
+    },
+    "ValidateContinuation": {
+      "Type": "Choice",
+      "Choices": [{ "Variable": "$.acquisition", "StringEquals": "continuation", "Next": "ValidateMatrixDeadline" }],
+      "Default": "InvalidAcquisition"
+    },
+    "InvalidAcquisition": { "Type": "Fail", "Error": "InvalidExportAcquisition" },
+    "ValidateMatrixDeadline": {
+      "Type": "Choice",
+      "Choices": [{ "And": [
+        { "Variable": "$.deadlineAt", "IsPresent": true },
+        { "Variable": "$.deadlineAt", "IsNumeric": true },
+        { "Variable": "$.deadlineAt", "NumericGreaterThan": 0 }
+      ], "Next": "ResetMatrixBatchRetry" }],
+      "Default": "InvalidMatrixDeadline"
+    },
+    "InvalidMatrixDeadline": {
+      "Type": "Pass",
+      "Result": { "Error": "ExportQueryRejectedError", "Cause": "Matrix continuation deadlineAt is required." },
+      "ResultPath": "$.error",
+      "Next": "MarkExportFailed"
+    },
+    "ProcessMatrixBatch": {
+      "Type": "Task", "Resource": "${ChunkProcessorArn}",
+      "Parameters": { "acquisition": "continuation", "jobId.$": "$.jobId", "sequence.$": "$.continuation.sequence", "deadlineAt.$": "$.deadlineAt" },
+      "ResultPath": "$.continuation",
+      "Catch": [
+        { "ErrorEquals": ["ExportQueryRejectedError"], "Next": "MarkExportFailed", "ResultPath": "$.error" },
+        { "ErrorEquals": ["States.ALL"], "Next": "CanRetryMatrix", "ResultPath": "$.error" }
+      ],
+      "Next": "MatrixExhausted"
+    },
+    "MatrixExhausted": {
+      "Type": "Choice",
+      "Choices": [{ "Variable": "$.continuation.done", "BooleanEquals": true, "Next": "ResetMatrixFinalizationRetry" }],
+      "Default": "ResetMatrixBatchRetry"
+    },
+    "ResetMatrixBatchRetry": {
+      "Type": "Pass", "Result": { "count": 0, "phase": "batch", "replayOnly": false },
+      "ResultPath": "$.matrixRetry", "Next": "DispatchMatrixAttempt"
+    },
+    "ResetMatrixFinalizationRetry": {
+      "Type": "Pass", "Result": { "count": 0, "phase": "finalization", "replayOnly": false },
+      "ResultPath": "$.matrixRetry", "Next": "DispatchMatrixAttempt"
+    },
+    "DispatchMatrixAttempt": {
+      "Type": "Choice", "QueryLanguage": "JSONata",
+      "Choices": [
+        { "Condition": "{% $states.input.matrixRetry.phase = 'batch' and $states.input.deadlineAt <= $millis() %}", "Next": "ResetMatrixFinalizationRetry" },
+        { "Condition": "{% $states.input.matrixRetry.phase = 'batch' %}", "Next": "ProcessMatrixBatch" }
+      ],
+      "Default": "StampMatrixFinalizationAttempt"
+    },
+    "StampMatrixFinalizationAttempt": {
+      "Type": "Pass", "QueryLanguage": "JSONata",
+      "Output": "{% $merge([$states.input, {'matrixRetry': $merge([$states.input.matrixRetry, {'replayOnly': $states.input.deadlineAt <= $millis()}])}]) %}",
+      "Next": "CompactMatrixAndNotify"
+    },
+    "CanRetryMatrix": {
+      "Type": "Choice", "QueryLanguage": "JSONata",
+      "Choices": [{ "Condition": "{% $states.input.matrixRetry.count < 3 and $not($states.input.matrixRetry.replayOnly) %}", "Next": "WaitMatrixRetry" }],
+      "Default": "MarkExportFailed"
+    },
+    "WaitMatrixRetry": {
+      "Type": "Wait", "QueryLanguage": "JSONata",
+      "Timestamp": "{% $fromMillis($min([$states.input.deadlineAt, $millis() + 5000 * $power(2, $states.input.matrixRetry.count)])) %}",
+      "Next": "IncrementMatrixRetry"
+    },
+    "IncrementMatrixRetry": {
+      "Type": "Pass", "QueryLanguage": "JSONata",
+      "Output": "{% $merge([$states.input, {'matrixRetry': $merge([$states.input.matrixRetry, {'count': $states.input.matrixRetry.count + 1}])}]) %}",
+      "Next": "DispatchMatrixAttempt"
+    },
     "ProcessChunks": {
       "Type": "Map",
       "ItemsPath": "$.chunks",
@@ -61,6 +138,15 @@
           "Next": "MarkExportFailed",
           "ResultPath": "$.error"
         }
+      ],
+      "End": true
+    },
+    "CompactMatrixAndNotify": {
+      "Type": "Task", "Resource": "${CompactionProcessorArn}",
+      "Parameters": { "acquisition": "continuation", "jobId.$": "$.jobId", "deadlineAt.$": "$.deadlineAt" },
+      "Catch": [
+        { "ErrorEquals": ["ExportQueryRejectedError"], "Next": "MarkExportFailed", "ResultPath": "$.error" },
+        { "ErrorEquals": ["States.ALL"], "Next": "CanRetryMatrix", "ResultPath": "$.error" }
       ],
       "End": true
     },

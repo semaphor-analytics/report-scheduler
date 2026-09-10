@@ -41,8 +41,12 @@ import {
  */
 export async function generatePdfFromData(payload, options = {}) {
   let browser = null;
+  const signal = options.signal;
+  const cancel = () => { void browser?.close().catch(() => undefined); };
 
   try {
+    signal?.throwIfAborted();
+    signal?.addEventListener('abort', cancel, { once: true });
     validatePayload(payload);
 
     console.log('Starting fast-path PDF generation');
@@ -54,6 +58,7 @@ export async function generatePdfFromData(payload, options = {}) {
     const generation = buildGenerationArtifacts(payload, options);
 
     browser = await launchBrowser(options.isLambda);
+    signal?.throwIfAborted();
     const page = await browser.newPage();
 
     await page.setContent(generation.html, {
@@ -62,6 +67,7 @@ export async function generatePdfFromData(payload, options = {}) {
     });
 
     let pdfBuffer = await page.pdf(generation.pdfOptions);
+    signal?.throwIfAborted();
     console.log('PDF buffer size:', pdfBuffer?.length || 0);
 
     if (!pdfBuffer?.length) {
@@ -97,11 +103,13 @@ export async function generatePdfFromData(payload, options = {}) {
       pdfBuffer.layoutApplied = generation.layoutApplied;
     }
 
+    signal?.throwIfAborted();
     return pdfBuffer;
   } catch (error) {
     console.error('Fast-path PDF generation error:', error);
     throw error;
   } finally {
+    signal?.removeEventListener('abort', cancel);
     await closeBrowser(browser);
   }
 }
@@ -219,6 +227,7 @@ function buildGenerationArtifacts(payload, options = {}) {
       break;
     }
 
+    case 'matrixTable':
     case 'pivotTable': {
       const pages = paginateTableData(paginatorInput, paginatorOptions);
       const renderResult = renderPivotTableHtml(pages, {

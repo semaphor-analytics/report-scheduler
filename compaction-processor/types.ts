@@ -20,12 +20,19 @@ export interface ChunkResult {
 }
 
 export interface CompactionInput {
+  acquisition?: never;
   jobId: string;
   exportToken: string;
   chunkResults: ChunkResult[];
   cardConfig: Record<string, unknown>;
   formatting: unknown;
   tableTotalsRequest?: unknown;
+}
+
+export interface MatrixCompactionInput {
+  acquisition: 'continuation';
+  jobId: string;
+  deadlineAt: number;
 }
 
 export interface CompactionResult {

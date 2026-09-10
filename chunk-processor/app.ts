@@ -10,6 +10,7 @@
  */
 
 import type { ChunkInput, ChunkResult } from './types';
+import { processMatrixBatch, type MatrixBatchInput, type MatrixBatchResult } from './lib/matrix-batch';
 import {
   queryData,
   fetchChunkStatus,
@@ -57,7 +58,13 @@ function requireCompletedChunkState(
   };
 }
 
-export async function handler(event: ChunkInput): Promise<ChunkResult> {
+export function handler(event: MatrixBatchInput): Promise<MatrixBatchResult>;
+export function handler(event: ChunkInput): Promise<ChunkResult>;
+export async function handler(event: ChunkInput | MatrixBatchInput): Promise<ChunkResult | MatrixBatchResult> {
+  if ('acquisition' in event) {
+    if (event.acquisition !== 'continuation') throw new Error('Unknown export acquisition mode.');
+    return processMatrixBatch(event);
+  }
   const {
     chunkId,
     chunkNumber,

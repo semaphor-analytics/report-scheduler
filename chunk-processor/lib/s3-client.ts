@@ -184,3 +184,19 @@ export async function fetchRawTemporalClassification(params: {
 export function getBucketName(): string {
   return BUCKET_NAME;
 }
+
+/** Unique attempt keys are never overwritten; DB completion publishes one. */
+export async function uploadExportAttempt(input: { key: string; content: string; contentType: string }, signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  if (LOCAL_STORAGE_DIR) {
+    const filename = localObjectPath(input.key);
+    await mkdir(path.dirname(filename), { recursive: true });
+    signal?.throwIfAborted();
+    await writeFile(filename, input.content, { flag: 'wx', signal });
+    signal?.throwIfAborted();
+    return;
+  }
+  await s3Client.send(new PutObjectCommand({ Bucket: BUCKET_NAME, Key: input.key,
+    Body: input.content, ContentType: input.contentType, IfNoneMatch: '*' }), { abortSignal: signal });
+  signal?.throwIfAborted();
+}

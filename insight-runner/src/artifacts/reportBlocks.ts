@@ -496,7 +496,6 @@ function readGovernedNumericFormats(
   const intents = [
     execution.intent,
     execution.compiledQuery?.analyticsIntent,
-    execution.result?.kind === "matrix" ? execution.result.intent : undefined,
   ].filter((intent): intent is NonNullable<typeof intent> => Boolean(intent));
 
   for (const intent of intents) {
@@ -523,14 +522,14 @@ function readGovernedNumericFormats(
       );
     }
   } else if (result?.kind === "matrix") {
-    for (const measure of Object.values(result.measuresById)) {
+    for (const measure of result.window.descriptors.measures) {
       register(
         [
-          measure.instanceId,
-          measure.fieldKey,
-          measure.field.name,
+          measure.id,
+          measure.column.key,
+          measure.column.name,
         ],
-        measure.format,
+        measure.semanticFormat,
       );
     }
   }

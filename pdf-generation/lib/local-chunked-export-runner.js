@@ -1,4 +1,5 @@
 import { createRequire } from 'module';
+import { matrixExportDeadlineSchema } from 'react-semaphor/format-utils';
 
 const require = createRequire(import.meta.url);
 
@@ -25,7 +26,13 @@ export function validateLocalChunkedExportInput(input) {
   if (typeof input.exportToken !== 'string' || !input.exportToken.trim()) {
     throw new Error('exportToken is required');
   }
-  if (!Array.isArray(input.chunks) || input.chunks.length === 0) {
+  if (input.acquisition !== undefined && input.acquisition !== 'continuation') {
+    throw new Error('Unknown export acquisition mode');
+  }
+  if (input.acquisition === 'continuation' && !matrixExportDeadlineSchema.safeParse(input.deadlineAt).success) {
+    throw new Error('Matrix continuation deadlineAt is required');
+  }
+  if (input.acquisition !== 'continuation' && (!Array.isArray(input.chunks) || input.chunks.length === 0)) {
     throw new Error('chunks must contain at least one chunk');
   }
   if (!input.cardConfig || typeof input.cardConfig !== 'object') {
@@ -87,6 +94,29 @@ async function processChunks(inputs, handler, maxConcurrency, attempts) {
   return results;
 }
 
+function deadlineError() {
+  return Object.assign(new Error('Matrix export deadline exceeded. Narrow the export and retry.'), {
+    name: 'ExportQueryRejectedError', retryable: false,
+  });
+}
+
+async function runMatrixWithRetry(input, handler, attempts, finalization = false) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const replayOnly = Date.now() >= input.deadlineAt;
+    if (replayOnly && !finalization) throw deadlineError();
+    try {
+      // Workers own cancellation of real I/O and await shutdown before rejecting.
+      return await handler(input);
+    } catch (error) {
+      if (error?.retryable === false || attempt === attempts || replayOnly) throw error;
+      const remaining = input.deadlineAt - Date.now();
+      if (remaining > 0) {
+        await new Promise(resolve => setTimeout(resolve, Math.min(5000 * 2 ** (attempt - 1), remaining)));
+      }
+    }
+  }
+}
+
 function positiveInteger(value, fallback) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -103,7 +133,7 @@ export async function runLocalChunkedExport(input, options = {}) {
     options.attempts || process.env.LOCAL_EXPORT_CHUNK_ATTEMPTS,
     4,
   );
-  const chunkInputs = request.chunks.map((chunk) => ({
+  const chunkInputs = (request.chunks || []).map((chunk) => ({
     ...chunk,
     jobId: request.jobId,
     exportToken: request.exportToken,
@@ -115,6 +145,16 @@ export async function runLocalChunkedExport(input, options = {}) {
   }));
 
   try {
+    if (request.acquisition === 'continuation') {
+      let cursor = { sequence: 1, done: false };
+      // An expired invocation can only reconcile an app-confirmed completed job.
+      const replayOnly = Date.now() >= request.deadlineAt;
+      while (!cursor.done && !replayOnly) {
+        cursor = await runMatrixWithRetry({ acquisition: 'continuation', jobId: request.jobId, sequence: cursor.sequence, deadlineAt: request.deadlineAt }, handlers.chunkHandler, attempts);
+        if (cursor.deadlineAt !== request.deadlineAt) throw new Error('Matrix deadline does not match the job.');
+      }
+      return await runMatrixWithRetry({ ...request, chunks: undefined, acquisition: 'continuation' }, handlers.compactionHandler, attempts, true);
+    }
     const chunkResults = await processChunks(
       chunkInputs,
       handlers.chunkHandler,

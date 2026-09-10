@@ -413,7 +413,14 @@ async function handleDataDirectRequest(event) {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
       },
-      body: JSON.stringify({ url: presignedUrl, layoutApplied }),
+      body: JSON.stringify({
+        url: presignedUrl,
+        layoutApplied,
+        s3Bucket: bucketName,
+        s3Key: fileKey,
+        contentType: 'application/pdf',
+        sizeBytes: outputBytes,
+      }),
     };
   } catch (error) {
     console.error('Data-direct PDF generation error:', error);

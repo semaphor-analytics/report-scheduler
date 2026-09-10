@@ -34,4 +34,12 @@ describe('chunk storage local adapter', () => {
       'id,name\n1,Ada\n',
     );
   });
+  it('closes immutable attempt files and never overwrites an existing attempt', async () => {
+    const { uploadExportAttempt } = await import('./s3-client');
+    const object = { key: 'exports/job/attempts/one/data.csv', content: 'raw\n0.000009\n', contentType: 'text/csv' };
+    await uploadExportAttempt(object);
+    await expect(readFile(path.join(storageDir, object.key), 'utf8')).resolves.toBe(object.content);
+    await expect(uploadExportAttempt({ ...object, content: 'changed' })).rejects.toMatchObject({ code: 'EEXIST' });
+    await expect(readFile(path.join(storageDir, object.key), 'utf8')).resolves.toBe(object.content);
+  });
 });

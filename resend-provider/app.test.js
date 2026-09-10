@@ -34,6 +34,7 @@ require.cache[resendModulePath] = {
 };
 
 const { handler } = require('./app');
+const { createExternalProvider } = require('../email-sender/providers/external-provider');
 
 function signedEvent(payload, secret = 'test-secret') {
   const rawBody = JSON.stringify(payload);
@@ -57,6 +58,52 @@ function signedEvent(payload, secret = 'test-secret') {
     body: rawBody,
   };
 }
+
+test('sender admission bounds survive the signed transport and bound decoded attachment reads', async () => {
+  const originalSecret = process.env.EMAIL_EXTERNAL_AUTH_SECRET;
+  const originalKey = process.env.RESEND_API_KEY;
+  const originalFetch = global.fetch;
+  process.env.EMAIL_EXTERNAL_AUTH_SECRET = 'test-secret';
+  process.env.RESEND_API_KEY = 'resend-test-key';
+  sentEmails.length = 0;
+  let overflow = false, cancelled = false, reads = 0;
+  const csv = Buffer.from('Value\n0.000009\n');
+  global.fetch = async (url, init) => {
+    if (url === 'https://provider.test/send') {
+      const response = await handler({ headers: init.headers, body: init.body });
+      return new Response(response.body, { status: response.statusCode });
+    }
+    if (!overflow) return new Response(csv);
+    return new Response(new ReadableStream({
+      pull(controller) { reads++; controller.enqueue(new Uint8Array(csv.length)); },
+      cancel() { cancelled = true; },
+    }, { highWaterMark: 0 }), { headers: { 'content-length': '1', 'content-encoding': 'gzip' } });
+  };
+  try {
+    const provider = createExternalProvider({ webhookUrl: 'https://provider.test/send', authSecret: 'test-secret' });
+    const message = { from: 'reports@example.com', to: ['ops@example.com'], subject: 'Matrix', textBody: 'Attached',
+      attachments: [{ name: 'Matrix.csv', contentType: 'text/csv', s3Bucket: 'bucket', s3Key: 'exports/final.csv.gz',
+        presignedUrl: 'https://artifact.test/csv', maxBytes: csv.length }] };
+    assert.equal((await provider.send(message)).success, true);
+    assert.deepEqual(sentEmails[0].message.attachments[0].content, csv);
+    overflow = true;
+    const result = await provider.send(message);
+    assert.equal(result.success, false);
+    assert.match(result.error, /admitted byte limit/);
+    assert.equal(cancelled, true);
+    assert.equal(reads, 2);
+    assert.equal(sentEmails.length, 1);
+    delete message.attachments[0].maxBytes;
+    assert.equal((await provider.send(message)).success, false);
+    assert.equal(reads, 2);
+  } finally {
+    global.fetch = originalFetch;
+    if (originalSecret === undefined) delete process.env.EMAIL_EXTERNAL_AUTH_SECRET;
+    else process.env.EMAIL_EXTERNAL_AUTH_SECRET = originalSecret;
+    if (originalKey === undefined) delete process.env.RESEND_API_KEY;
+    else process.env.RESEND_API_KEY = originalKey;
+  }
+});
 
 test('body-only payloads send without attachments', async () => {
   const originalSecret = process.env.EMAIL_EXTERNAL_AUTH_SECRET;

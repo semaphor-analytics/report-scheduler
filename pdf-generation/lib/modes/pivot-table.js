@@ -166,9 +166,7 @@ export function renderPivotTableHtml(pages, options = {}) {
         ${(row.cells || [])
           .map(
             (cell) => `
-          <${cell.isHeader ? 'th' : 'td'} colspan="${cell.colspan || 1}" rowspan="${cell.rowspan || 1}" class="${cell.className || ''} ${cell.isNumeric ? 'numeric' : ''}">
-            ${escapeHtml(cell.text)}
-          </${cell.isHeader ? 'th' : 'td'}>
+          <${cell.isHeader ? 'th' : 'td'} colspan="${cell.colspan || 1}" rowspan="${cell.rowspan || 1}" class="${cell.className || ''} ${cell.isNumeric ? 'numeric' : ''}">${escapeHtml(cell.text)}</${cell.isHeader ? 'th' : 'td'}>
         `,
           )
           .join('')}
@@ -284,6 +282,10 @@ export function renderPivotTableHtml(pages, options = {}) {
           }
 
           ${GROUPED_TABLE_CONTINUATION_CSS}
+
+          tbody td.matrix-hierarchy {
+            white-space: pre-wrap;
+          }
 
           tbody td.numeric,
           tbody th.numeric {

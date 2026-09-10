@@ -169,6 +169,7 @@ Resources:
             Resource:
               - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/pdfs/*'
               - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/emails/*'
+              - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*/attempts/*/export.csv.gz'
           - Sid: AllowChunkProcessorAccess
             Effect: Allow
             Principal:
@@ -273,6 +274,7 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/pdfs/*'
                   - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/emails/*'
+                  - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*/attempts/*/export.csv.gz'
               - Effect: Allow
                 Action:
                   - ses:SendRawEmail

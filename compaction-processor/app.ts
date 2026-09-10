@@ -9,7 +9,8 @@
  * 5. Clean up delta files
  */
 
-import type { CompactionInput, CompactionResult, ChunkResult } from './types';
+import type { CompactionInput, CompactionResult, ChunkResult, MatrixCompactionInput } from './types';
+import { compactMatrixExport } from './lib/matrix-compaction';
 import { updateJobStatus, completeJob } from './lib/api-client';
 import { compactChunks, cleanupChunks } from './lib/compactor';
 import { resolveCompactionFooter } from './lib/footer';
@@ -107,8 +108,12 @@ function rawTemporalClassificationsMatch(
 }
 
 export async function handler(
-  event: CompactionInput,
+  event: CompactionInput | MatrixCompactionInput,
 ): Promise<CompactionResult> {
+  if (event.acquisition !== undefined) {
+    if (event.acquisition !== 'continuation') throw new Error('Unknown export acquisition mode.');
+    return compactMatrixExport(event.jobId, event.deadlineAt);
+  }
   const { jobId, chunkResults } = event;
 
   console.log(`Starting compaction for job ${jobId}`);

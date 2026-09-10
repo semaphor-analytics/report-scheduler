@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildPdfTableModel } from '../lib/modes/table-column-semantics.js';
+import { buildWideTableLayout } from '../lib/modes/wide-table-layout.js';
 
 function columnSummary(model) {
   return model.columns.map((column) => ({
@@ -11,6 +12,45 @@ function columnSummary(model) {
 }
 
 describe('PDF table model invariants', () => {
+  it('keeps inferred numeric widths bounded even with a long tail outlier', () => {
+    const data = {
+      headers: [{ cells: [{ text: 'Value' }] }],
+      rows: Array.from({ length: 61 }, (_, i) => ({ cells: [{ text: i === 60 ? '9'.repeat(1000) : '1' }] })),
+    };
+    expect(buildPdfTableModel(data).columns[0]).toMatchObject({ isNumeric: true, declaredNumeric: false });
+    expect(buildPdfTableModel(data).columns[0].widthPx).toBeLessThanOrEqual(184);
+    for (const wideTableStrategy of ['fit', 'auto', 'horizontal_paginate'])
+      expect(() => buildWideTableLayout(data, { wideTableStrategy })).not.toThrow();
+  });
+
+  it.each(['pdfIsNumeric', 'metadata', 'isNumeric'])('protects declared numeric integrity from %s', source => {
+    const header = { text: 'Value', columnId: 'v' };
+    const data = { headers: [{ cells: [header] }], rows: [{ cells: [{ text: '9'.repeat(1000) }] }] };
+    if (source === 'metadata') data.metadata = { columns: [{ columnId: 'v', isNumeric: true }] };
+    else header[source] = true;
+    expect(buildPdfTableModel(data).columns[0].declaredNumeric).toBe(true);
+    expect(() => buildWideTableLayout(data, { wideTableStrategy: 'auto' })).toThrow('without clipping');
+  });
+  it('reserves all digits beyond the cosmetic cap and rejects an impossible single numeric band', () => {
+    const data = {
+      headers: [{ cells: [{ text: 'Value', isNumeric: true }] }],
+      rows: Array.from({ length: 61 }, (_, i) => ({ cells: [{ text: i === 60 ? '123456789012345678901234567890.12' : '1' }] })),
+    };
+    expect(buildPdfTableModel(data).columns[0].widthPx).toBeGreaterThan(184);
+    data.rows[60].cells[0].text = '9'.repeat(1000);
+    for (const wideTableStrategy of ['fit', 'auto', 'horizontal_paginate'])
+      expect(() => buildWideTableLayout(data, { wideTableStrategy })).toThrow('without clipping');
+  });
+  it('sizes late body totals like a dedicated grand total without changing their order', () => {
+    const headers = [{ cells: [{ text: 'Region' }, { text: 'Value', isNumeric: true }] }];
+    const detail = Array.from({ length: 60 }, (_, i) => ({ type: 'data', cells: [{ text: String(i) }, { text: '1' }] }));
+    const total = { type: 'subtotal', cells: [{ text: 'Grand Total' }, { text: '1000000' }] };
+    const bodyTotal = buildPdfTableModel({ headers, rows: [...detail, total] });
+    const footerTotal = buildPdfTableModel({ headers, rows: detail, grandTotal: total });
+    expect(bodyTotal.columns[1].widthPx).toBe(footerTotal.columns[1].widthPx);
+    expect(bodyTotal.columns[1].minWidthPx).toBeGreaterThan(56);
+    expect(bodyTotal.project().rows[60].cells[1].text).toBe('1000000');
+  });
   it('applies semantic precedence: authored PDF, metadata, extracted alignment, inference', () => {
     const model = buildPdfTableModel({
       metadata: {
@@ -50,6 +90,7 @@ describe('PDF table model invariants', () => {
       true,
       true,
     ]);
+    expect(model.columns.map(column => column.declaredNumeric)).toEqual([false, false, true, false]);
   });
 
   it('keeps complete group spans from leaking identity, semantics, or width into leaves', () => {

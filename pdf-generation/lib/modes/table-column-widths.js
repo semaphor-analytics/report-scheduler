@@ -11,6 +11,9 @@ const WIDTH_BOUNDS_PX = Object.freeze({
 
 const TEXT_METRICS = Object.freeze({
   averageGlyphPx: 7.4,
+  // 11pt tabular numerals, including semibold subtotal rows. Proportional
+  // text metrics (especially the narrow '1') underestimate printed totals.
+  tabularNumericGlyphPx: 9,
   horizontalPaddingPx: 18,
   measuredWidthHeadroom: 1.2,
   representativePercentile: 0.9,
@@ -21,8 +24,9 @@ function normalizeText(value) {
   return String(value).replace(/\s+/g, ' ').trim();
 }
 
-function getGlyphUnits(value) {
+function getGlyphUnits(value, tabularNumeric = false) {
   return Array.from(normalizeText(value)).reduce((total, character) => {
+    if (tabularNumeric && character >= '0' && character <= '9') return total + 1;
     if (/[ilI1.,'|]/.test(character)) return total + 0.5;
     if (/[MW@%&#]/.test(character)) return total + 1.25;
     if (/\s/.test(character)) return total + 0.55;
@@ -30,9 +34,9 @@ function getGlyphUnits(value) {
   }, 0);
 }
 
-function estimateSingleLineWidthPx(value) {
+function estimateSingleLineWidthPx(value, tabularNumeric = false) {
   return (
-    getGlyphUnits(value) * TEXT_METRICS.averageGlyphPx +
+    getGlyphUnits(value, tabularNumeric) * (tabularNumeric ? TEXT_METRICS.tabularNumericGlyphPx : TEXT_METRICS.averageGlyphPx) +
     TEXT_METRICS.horizontalPaddingPx
   );
 }
@@ -60,7 +64,7 @@ function getRepresentativeContentWidthPx(type, values) {
   const widths = values
     .map(normalizeText)
     .filter(Boolean)
-    .map(estimateSingleLineWidthPx);
+    .map(value => estimateSingleLineWidthPx(value, type === 'numeric'));
   if (widths.length === 0) return 0;
 
   if (type === 'numeric' || type === 'boolean') {
@@ -82,13 +86,15 @@ export function estimateColumnWidthPx({
   sampleValues = [],
   grandTotalValue = '',
   measuredWidthPx = null,
+  declaredNumeric = false,
 } = {}) {
   const bounds = getColumnWidthBounds(type);
   const values = [...sampleValues, grandTotalValue];
+  const contentWidth = getRepresentativeContentWidthPx(type, values);
   const contentTarget = Math.max(
     bounds.min,
     estimateHeaderWidthPx(label),
-    getRepresentativeContentWidthPx(type, values),
+    contentWidth,
   );
   const measured = Number(measuredWidthPx);
   const hasContent = values.some((value) => normalizeText(value));
@@ -100,5 +106,7 @@ export function estimateColumnWidthPx({
       : 0;
   const preferred = Math.max(contentTarget, boundedMeasured);
 
-  return Math.min(bounds.max, Math.max(bounds.min, preferred));
+  const bounded = Math.min(bounds.max, Math.max(bounds.min, preferred));
+  // Text can wrap; numeric cells cannot lose digits to a cosmetic width cap.
+  return declaredNumeric ? Math.max(contentWidth, bounded) : bounded;
 }

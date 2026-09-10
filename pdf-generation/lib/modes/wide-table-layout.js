@@ -2,6 +2,13 @@ import { normalizePageSize } from '../page-size-utils.js';
 import { buildPdfTableModel } from './table-column-semantics.js';
 import { getColumnWidthBounds } from './table-column-widths.js';
 import { getTableHorizontalInsetPx } from './table-page-geometry.js';
+import { createDeliveryBlockingRenderError } from '../delivery-render-error.js';
+import { PDF_SAFETY_LIMIT_EXCEEDED } from '../generated/pdf-export-policy.js';
+
+const numericWidthFailure = () => createDeliveryBlockingRenderError(
+  PDF_SAFETY_LIMIT_EXCEEDED,
+  'Numeric values cannot fit this PDF layout without clipping. Use horizontal pagination, narrow the export or use CSV.',
+);
 
 const DPI = 96;
 
@@ -153,6 +160,8 @@ function selectAnchorColumns(columns, printableWidthPx) {
 }
 
 function buildBands(columns, printableWidthPx, pivotAnchorCount = 0) {
+  if (columns.some(column => column.declaredNumeric && column.widthPx > printableWidthPx))
+    throw numericWidthFailure();
   const minDynamicWidth = getColumnWidthBounds('text').min;
   const preservePivotAnchors = pivotAnchorCount > 0;
   const configuredPivotAnchorIndices = preservePivotAnchors
@@ -211,6 +220,7 @@ function buildBands(columns, printableWidthPx, pivotAnchorCount = 0) {
 
   dynamicIndices.forEach((index) => {
     const rawWidth = columns[index]?.widthPx || getColumnWidthBounds('text').min;
+    if (columns[index]?.declaredNumeric && rawWidth > availableForDynamic) throw numericWidthFailure();
     const width = Math.min(rawWidth, availableForDynamic);
     dynamicWidthByIndex[index] = width;
     if (current.length > 0 && currentWidth + width > availableForDynamic) {
@@ -314,6 +324,8 @@ export function buildWideTableLayout(tableData, options = {}) {
 
   if (strategy === 'fit' && !chosen) {
     chosen = getWidestCandidate(candidates);
+    if (columns.some(column => column.declaredNumeric && column.widthPx > chosen.printableWidthPx))
+      throw numericWidthFailure();
   }
 
   if (chosen && strategy !== 'horizontal_paginate') {

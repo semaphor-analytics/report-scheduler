@@ -164,9 +164,72 @@ can start several visual exports; each has its own app job and runner execution.
 The stored artifact remains the production-shaped `export.csv.gz`; the local
 download endpoint streams it as `export.csv` so Finder does not depend on
 macOS Archive Utility's gzip compatibility. Transient chunk failures match
-production's initial attempt plus three retries, but omit production backoff
+production's initial attempt plus three retries, but ordinary exports omit production backoff
 delays to keep the local feedback loop fast. An HTTP 400 query rejection is
 not retryable and fails after its first attempt locally and in production.
+
+Matrix continuation inputs require `deadlineAt`, a number of epoch milliseconds
+supplied by the app from the persisted job creation time. The scheduler does not
+derive or reset the job lifetime. Batch results retain the same number, and
+workers validate it against app work/commit responses and the final manifest.
+Matrix-only retry waits use the same absolute deadline locally and in Step
+Functions, with at most three retries and 5/10/20-second backoff capped at expiry.
+The workflow uses per-state JSONata for deadline arithmetic and absolute
+[Wait timestamps](https://docs.aws.amazon.com/step-functions/latest/dg/state-wait.html);
+ordinary workflow states and their timeouts/retries are unchanged.
+
+Expiry aborts Matrix HTTP, local/S3 writes, downloads, gzip streaming and callback
+requests. Multipart cancellation reaches each S3 request and awaits worker
+settlement; multipart cleanup has its own 30-second transport bound. No new
+acquisition, compaction or publication is permitted after expiry. A resumed
+finalizer may spend up to 30 seconds fetching an app-confirmed **completed**
+manifest and replaying its bookkeeping callback, even though that manifest has
+the original expired deadline. An unfinished manifest still fails. Expired
+orchestration dispatches only this reconciliation path, never another acquisition;
+expired replay is not retried. Definitive Matrix 4xx errors preserve bounded app
+guidance and bypass retries, including status/completion callbacks. Failure
+handlers remain reachable after cancellation and run without the work signal;
+the app's locked lifecycle remains authoritative for late publication races.
+
+The work deadline is not a claim that cleanup/bookkeeping or AWS scheduling
+finishes at the same instant. Existing Lambda timeouts remain a safety net.
+JSONata expressions are tested locally with the AWS-supported 2.0.6 evaluator;
+deployed Step Functions/S3 cancellation still requires deployment verification.
+
+#### No-Build Deadline Tests
+
+From the scheduler repository root, using its installed development dependencies:
+
+```bash
+npm run test:matrix-deadline
+```
+
+This runs the existing chunk-worker Jest suite, compaction-worker Jest suite and
+the two local-runner/path Vitest files. The bounded-deadline follow-up passed
+110 + 47 + 26 = 183 tests on Node 20.11.1. Vitest transforms the local tests'
+TypeScript imports; do not run those files directly with `node --test`.
+No app-owned `tsx` loader or additional test runner is needed.
+
+To run only the local-runner/path tests from the scheduler root:
+
+```bash
+npm --prefix pdf-generation run test:local-export-runner
+```
+
+The aggregate command is equivalent to these three individual commands:
+
+```bash
+npm --prefix chunk-processor test -- --runInBand
+npm --prefix compaction-processor test -- --runInBand
+npm --prefix pdf-generation run test:local-export-runner
+```
+
+These commands use source tests with mocked HTTP/storage or temporary local
+files. They do not rebuild worker artifacts, generate the PDF policy adapter,
+start the export server or access the database. The named local-test script
+intentionally bypasses `pdf-generation`'s general `npm test` command, whose
+`pretest` hook builds the policy adapter. They assume dependencies are installed;
+no dependency installation runs as part of these commands.
 
 5. Inspect the runner:
 

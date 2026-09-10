@@ -7,7 +7,9 @@
 1. Receives direct invocation payloads (`action: send_consolidated` or `action: update_status`) from Step Functions / scheduler, and signed Function URL `send_consolidated` requests from Semaphor App Briefings.
 2. Resolves recipients + sender context (for scheduled reports via `GET /api/v1/schedules/{id}/internal`).
 3. Sends one email per recipient with the same attachment set.
-4. Applies the SES size guardrail once; if size is too large, sends secure download links instead of attachments.
+4. Applies the existing email size guardrail to SES and external delivery; gzip is
+   measured after decoding. Oversized files become secure download links. Admitted
+   external attachments carry a signed `maxBytes` bound enforced by the receiver.
 5. Chooses delivery provider based on `EMAIL_PROVIDER_MODE`:
    - `SES` (default)
    - `EXTERNAL` (signed webhook call)

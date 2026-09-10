@@ -9,7 +9,8 @@ It is deployed in the same SAM stack and exposes a Lambda Function URL.
 1. Accepts signed webhook payload from `email-sender`.
 2. Verifies HMAC signature (`X-Semaphor-Timestamp`, `X-Semaphor-Signature`).
 3. Downloads each attachment from `attachments[].presignedUrl` when
-   attachments are present.
+   attachments are present, counting decoded bytes against each signed `maxBytes`
+   bound and cancelling on overflow. Never buffers an unbounded response.
 4. Sends email through Resend.
 5. Returns `{ success, providerMessageId?, error? }`.
 
@@ -22,6 +23,13 @@ It is deployed in the same SAM stack and exposes a Lambda Function URL.
 ## Request contract
 
 See payload sample in `events/payload.sample.json`.
+
+The email sender applies the existing email byte budget to every provider and
+uses download links for oversized files. Each admitted attachment includes
+`maxBytes`, its decoded-byte admission bound. This receiver independently
+enforces that bound while streaming; it does not infer size from compressed
+Content-Length. Deploy this receiver, email sender, and final-export IAM access
+together before activating Matrix delivery. No new Lambda or database change.
 
 ## Response contract
 

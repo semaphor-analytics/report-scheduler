@@ -6,14 +6,18 @@
  */
 
 import { createGzip } from 'zlib';
-import { PassThrough } from 'stream';
-import type { Readable } from 'stream';
+import { PassThrough, Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 import { getObjectStream, uploadStream, deleteObjects } from './s3-client';
 
 interface CompactChunksParams {
   jobId: string;
   chunkKeys: string[];
   footer?: string;
+  /** DB-selected Matrix sequence order and immutable final attempt key. */
+  preserveOrder?: boolean;
+  finalKey?: string;
+  signal?: AbortSignal;
 }
 
 interface CompactResult {
@@ -22,7 +26,7 @@ interface CompactResult {
 }
 
 type CompactionIO = {
-  getObjectStream: (key: string) => Promise<Readable>;
+  getObjectStream: typeof getObjectStream;
   uploadStream: typeof uploadStream;
 };
 
@@ -42,50 +46,54 @@ export async function compactChunks(
   io: CompactionIO = DEFAULT_COMPACTION_IO,
 ): Promise<CompactResult> {
   const { jobId, chunkKeys, footer } = params;
+  params.signal?.throwIfAborted();
+  const controller = params.signal ? new AbortController() : undefined;
+  const abort = () => controller?.abort(params.signal?.reason);
+  params.signal?.addEventListener('abort', abort, { once: true });
+  const signal = controller?.signal;
 
   // Sort keys to ensure correct order (001.csv, 002.csv, etc.)
-  const sortedKeys = [...chunkKeys].sort();
+  const sortedKeys = params.preserveOrder ? chunkKeys : [...chunkKeys].sort();
 
-  const finalKey = `exports/${jobId}/final/export.csv.gz`;
+  const finalKey = params.finalKey ?? `exports/${jobId}/final/export.csv.gz`;
 
   // Single pipeline: chunks → gzip → passThrough → S3 Upload
   const passThrough = new PassThrough();
   const gzipStream = createGzip();
 
-  // Pipe gzip output to passThrough
-  gzipStream.pipe(passThrough);
-
   // Start ONE upload (consumes from passThrough)
-  const uploadTask = io.uploadStream(finalKey, passThrough);
+  const uploadTask = signal
+    ? io.uploadStream(finalKey, passThrough, 'application/gzip', signal)
+    : io.uploadStream(finalKey, passThrough);
+  let pipelineTask: Promise<void> | undefined;
 
   let totalBytes = 0;
 
   try {
-    // Stream each chunk file through gzip
-    for (const key of sortedKeys) {
-      console.log(`Streaming chunk: ${key}`);
-      const chunkStream = await io.getObjectStream(key);
-
-      await new Promise<void>((resolve, reject) => {
-        chunkStream.on('data', (chunk: Buffer) => {
-          totalBytes += chunk.length;
-          gzipStream.write(chunk);
-        });
-        chunkStream.on('end', () => resolve());
-        chunkStream.on('error', reject);
-      });
+    async function* chunks() {
+      for (const key of sortedKeys) {
+        signal?.throwIfAborted();
+        const stream = signal ? await io.getObjectStream(key, signal) : await io.getObjectStream(key);
+        const stopRead = () => stream.destroy(signal?.reason);
+        signal?.addEventListener('abort', stopRead, { once: true });
+        try {
+          signal?.throwIfAborted();
+          for await (const chunk of stream) {
+            signal?.throwIfAborted();
+            totalBytes += Buffer.byteLength(chunk);
+            yield chunk;
+          }
+        } finally {
+          signal?.removeEventListener('abort', stopRead);
+          stream.destroy();
+        }
+      }
+      if (footer) { totalBytes += Buffer.byteLength(footer); yield footer; }
     }
-
-    if (footer) {
-      totalBytes += Buffer.byteLength(footer);
-      gzipStream.write(footer);
-    }
-
-    // Signal end of gzip stream
-    gzipStream.end();
-
-    // Wait for upload to complete
-    await uploadTask;
+    // pipeline propagates backpressure to the source, including slow uploads.
+    pipelineTask = pipeline(Readable.from(chunks()), gzipStream, passThrough, { signal });
+    await Promise.all([pipelineTask, uploadTask]);
+    signal?.throwIfAborted();
 
     console.log(`Compaction complete: ${finalKey}, ${totalBytes} bytes uncompressed`);
 
@@ -94,10 +102,14 @@ export async function compactChunks(
       totalBytes,
     };
   } catch (error) {
+    controller?.abort(error);
     // Make sure to close streams on error
     passThrough.destroy();
     gzipStream.destroy();
+    if (signal) await Promise.allSettled([pipelineTask, uploadTask]);
     throw error;
+  } finally {
+    params.signal?.removeEventListener('abort', abort);
   }
 }
 

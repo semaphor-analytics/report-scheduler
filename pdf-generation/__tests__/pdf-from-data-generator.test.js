@@ -85,6 +85,8 @@ vi.mock('../lib/watermark-utils.js', () => ({
 }));
 
 const { generatePdfFromData } = await import('../lib/pdf-from-data-generator.js');
+const { paginateTableData } = await import('../lib/modes/pivot-table-paginator.js');
+const { renderPivotTableHtml, getPdfOptions: getPivotPdfOptions } = await import('../lib/modes/pivot-table.js');
 
 describe('pdf-from-data-generator', () => {
   beforeEach(() => {
@@ -145,5 +147,32 @@ describe('pdf-from-data-generator', () => {
 
     expect(applyPdfMetadataMock).toHaveBeenCalledBefore(validatePreparedPdf);
     expect(validatePreparedPdf).toHaveBeenCalledBefore(encryptPdfBufferMock);
+  });
+
+  it('routes Matrix through the existing pivot paginator and horizontal banding', async () => {
+    const pages = [{ rows: [], metadata: {} }];
+    paginateTableData.mockReturnValue(pages);
+    renderPivotTableHtml.mockReturnValue({ html: '<html>Matrix</html>', layoutApplied: { effectivePageSize: 'Letter', effectiveOrientation: 'landscape' } });
+    getPivotPdfOptions.mockReturnValue({ format: 'Letter' });
+    const tableStructure = { headers: [{ cells: [] }], rows: [{ cells: [] }], metadata: { rowLevels: 2 } };
+    const result = await generatePdfFromData({ cardType: 'matrixTable', tableStructure, wideTableStrategy: 'horizontal_paginate' });
+    expect(paginateTableData).toHaveBeenCalledWith(expect.objectContaining(tableStructure), expect.any(Object));
+    expect(renderPivotTableHtml).toHaveBeenCalledWith(pages, expect.objectContaining({ wideTableStrategy: 'horizontal_paginate' }));
+    expect(result.layoutApplied.effectiveOrientation).toBe('landscape');
+  });
+
+  it('does not start an aborted render and closes a browser on cancellation during rendering', async () => {
+    const payload = { cardType: 'table', tableStructure: { headers: [], rows: [] } };
+    const controller = new AbortController();
+    controller.abort(new Error('Deadline'));
+    await expect(generatePdfFromData(payload, { signal: controller.signal })).rejects.toThrow('Deadline');
+    expect(launchBrowserMock).not.toHaveBeenCalled();
+    const active = new AbortController();
+    const close = vi.fn(async () => {});
+    launchBrowserMock.mockResolvedValueOnce({ newPage: newPageMock, close });
+    pagePdfMock.mockImplementationOnce(async () => { active.abort(new Error('Cancelled')); return Buffer.from('partial'); });
+    await expect(generatePdfFromData(payload, { signal: active.signal })).rejects.toThrow('Cancelled');
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(applyPdfMetadataMock).not.toHaveBeenCalled();
   });
 });

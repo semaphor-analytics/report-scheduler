@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { gzipSync } = require('node:zlib');
 
 const {
   createSendConsolidated,
@@ -18,6 +19,32 @@ function buildTestConfig(mode = 'SES') {
     sesSenderEmail: 'Acme Analytics <reports@acme.com>',
   };
 }
+
+for (const mode of ['SES', 'EXTERNAL']) test(`${mode} Matrix gzip delivery applies decoded-size admission and link fallback`, async () => {
+  const prepare = async (csv, limit = 100000) => {
+    const compressed = gzipSync(csv);
+    return prepareEmailDelivery({
+      artifacts: [{ name: 'Matrix.csv', rawName: 'Matrix', format: 'csv', contentType: 'text/csv',
+        contentEncoding: 'gzip', s3Bucket: 'bucket', s3Key: 'export.csv.gz', sizeBytes: compressed.length }],
+      emailContext: { recipientEmails: ['a@example.com'], emailSubject: 'Matrix', emailMessage: 'Report',
+        senderEmail: 'reports@example.com', companyName: 'Acme' },
+      provider: { name: mode }, config: { ...buildTestConfig(mode), emailMaxRawSizeBytes: limit },
+      storage: { getObject: () => ({ promise: async () => ({ Body: compressed }) }) },
+    });
+  };
+  const result = await prepare('Region,Revenue\nSouth,0.000009\n');
+  assert.equal(result.usedLinkFallback, false);
+  if (mode === 'SES') assert.equal(result.attachmentsForProvider[0].fileBuffer.toString(), 'Region,Revenue\nSouth,0.000009\n');
+  else {
+    assert.equal(result.attachmentsForProvider[0].maxBytes, Buffer.byteLength('Region,Revenue\nSouth,0.000009\n'));
+    assert.equal(result.attachmentsForProvider[0].fileBuffer, undefined);
+    assert.match(result.attachmentsForProvider[0].presignedUrl, /response-content-encoding=gzip/);
+  }
+  const large = await prepare('0'.repeat(200000));
+  assert.equal(large.usedLinkFallback, true);
+  assert.deepEqual(large.attachmentsForProvider, []);
+  assert.match(large.htmlBody, /response-content-encoding=gzip/);
+});
 
 function buildPreparedDelivery() {
   return {
@@ -515,6 +542,7 @@ test('prepareEmailDelivery keeps external provider URLs on the short expiry', as
         contentType: 'application/pdf',
         s3Bucket: 'reports-bucket',
         s3Key: 'emails/report.pdf',
+        sizeBytes: 3,
       },
     ],
     emailContext: {
@@ -530,6 +558,7 @@ test('prepareEmailDelivery keeps external provider URLs on the short expiry', as
     scheduleId: 'sched_123',
     leaseOwner: 'lease_123',
     config: {
+      ...buildTestConfig('EXTERNAL'),
       attachmentLinkExpirySeconds: 24 * 60 * 60,
     },
   });

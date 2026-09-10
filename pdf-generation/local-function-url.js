@@ -353,7 +353,7 @@ async function handleChunkedExportPost(req, res) {
   const executionId = `local-export:${payload.jobId}`;
   if (
     ACTIVE_EXPORTS.has(payload.jobId) ||
-    hasCompletedLocalExport(payload.jobId)
+    (payload.acquisition !== 'continuation' && hasCompletedLocalExport(payload.jobId))
   ) {
     sendJson(res, 202, { accepted: true, executionId, replay: true });
     return;
@@ -402,6 +402,29 @@ const server = http.createServer(async (req, res) => {
     if (parsedUrl.pathname === '/export-files') {
       sendExportObject(res, parsedUrl.searchParams);
       return;
+    }
+
+    if (parsedUrl.pathname === '/export-objects') {
+      if (req.method !== 'GET' || !isAuthorizedExportRequest(req)) {
+        sendJson(res, 401, { error: 'Unauthorized' }); return;
+      }
+      const key = parsedUrl.searchParams.get('key') || '';
+      const segments = key.split('/');
+      const filename = segments[0] === 'exports' && segments.length === 5 && segments[2] === 'attempts' &&
+        !segments.some(part => !part || part === '..' || part === '.' || part.includes('\\'))
+        ? resolveExportObjectPath(key, OUTPUT_DIR) : null;
+      if (!filename || !fs.existsSync(filename) || !fs.statSync(filename).isFile()) {
+        sendJson(res, 404, { error: 'Export object unavailable' }); return;
+      }
+      const size = fs.statSync(filename).size;
+      if (parsedUrl.searchParams.get('metadata') === 'true') {
+        sendJson(res, 200, { size }); return;
+      }
+      if (!filename.endsWith('.json') || size > 512 * 1024) {
+        sendJson(res, 400, { error: 'Invalid checkpoint object' }); return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': size });
+      fs.createReadStream(filename).pipe(res); return;
     }
 
     if (parsedUrl.pathname === '/exports') {
