@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   hasCompletedLocalExport,
   isValidArtifactSignature,
+  resolveLocalExportDownloadFilename,
   resolveExportObjectPath,
   resolveOutputFilePath,
 } from '../local-function-url.js';
@@ -68,6 +69,25 @@ describe('resolveExportObjectPath', () => {
     expect(
       resolveExportObjectPath('../secrets.csv', '/tmp/local-export-output'),
     ).toBeNull();
+  });
+});
+
+describe('local export download filenames', () => {
+  it('preserves safe timestamped CSV filenames', () => {
+    expect(
+      resolveLocalExportDownloadFilename(
+        'Sales_Region-2026-09-11T19-42-08Z.csv',
+      ),
+    ).toBe('Sales_Region-2026-09-11T19-42-08Z.csv');
+  });
+
+  it('falls back when the filename is unsafe', () => {
+    expect(resolveLocalExportDownloadFilename('../report.csv')).toBe(
+      'export.csv',
+    );
+    expect(resolveLocalExportDownloadFilename('report.csv\r\nInjected: true')).toBe(
+      'export.csv',
+    );
   });
 });
 

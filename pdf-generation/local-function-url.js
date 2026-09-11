@@ -147,6 +147,19 @@ export function resolveExportObjectPath(key, outputDir = OUTPUT_DIR) {
   return candidatePath;
 }
 
+export function resolveLocalExportDownloadFilename(value) {
+  const requested = String(value || '').trim();
+  if (
+    !requested ||
+    path.basename(requested) !== requested ||
+    requested.replace(/[^a-zA-Z0-9._-]/g, '_') !== requested ||
+    !requested.toLowerCase().endsWith('.csv')
+  ) {
+    return 'export.csv';
+  }
+  return requested;
+}
+
 export function isValidArtifactSignature(key, expires, signature) {
   const apiKey = process.env.LAMBDA_API_KEY?.trim();
   const expiresAt = Number(expires);
@@ -172,6 +185,9 @@ export function isValidArtifactSignature(key, expires, signature) {
 
 function sendExportObject(res, query) {
   const key = query.get('key') || '';
+  const downloadFilename = resolveLocalExportDownloadFilename(
+    query.get('filename'),
+  );
   if (
     !isValidArtifactSignature(
       key,
@@ -193,7 +209,7 @@ function sendExportObject(res, query) {
   }
   res.writeHead(200, {
     'Content-Type': 'text/csv; charset=utf-8',
-    'Content-Disposition': 'attachment; filename="export.csv"',
+    'Content-Disposition': `attachment; filename="${downloadFilename}"`,
     'Access-Control-Allow-Origin': '*',
   });
   const source = fs.createReadStream(filepath);
