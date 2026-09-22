@@ -26,6 +26,8 @@ function createExternalProvider({
     requiresFileBuffer: false,
     async send(message) {
       try {
+        const isBranded = message?.brandingVersion !== null &&
+          message?.brandingVersion !== undefined;
         if (!webhookUrl) {
           return {
             success: false,
@@ -93,6 +95,16 @@ function createExternalProvider({
           attachments: payloadAttachments,
           metadata: message.metadata || {},
         };
+        if (isBranded) {
+          payload.contractVersion = 2;
+          payload.fromName = message.fromName;
+          if (message.replyTo) {
+            payload.replyTo = message.replyTo;
+          }
+          if (message.bcc) {
+            payload.bcc = message.bcc;
+          }
+        }
 
         const rawBody = JSON.stringify(payload);
         const headers = {

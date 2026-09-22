@@ -489,7 +489,7 @@ export const handler = async (event) => {
           message:
             'Direct email query params are no longer supported by GeneratePdfFunction',
           error:
-            'Use EmailSenderFunction direct action payload (send_consolidated) or semaphor-app /api/v1/pdf/email flow.',
+            'Use an EmailSenderFunction direct action payload such as send_consolidated.',
         }),
       };
     }

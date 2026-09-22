@@ -9,6 +9,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-sesv2": "3.1137.0",
     "aws-sdk": "^2.1692.0"
   }
 }

@@ -5,10 +5,27 @@ const s3 = new AWS.S3();
 
 const { getEmailSenderConfig } = require('./lib/config');
 const {
+  REPORT_EMAIL_BRANDED_ACTION,
+  REPORT_EMAIL_BRANDED_V2_ACTION,
+  REPORT_EMAIL_UNBRANDED_ACTION,
+  REPORT_EMAIL_UNBRANDED_FROM_DOMAIN_ACTION,
+  ReportEmailBrandingPayloadError,
+  parseSendConsolidatedAction,
+} = require('./lib/branding');
+const {
+  SENDER_DOMAIN_DELETE_ACTION,
+  SENDER_DOMAIN_SETUP_ACTION,
+  SENDER_DOMAIN_STATUS_ACTION,
+  SenderDomainRequestError,
+  handleSenderDomainAction,
+} = require('./lib/sender-domain');
+const {
   buildEmailBodies,
+  estimateMimeBodyPartSizeBytes,
   getAttachmentContentType,
   getAttachmentFilename,
 } = require('./lib/email-content');
+const { resolveEnvelope } = require('./lib/envelope');
 const { createSesProvider } = require('./providers/ses-provider');
 const { createExternalProvider } = require('./providers/external-provider');
 
@@ -179,8 +196,10 @@ function estimateSesRawMessageSizeBytes({
   let estimated = Buffer.byteLength(String(from || ''), 'utf8');
   estimated += Buffer.byteLength(toHeader, 'utf8');
   estimated += Buffer.byteLength(String(subject || ''), 'utf8');
-  estimated += Buffer.byteLength(String(textBody || ''), 'utf8');
-  estimated += Buffer.byteLength(String(htmlBody || ''), 'utf8');
+  estimated += estimateMimeBodyPartSizeBytes(textBody, {
+    splitAsciiLines: true,
+  });
+  estimated += estimateMimeBodyPartSizeBytes(htmlBody);
   estimated += 4096; // MIME boundaries + fixed headers
 
   for (const attachment of attachments) {
@@ -301,6 +320,8 @@ async function prepareEmailDelivery({
   scheduleId,
   leaseOwner,
   config,
+  branding = null,
+  fromAddress = null,
   storage = s3,
 }) {
   let attachmentsForProvider = artifacts;
@@ -318,6 +339,7 @@ async function prepareEmailDelivery({
     companyName: emailContext.companyName,
     supportEmail: emailContext.supportEmail,
     downloadLinks,
+    branding,
   });
 
   if (provider.name === 'SES' || provider.name === 'EXTERNAL') {
@@ -326,8 +348,10 @@ async function prepareEmailDelivery({
     totalAttachmentBytes = resolved.totalAttachmentBytes;
     const longestRecipient = getLongestRecipient(emailContext.recipientEmails);
 
+    const configuredSender =
+      fromAddress || (branding ? config.sesSenderEmail : emailContext.senderEmail);
     estimatedSesRawSizeBytes = estimateSesRawMessageSizeBytes({
-      from: emailContext.senderEmail,
+      from: configuredSender,
       to: longestRecipient ? [longestRecipient] : [],
       subject: emailContext.emailSubject,
       textBody: emailBodies.textBody,
@@ -343,7 +367,7 @@ async function prepareEmailDelivery({
           : sizedArtifacts;
         // Compressed object length is not the delivered MIME length.
         estimatedSesRawSizeBytes = estimateSesRawMessageSizeBytes({
-          from: emailContext.senderEmail, to: longestRecipient ? [longestRecipient] : [],
+          from: configuredSender, to: longestRecipient ? [longestRecipient] : [],
           subject: emailContext.emailSubject, textBody: emailBodies.textBody,
           htmlBody: emailBodies.htmlBody, attachments: buffered,
         });
@@ -368,6 +392,7 @@ async function prepareEmailDelivery({
         companyName: emailContext.companyName,
         supportEmail: emailContext.supportEmail,
         downloadLinks,
+        branding,
       });
     } else {
       attachmentsForProvider = provider.name === 'SES' ? buffered : buildExternalPayloadAttachments(
@@ -453,9 +478,19 @@ async function sendWithRetry(sendAttempt, retryDelaysMs, sleepFn) {
 
 function createSendConsolidated(deps = {}) {
   return async function sendConsolidated(payload) {
+    const parsedAction = parseSendConsolidatedAction(payload);
     const config = deps.getEmailSenderConfig
       ? deps.getEmailSenderConfig()
       : getEmailSenderConfig();
+    if (
+      (parsedAction.action === REPORT_EMAIL_BRANDED_V2_ACTION ||
+        parsedAction.action === REPORT_EMAIL_UNBRANDED_FROM_DOMAIN_ACTION) &&
+      config.emailProviderMode === 'EXTERNAL'
+    ) {
+      throw new ReportEmailBrandingPayloadError(
+        `${parsedAction.action} is not supported with EMAIL_PROVIDER_MODE=EXTERNAL`
+      );
+    }
     const provider = deps.buildProvider
       ? deps.buildProvider(config)
       : buildProvider(config);
@@ -489,6 +524,8 @@ function createSendConsolidated(deps = {}) {
       scheduleId,
       leaseOwner,
       config,
+      branding: parsedAction.branding,
+      fromAddress: parsedAction.fromAddress,
     });
 
     const retryDelaysMs = Array.isArray(deps.sendRetryDelaysMs)
@@ -498,13 +535,27 @@ function createSendConsolidated(deps = {}) {
     const recipientResults = [];
 
     for (const recipient of emailContext.recipientEmails) {
+      const envelope = resolveEnvelope({
+        configuredSender: parsedAction.branding
+          ? config.sesSenderEmail
+          : emailContext.senderEmail,
+        fromAddress: parsedAction.fromAddress,
+        branding: parsedAction.branding,
+        recipient,
+        subject: emailContext.emailSubject,
+      });
       const result = await sendWithRetry(
         async () => {
           try {
             const sendResult = await provider.send({
-              from: emailContext.senderEmail,
-              to: [recipient],
-              subject: emailContext.emailSubject,
+              brandingVersion: envelope.brandingVersion,
+              from: envelope.from,
+              fromName: envelope.fromName,
+              fromAddress: envelope.fromAddress,
+              to: envelope.to,
+              replyTo: envelope.replyTo,
+              bcc: envelope.bcc,
+              subject: envelope.subject,
               textBody: preparedDelivery.textBody,
               htmlBody: preparedDelivery.htmlBody,
               attachments: preparedDelivery.attachmentsForProvider,
@@ -621,7 +672,7 @@ function parseHttpBody(event) {
   return JSON.parse(body);
 }
 
-async function handleHttpFunctionUrlEvent(event) {
+async function handleHttpFunctionUrlEvent(event, dependencies = {}) {
   const configuredSecret = String(process.env.LAMBDA_API_KEY || '').trim();
   if (!configuredSecret) {
     return jsonResponse(503, {
@@ -661,21 +712,50 @@ async function handleHttpFunctionUrlEvent(event) {
     });
   }
 
-  if (payload?.action !== 'send_consolidated') {
+  if (
+    payload?.action !== REPORT_EMAIL_UNBRANDED_ACTION &&
+    payload?.action !== REPORT_EMAIL_UNBRANDED_FROM_DOMAIN_ACTION &&
+    payload?.action !== REPORT_EMAIL_BRANDED_ACTION &&
+    payload?.action !== REPORT_EMAIL_BRANDED_V2_ACTION &&
+    payload?.action !== SENDER_DOMAIN_SETUP_ACTION &&
+    payload?.action !== SENDER_DOMAIN_STATUS_ACTION &&
+    payload?.action !== SENDER_DOMAIN_DELETE_ACTION
+  ) {
     return jsonResponse(400, {
       success: false,
-      error: 'Only send_consolidated is supported over HTTP',
+      error:
+        'Supported HTTP actions are send_consolidated, send_consolidated_from_domain_v1, send_consolidated_branded_v1, send_consolidated_branded_v2, sender_domain_setup, sender_domain_status, and sender_domain_delete',
     });
   }
 
   try {
-    const result = await sendConsolidated(payload);
+    const isDomainAction =
+      payload.action === SENDER_DOMAIN_SETUP_ACTION ||
+      payload.action === SENDER_DOMAIN_STATUS_ACTION ||
+      payload.action === SENDER_DOMAIN_DELETE_ACTION;
+    const result = isDomainAction
+      ? await (dependencies.handleSenderDomainAction || handleSenderDomainAction)(
+          payload,
+          (dependencies.getEmailSenderConfig || getEmailSenderConfig)(),
+          dependencies
+        )
+      : await (dependencies.sendConsolidated || sendConsolidated)(payload);
     return jsonResponse(200, result);
   } catch (error) {
-    return jsonResponse(500, {
-      success: false,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    return jsonResponse(
+      error instanceof SenderDomainRequestError
+        ? error.statusCode
+        : error instanceof ReportEmailBrandingPayloadError
+          ? 400
+          : 500,
+      {
+        success: false,
+        ...(error instanceof SenderDomainRequestError
+          ? { code: error.code }
+          : {}),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   }
 }
 
@@ -702,7 +782,12 @@ exports.handler = async (event) => {
     };
   }
 
-  if (event?.action === 'send_consolidated') {
+  if (
+    event?.action === REPORT_EMAIL_UNBRANDED_ACTION ||
+    event?.action === REPORT_EMAIL_UNBRANDED_FROM_DOMAIN_ACTION ||
+    event?.action === REPORT_EMAIL_BRANDED_ACTION ||
+    event?.action === REPORT_EMAIL_BRANDED_V2_ACTION
+  ) {
     return sendConsolidated(event);
   }
 
@@ -772,9 +857,11 @@ async function getScheduleDetails(scheduleId) {
 module.exports = {
   handler: exports.handler,
   createSendConsolidated,
+  estimateSesRawMessageSizeBytes,
   sendConsolidated,
   isRetryableSendError,
   prepareEmailDelivery,
+  handleHttpFunctionUrlEvent,
   parseRecipientEmails,
   sendWithRetry,
   sleep,

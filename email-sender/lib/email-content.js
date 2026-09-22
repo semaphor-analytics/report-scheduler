@@ -1,3 +1,8 @@
+const {
+  encodeRfc2047Header,
+  stripHeaderLineBreaks,
+} = require('./envelope');
+
 function getAttachmentContentType(fileFormat) {
   return fileFormat === 'csv' ? 'text/csv' : 'application/pdf';
 }
@@ -124,7 +129,7 @@ function appendHtmlBeforeBodyClose(html, addition) {
   return document.replace(/<\/html>/i, `${fragment}</html>`);
 }
 
-function buildEmailBodies({
+function buildBaseEmailBodies({
   emailMessage = null,
   emailTextMessage = null,
   emailHtmlMessage = null,
@@ -217,12 +222,215 @@ function buildEmailBodies({
   };
 }
 
+function insertHtmlAfterBodyOpen(html, addition) {
+  const document = String(html || '');
+  const fragment = String(addition || '');
+
+  if (!fragment) {
+    return document;
+  }
+
+  if (!isFullHtmlDocument(document)) {
+    return `${fragment}${document}`;
+  }
+
+  if (/<body(?:\s[^>]*)?>/iu.test(document)) {
+    return document.replace(
+      /<body(?:\s[^>]*)?>/iu,
+      (openingBody) => `${openingBody}${fragment}`
+    );
+  }
+
+  if (/<\/head>/iu.test(document)) {
+    return document.replace(/<\/head>/iu, `</head>${fragment}`);
+  }
+
+  return document.replace(
+    /<html(?:\s[^>]*)?>/iu,
+    (openingHtml) => `${openingHtml}${fragment}`
+  );
+}
+
+function authoredTextToHtml(value) {
+  return escapeHtml(value).replace(/\r\n|\r|\n/gu, '<br>');
+}
+
+// Branded emails follow the Semaphor product look: one quiet white card with a
+// hairline zinc border and 6px radius, the organization name in the accent
+// color beside the logo, the author's message in the middle, and a small grey
+// footer under a hairline. The header fragment opens the card and the footer
+// fragment always closes it, so the base body (author message, download
+// links, digest content) sits inside untouched.
+//
+// KEEP IN SYNC: semaphor-app/src/lib/email-branding/email-template.ts is a
+// TypeScript copy of wrapEmailHtml, the escape helpers, the insertion helpers,
+// and everything from here to renderBrandedEmail, so the Brand Studio preview
+// shows exactly what this Lambda sends. Both repositories commit the same
+// golden fixture (test-fixtures/branded-plain-sample.json here) and fail their
+// tests when either copy drifts. Change both in the same change set.
+const BRAND_FONT =
+  '&quot;Open Sans&quot;, Arial, &quot;Helvetica Neue&quot;, Helvetica, sans-serif';
+const BRAND_CARD_BORDER = '#e4e4e7';
+const BRAND_HAIRLINE = '#f4f4f5';
+const BRAND_TEXT = '#202124';
+const BRAND_MUTED = '#71717a';
+
+// Mobile gutters for the brand cells must match the base content's 18px so the
+// header, intro, message, and footer stay flush on phones. Inserted into <head>
+// by the branded renderer only; unbranded documents stay byte-for-byte as is.
+const BRAND_MOBILE_STYLE =
+  '<style>@media screen and (max-width: 600px) { .email-brand-cell { padding-left: 18px !important; padding-right: 18px !important; } .email-brand-card { border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; } }</style>';
+
+function insertHtmlBeforeHeadClose(html, addition) {
+  const document = String(html || '');
+  const fragment = String(addition || '');
+  if (!fragment || !/<\/head>/iu.test(document)) {
+    return document;
+  }
+  return document.replace(/<\/head>/iu, `${fragment}</head>`);
+}
+
+function buildBrandHeaderHtml(branding, emailLayout) {
+  const plainLayout = emailLayout === 'plain';
+  const alignment = plainLayout ? 'left' : 'center';
+  const cardMaxWidth = plainLayout ? '600px' : '680px';
+  const logo = branding.logoUrl
+    ? `<img src="${escapeAttribute(branding.logoUrl)}" alt="" width="24" style="display: inline-block; width: 24px; max-width: 24px; height: auto; margin: 0 10px 0 0; vertical-align: middle; border: 0;">`
+    : '';
+
+  return [
+    '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width: 100%; border-collapse: collapse; background: #ffffff;">',
+    '<tr>',
+    `<td class="email-gutter" align="${alignment}" style="padding: 24px;">`,
+    `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="email-brand-card" style="width: 100%; max-width: ${cardMaxWidth}; border-collapse: separate; border: 1px solid ${BRAND_CARD_BORDER}; border-radius: 6px; background: #ffffff;">`,
+    '<tr>',
+    '<td style="padding: 0;">',
+    '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width: 100%; border-collapse: collapse;">',
+    '<tr>',
+    `<td align="left" class="email-brand-cell" style="padding: 20px 32px 16px; border-bottom: 1px solid ${BRAND_HAIRLINE}; font-family: ${BRAND_FONT};">`,
+    logo,
+    `<span style="font-size: 16px; line-height: 1.4; font-weight: 600; letter-spacing: -0.01em; color: ${escapeAttribute(branding.accentColor)}; vertical-align: middle;">${escapeHtml(branding.fromName)}</span>`,
+    '</td>',
+    '</tr>',
+    '</table>',
+    branding.intro
+      ? [
+          '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width: 100%; border-collapse: collapse;">',
+          '<tr>',
+          `<td align="left" class="email-brand-cell" style="padding: 20px 32px 0; font-family: ${BRAND_FONT}; font-size: 16px; line-height: 1.6; color: ${BRAND_TEXT};">${authoredTextToHtml(branding.intro)}</td>`,
+          '</tr>',
+          '</table>',
+        ].join('')
+      : '',
+  ].join('');
+}
+
+function buildBrandFooterHtml(branding) {
+  const button = branding.callToAction
+    ? [
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width: 100%; border-collapse: collapse;">',
+        '<tr>',
+        '<td align="left" class="email-brand-cell" style="padding: 0 32px 24px;">',
+        '<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="border-collapse: separate; display: inline-table;"><tr>',
+        `<td bgcolor="${escapeAttribute(branding.accentColor)}" style="border-radius: 5px; background: ${escapeAttribute(branding.accentColor)};">`,
+        `<a href="${escapeAttribute(branding.callToAction.url)}" style="display: inline-block; padding: 10px 16px; color: #ffffff; font-family: ${BRAND_FONT}; font-size: 14px; line-height: 1.2; font-weight: 500; text-decoration: none;">${escapeHtml(branding.callToAction.label)}</a>`,
+        '</td></tr></table>',
+        '</td>',
+        '</tr>',
+        '</table>',
+      ].join('')
+    : '';
+  const footer = branding.footer
+    ? [
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width: 100%; border-collapse: collapse;">',
+        '<tr>',
+        `<td align="left" class="email-brand-cell" style="padding: 16px 32px 24px; border-top: 1px solid ${BRAND_HAIRLINE}; font-family: ${BRAND_FONT}; font-size: 12px; line-height: 1.55; color: ${BRAND_MUTED};">${authoredTextToHtml(branding.footer)}</td>`,
+        '</tr>',
+        '</table>',
+      ].join('')
+    : '';
+
+  // Close the card and the outer gutter opened by the header, always.
+  return [button, footer, '</td></tr></table></td></tr></table>'].join('');
+}
+
+function renderBrandedEmail({
+  branding,
+  baseTextBody,
+  baseHtmlBody,
+  emailLayout = 'digest',
+}) {
+  const textSegments = [
+    branding.fromName,
+    branding.intro,
+    baseTextBody,
+    branding.callToAction
+      ? `${branding.callToAction.label}: ${branding.callToAction.url}`
+      : '',
+    branding.footer,
+  ].filter((segment) => typeof segment === 'string' && segment.length > 0);
+
+  const withHeader = insertHtmlAfterBodyOpen(
+    insertHtmlBeforeHeadClose(baseHtmlBody, BRAND_MOBILE_STYLE),
+    buildBrandHeaderHtml(branding, emailLayout)
+  );
+  const htmlBody = appendHtmlBeforeBodyClose(
+    withHeader,
+    buildBrandFooterHtml(branding)
+  );
+
+  return {
+    textBody: textSegments.join('\n\n'),
+    htmlBody,
+  };
+}
+
+function buildEmailBodies(input) {
+  const { branding = null, ...baseInput } = input || {};
+  const baseBodies = buildBaseEmailBodies(baseInput);
+  if (!branding) {
+    return baseBodies;
+  }
+
+  return renderBrandedEmail({
+    branding,
+    baseTextBody: baseBodies.textBody,
+    baseHtmlBody: baseBodies.htmlBody,
+    emailLayout: baseInput.emailLayout,
+  });
+}
+
+function encodeMimeBodyPart(value, { splitAsciiLines = false } = {}) {
+  const content = String(value ?? '');
+  if (/^[\x00-\x7f]*$/u.test(content)) {
+    return {
+      transferEncoding: '7bit',
+      bodyParts: splitAsciiLines ? content.split('\n') : [content],
+    };
+  }
+
+  return {
+    transferEncoding: 'base64',
+    bodyParts:
+      Buffer.from(content, 'utf8').toString('base64').match(/.{1,76}/g) || [],
+  };
+}
+
+function estimateMimeBodyPartSizeBytes(
+  value,
+  { splitAsciiLines = false } = {}
+) {
+  const part = encodeMimeBodyPart(value, { splitAsciiLines });
+  return Buffer.byteLength(part.bodyParts.join('\r\n'), 'ascii');
+}
+
 function createRawEmail({
   from,
   to,
   subject,
   textBody,
   htmlBody,
+  replyTo = null,
   attachments = [],
 }) {
   const normalizedAttachments = Array.isArray(attachments) ? attachments : [];
@@ -231,12 +439,20 @@ function createRawEmail({
     'MixedBoundary_' + Math.random().toString(36).substring(2);
   const altBoundary = 'AltBoundary_' + Math.random().toString(36).substring(2);
 
-  const toHeader = Array.isArray(to) ? to.join(', ') : String(to);
+  const safeFrom = stripHeaderLineBreaks(from);
+  const toHeader = (Array.isArray(to) ? to : [to])
+    .map((value) => stripHeaderLineBreaks(value))
+    .join(', ');
+  const safeSubject = encodeRfc2047Header(subject);
+  const safeReplyTo = replyTo ? stripHeaderLineBreaks(replyTo) : null;
+  const textPart = encodeMimeBodyPart(textBody, { splitAsciiLines: true });
+  const htmlPart = encodeMimeBodyPart(wrapEmailHtml(htmlBody));
 
   const rawParts = [
-    `From: ${from}`,
+    `From: ${safeFrom}`,
     `To: ${toHeader}`,
-    `Subject: ${subject}`,
+    `Subject: ${safeSubject}`,
+    ...(safeReplyTo ? [`Reply-To: ${safeReplyTo}`] : []),
     'MIME-Version: 1.0',
     `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`,
     '',
@@ -245,15 +461,15 @@ function createRawEmail({
     '',
     `--${altBoundary}`,
     'Content-Type: text/plain; charset=UTF-8',
-    'Content-Transfer-Encoding: 7bit',
+    `Content-Transfer-Encoding: ${textPart.transferEncoding}`,
     '',
-    ...String(textBody).split('\n'),
+    ...textPart.bodyParts,
     '',
     `--${altBoundary}`,
     'Content-Type: text/html; charset=UTF-8',
-    'Content-Transfer-Encoding: 7bit',
+    `Content-Transfer-Encoding: ${htmlPart.transferEncoding}`,
     '',
-    wrapEmailHtml(htmlBody),
+    ...htmlPart.bodyParts,
     '',
     `--${altBoundary}--`,
     '',
@@ -290,8 +506,12 @@ function createRawEmail({
 module.exports = {
   getAttachmentContentType,
   getAttachmentFilename,
+  buildBaseEmailBodies,
   buildEmailBodies,
   createRawEmail,
+  estimateMimeBodyPartSizeBytes,
   wrapEmailHtml,
   appendHtmlBeforeBodyClose,
+  insertHtmlAfterBodyOpen,
+  renderBrandedEmail,
 };

@@ -243,7 +243,6 @@ dispatch contract is the same in both modes:
 | `AUTOMATION_EXECUTOR_MODE` | Dispatch target mode: `http` or `stepfunctions` | `http` |
 | `AUTOMATION_STATE_MACHINE_ARN` | State machine ARN used when `AUTOMATION_EXECUTOR_MODE=stepfunctions` | Stack-managed `AutomationStateMachine` ARN |
 | `AUTOMATION_EXECUTOR_PATH` | Unified internal semaphor-app execution route used in HTTP mode and automation-executor lambda | `/api/v1/automations/internal/execute` |
-| `REPORT_EXECUTOR_PATH` | Legacy fallback route override for REPORT dispatch (only used if `AUTOMATION_EXECUTOR_PATH` is unset) | _(optional)_ |
 | `ALERT_EXECUTOR_PATH` | Legacy fallback route override for ALERT dispatch (only used if `AUTOMATION_EXECUTOR_PATH` is unset) | _(optional)_ |
 | `CACHE_REFRESH_EXECUTOR_PATH` | Legacy fallback route override for CACHE_REFRESH dispatch (only used if `AUTOMATION_EXECUTOR_PATH` is unset) | _(optional)_ |
 
@@ -282,7 +281,7 @@ When a Lambda function calls the Semaphor app API, it sends the key in an `X-API
 - `POST /api/v1/exports/internal/jobs/[jobId]/fail` — mark export failed
 - `POST /api/v1/automations/internal/claim-due` — claim due automation rules
 - `POST /api/v1/automations/internal/runs` — create run records
-- `EmailSenderFunctionUrl` — accepts signed `send_consolidated` requests from Semaphor App for Briefing email delivery
+- `EmailSenderFunctionUrl` — accepts signed report-email delivery and SES sending-domain setup/status requests from Semaphor App
 - `InsightRunnerIngressFunctionUrl` — accepts signed runner plan/run requests from Semaphor App for generated-analysis Briefings
 - `POST /api/v1/automations/internal/runs/[id]/start` — mark run running
 - `POST /api/v1/automations/internal/runs/[id]/fail` — fail run on dispatch error
@@ -321,7 +320,7 @@ Semaphor Report Scheduler supports two delivery modes:
 1. **SES mode (default)**: `EMAIL_PROVIDER_MODE=SES`
 2. **External mode**: `EMAIL_PROVIDER_MODE=EXTERNAL` (uses same-stack `ResendProviderFunctionUrl`)
 
-In external mode, `EmailSenderFunction` posts signed payloads to your provider endpoint and includes presigned attachment URLs. `EmailSenderFunction` does not download attachment bytes in this mode.
+In external mode, `EmailSenderFunction` posts signed payloads to your provider endpoint and includes presigned attachment URLs. `EmailSenderFunction` does not download attachment bytes in this mode. Unbranded payloads retain their existing shape. When email branding is present, the sender automatically adds the version 2 branding field group; there is no separate contract-version environment setting.
 
 ### SES Mode Setup
 

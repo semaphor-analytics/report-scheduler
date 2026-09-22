@@ -30,7 +30,7 @@ test('fetches app-owned dispatch targets without environment kind or org configu
     request = { url, init };
     return response({
       orgIds: [' org-1 ', 'org-1'],
-      kinds: ['report', 'BRIEFING'],
+      kinds: ['cache_refresh', 'BRIEFING'],
     });
   };
 
@@ -41,7 +41,7 @@ test('fetches app-owned dispatch targets without environment kind or org configu
 
   assert.deepEqual(targets, {
     orgIds: ['org-1'],
-    kinds: ['REPORT', 'BRIEFING'],
+    kinds: ['CACHE_REFRESH', 'BRIEFING'],
   });
   assert.equal(
     request.url,
@@ -132,7 +132,7 @@ test('coordinator fans out one bounded asynchronous invocation per organization'
     assert.equal(path, '/api/v1/automations/internal/dispatch-targets');
     return response({
       orgIds,
-      kinds: ['REPORT', 'CACHE_REFRESH', 'BRIEFING'],
+      kinds: ['CACHE_REFRESH', 'BRIEFING'],
     });
   };
 

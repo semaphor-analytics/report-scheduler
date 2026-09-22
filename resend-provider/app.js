@@ -98,6 +98,75 @@ function normalizePayloadAttachments(payload) {
   return Array.isArray(payload?.attachments) ? payload.attachments : [];
 }
 
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function isEmailAddress(value) {
+  return (
+    typeof value === 'string' &&
+    value === value.trim() &&
+    value.length >= 3 &&
+    value.length <= 254 &&
+    !/[\r\n]/u.test(value) &&
+    /^[\x00-\x7f]+$/u.test(value) &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(value)
+  );
+}
+
+function hasBrandingFields(payload) {
+  return ['contractVersion', 'fromName', 'replyTo', 'bcc'].some((key) =>
+    hasOwn(payload, key)
+  );
+}
+
+function validateBrandingFields(payload) {
+  if (!hasBrandingFields(payload)) {
+    return null;
+  }
+  if (payload.contractVersion !== 2) {
+    return 'contractVersion must be 2 when branding fields are present';
+  }
+  if (
+    typeof payload.fromName !== 'string' ||
+    payload.fromName !== payload.fromName.trim() ||
+    payload.fromName.length < 1 ||
+    payload.fromName.length > 80 ||
+    /[\u0000-\u001f\u007f-\u009f<>"]/u.test(payload.fromName)
+  ) {
+    return 'fromName is required and must be header-safe for contractVersion 2';
+  }
+  if (hasOwn(payload, 'replyTo') && !isEmailAddress(payload.replyTo)) {
+    return 'replyTo must be a valid email address';
+  }
+  if (hasOwn(payload, 'bcc') && !isEmailAddress(payload.bcc)) {
+    return 'bcc must be a valid email address';
+  }
+  return null;
+}
+
+function extractEmailAddress(value) {
+  const safeValue = String(value || '').replace(/[\r\n]+/gu, '').trim();
+  const openingAngle = safeValue.lastIndexOf('<');
+  const closingAngle = safeValue.endsWith('>') ? safeValue.length - 1 : -1;
+  const address =
+    openingAngle >= 0 && closingAngle > openingAngle
+      ? safeValue.slice(openingAngle + 1, closingAngle).trim()
+      : safeValue;
+  return isEmailAddress(address) ? address : null;
+}
+
+function composeBrandedFrom(fromName, configuredSender) {
+  const address = extractEmailAddress(configuredSender);
+  if (!address) {
+    throw new Error('Configured Resend sender must contain a valid email address');
+  }
+  const displayName = /^[A-Za-z0-9!#$%&'*+\-/=?^_`{|}~ ]+$/u.test(fromName)
+    ? fromName
+    : `"${fromName.replace(/\\/gu, '\\\\')}"`;
+  return `${displayName} <${address}>`;
+}
+
 function validatePayload(payload) {
   if (!payload || typeof payload !== 'object') {
     return 'Payload must be an object';
@@ -128,6 +197,11 @@ function validatePayload(payload) {
 
   if (!payload.html && !payload.text) {
     return 'Either html or text is required';
+  }
+
+  const brandingError = validateBrandingFields(payload);
+  if (brandingError) {
+    return brandingError;
   }
 
   return null;
@@ -226,12 +300,27 @@ exports.handler = async (event) => {
       });
     }
 
+    const branded = hasBrandingFields(payload);
+    const providerSender = process.env.RESEND_SENDER_EMAIL || payload.from;
+    const bcc =
+      branded &&
+      payload.bcc &&
+      !payload.to.some(
+        (recipient) =>
+          String(recipient).toLowerCase() === payload.bcc.toLowerCase()
+      )
+        ? payload.bcc
+        : undefined;
     const sendResponse = await resend.emails.send({
-      from: process.env.RESEND_SENDER_EMAIL || payload.from,
+      from: branded
+        ? composeBrandedFrom(payload.fromName, providerSender)
+        : providerSender,
       to: payload.to,
       subject: payload.subject,
       ...(payload.text ? { text: payload.text } : {}),
       ...(payload.html ? { html: payload.html } : {}),
+      ...(branded && payload.replyTo ? { replyTo: payload.replyTo } : {}),
+      ...(bcc ? { bcc } : {}),
       attachments: resendAttachments,
     });
 
@@ -252,4 +341,10 @@ exports.handler = async (event) => {
       error: error instanceof Error ? error.message : String(error),
     });
   }
+};
+
+exports._test = {
+  composeBrandedFrom,
+  hasBrandingFields,
+  validateBrandingFields,
 };

@@ -172,3 +172,108 @@ test('attachment payloads still require presignedUrl and name', async () => {
     }
   }
 });
+
+test('contract version 2 composes the branded sender and passes reply-to and BCC', async () => {
+  const originalSecret = process.env.EMAIL_EXTERNAL_AUTH_SECRET;
+  const originalKey = process.env.RESEND_API_KEY;
+  const originalSender = process.env.RESEND_SENDER_EMAIL;
+  process.env.EMAIL_EXTERNAL_AUTH_SECRET = 'test-secret';
+  process.env.RESEND_API_KEY = 'resend-test-key';
+  process.env.RESEND_SENDER_EMAIL = 'reports@respark.com';
+  sentEmails.length = 0;
+
+  try {
+    const response = await handler(
+      signedEvent({
+        from: 'noreply@semaphor.cloud',
+        to: ['user@example.com'],
+        subject: 'Dashboard Email Report',
+        text: 'Branded report',
+        html: '<p>Branded report</p>',
+        attachments: [],
+        contractVersion: 2,
+        fromName: 'Respark Reports',
+        replyTo: 'reply@respark.com',
+        bcc: 'archive@respark.com',
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(sentEmails[0].message.from, 'Respark Reports <reports@respark.com>');
+    assert.equal(sentEmails[0].message.replyTo, 'reply@respark.com');
+    assert.equal(sentEmails[0].message.bcc, 'archive@respark.com');
+  } finally {
+    if (originalSecret === undefined) delete process.env.EMAIL_EXTERNAL_AUTH_SECRET;
+    else process.env.EMAIL_EXTERNAL_AUTH_SECRET = originalSecret;
+    if (originalKey === undefined) delete process.env.RESEND_API_KEY;
+    else process.env.RESEND_API_KEY = originalKey;
+    if (originalSender === undefined) delete process.env.RESEND_SENDER_EMAIL;
+    else process.env.RESEND_SENDER_EMAIL = originalSender;
+  }
+});
+
+test('contract version 2 suppresses BCC when it matches the recipient', async () => {
+  const originalSecret = process.env.EMAIL_EXTERNAL_AUTH_SECRET;
+  const originalKey = process.env.RESEND_API_KEY;
+  process.env.EMAIL_EXTERNAL_AUTH_SECRET = 'test-secret';
+  process.env.RESEND_API_KEY = 'resend-test-key';
+  sentEmails.length = 0;
+
+  try {
+    const response = await handler(
+      signedEvent({
+        from: 'reports@respark.com',
+        to: ['Archive@respark.com'],
+        subject: 'Dashboard Email Report',
+        text: 'Branded report',
+        attachments: [],
+        contractVersion: 2,
+        fromName: 'Respark Reports',
+        bcc: 'archive@respark.com',
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(sentEmails[0].message.bcc, undefined);
+  } finally {
+    if (originalSecret === undefined) delete process.env.EMAIL_EXTERNAL_AUTH_SECRET;
+    else process.env.EMAIL_EXTERNAL_AUTH_SECRET = originalSecret;
+    if (originalKey === undefined) delete process.env.RESEND_API_KEY;
+    else process.env.RESEND_API_KEY = originalKey;
+  }
+});
+
+for (const [name, fields] of [
+  ['unknown version', { contractVersion: 3, fromName: 'Respark Reports' }],
+  ['missing from name', { contractVersion: 2 }],
+  ['partial reply-to group', { replyTo: 'reply@respark.com' }],
+  ['invalid BCC', { contractVersion: 2, fromName: 'Respark Reports', bcc: 'bad' }],
+]) {
+  test(`rejects ${name} without calling Resend`, async () => {
+    const originalSecret = process.env.EMAIL_EXTERNAL_AUTH_SECRET;
+    const originalKey = process.env.RESEND_API_KEY;
+    process.env.EMAIL_EXTERNAL_AUTH_SECRET = 'test-secret';
+    process.env.RESEND_API_KEY = 'resend-test-key';
+    sentEmails.length = 0;
+
+    try {
+      const response = await handler(
+        signedEvent({
+          from: 'reports@respark.com',
+          to: ['user@example.com'],
+          subject: 'Dashboard Email Report',
+          text: 'Report',
+          attachments: [],
+          ...fields,
+        })
+      );
+      assert.equal(response.statusCode, 400);
+      assert.equal(sentEmails.length, 0);
+    } finally {
+      if (originalSecret === undefined) delete process.env.EMAIL_EXTERNAL_AUTH_SECRET;
+      else process.env.EMAIL_EXTERNAL_AUTH_SECRET = originalSecret;
+      if (originalKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = originalKey;
+    }
+  });
+}

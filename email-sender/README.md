@@ -4,7 +4,12 @@
 
 ## What it does
 
-1. Receives direct invocation payloads (`action: send_consolidated` or `action: update_status`) from Step Functions / scheduler, and signed Function URL `send_consolidated` requests from Semaphor App Briefings.
+1. Receives direct invocation payloads (`action: send_consolidated`,
+   `action: send_consolidated_from_domain_v1`,
+   `action: send_consolidated_branded_v1`,
+   `action: send_consolidated_branded_v2`, or `action: update_status`) from
+   Step Functions / scheduler, and signed Function URL report-email and
+   sending-domain requests from Semaphor App.
 2. Resolves recipients + sender context (for scheduled reports via `GET /api/v1/schedules/{id}/internal`).
 3. Sends one email per recipient with the same attachment set.
 4. Applies the existing email size guardrail to SES and external delivery; gzip is
@@ -62,9 +67,24 @@ Content-Type: application/json
 }
 ```
 
-The Function URL supports only `send_consolidated`. `update_status` remains a
+The Function URL supports `send_consolidated`, `send_consolidated_from_domain_v1`,
+`send_consolidated_branded_v1`, `send_consolidated_branded_v2`,
+`sender_domain_setup`, `sender_domain_status`, and `sender_domain_delete`.
+`update_status` remains a
 direct Lambda invocation path for the existing scheduled-report Step Functions
-workflow.
+workflow. Both branded send actions require the strict version 1 `branding`
+object. The unbranded custom-domain action rejects branding and requires a
+validated top-level `fromAddress`. Branded v1 rejects `fromAddress`; branded v2
+requires it. Both custom-domain send actions are available only in SES mode.
+
+The SES-only domain actions use SES v2 Easy DKIM. Setup creates the exact
+domain identity and returns its three CNAME records. Status inspects that exact
+identity and returns `VERIFIED` only for a domain identity with DKIM `SUCCESS`
+and `VerifiedForSendingStatus: true`. Delete removes the exact identity and
+treats an already missing identity as successful cleanup. The actions never
+query DNS or tag or list identities. Initial setup refuses an identity that
+already exists; `allowExisting: true` is reserved for the app's explicit
+ambiguous-setup retry.
 
 ### 1) SES mode (default)
 
@@ -73,6 +93,10 @@ workflow.
   - `SES_SENDER_EMAIL=<verified sender>`
   - `SES_REGION=us-east-1` (or your SES region)
 - Sends multipart MIME email with attachment via `ses:SendRawEmail`.
+- Creates, reads, and removes Easy DKIM identities via
+  `ses:CreateEmailIdentity`, `ses:GetEmailIdentity`, and
+  `ses:DeleteEmailIdentity` for authenticated domain setup, status, and
+  removal actions.
 
 ### 2) External mode
 
@@ -101,6 +125,13 @@ The Lambda returns an aggregate result for the schedule run, including:
 - `statusMessage`
 
 ## External webhook contract
+
+Unbranded payloads retain the version 1 object below. For branded delivery,
+the sender automatically adds `contractVersion: 2`, required `fromName`, and
+optional `replyTo` and `bcc`. BCC never appears in MIME headers; the provider
+receives it as an envelope field. The bundled Resend provider
+validates the versioned group, keeps `RESEND_SENDER_EMAIL` as the address, and
+uses the customer name only as its display name.
 
 ### Request body
 

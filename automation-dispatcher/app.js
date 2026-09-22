@@ -21,10 +21,6 @@ function getExecutorPath(kind) {
     return unifiedPath;
   }
 
-  if (kind === 'REPORT') {
-    return process.env.REPORT_EXECUTOR_PATH || '';
-  }
-
   if (kind === 'ALERT') {
     return process.env.ALERT_EXECUTOR_PATH || '';
   }

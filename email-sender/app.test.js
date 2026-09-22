@@ -4,9 +4,31 @@ const { gzipSync } = require('node:zlib');
 
 const {
   createSendConsolidated,
+  estimateSesRawMessageSizeBytes,
   handler,
+  handleHttpFunctionUrlEvent,
   prepareEmailDelivery,
 } = require('./app');
+
+test('SES size estimate includes Base64 expansion for Unicode body parts', () => {
+  const common = {
+    from: 'reports@example.com',
+    to: ['user@example.com'],
+    subject: 'Weekly report',
+    htmlBody: '',
+    attachments: [],
+  };
+  const asciiEstimate = estimateSesRawMessageSizeBytes({
+    ...common,
+    textBody: 'a'.repeat(2000),
+  });
+  const unicodeEstimate = estimateSesRawMessageSizeBytes({
+    ...common,
+    textBody: 'é'.repeat(1000),
+  });
+
+  assert.ok(unicodeEstimate > asciiEstimate);
+});
 
 function buildTestConfig(mode = 'SES') {
   return {
@@ -19,6 +41,18 @@ function buildTestConfig(mode = 'SES') {
     sesSenderEmail: 'Acme Analytics <reports@acme.com>',
   };
 }
+
+test('direct invocation dispatches the unbranded custom-domain action', async () => {
+  await assert.rejects(
+    handler({
+      action: 'send_consolidated_from_domain_v1',
+      fromAddress: 'reports@respark.com',
+      recipients: [],
+      attachments: [],
+    }),
+    /No valid recipient emails found for direct email/
+  );
+});
 
 for (const mode of ['SES', 'EXTERNAL']) test(`${mode} Matrix gzip delivery applies decoded-size admission and link fallback`, async () => {
   const prepare = async (csv, limit = 100000) => {
@@ -75,7 +109,7 @@ function createSubjectUnderTest({
   sendRetryDelaysMs,
   sleep,
 } = {}) {
-  return createSendConsolidated({
+  const sendConsolidated = createSendConsolidated({
     getEmailSenderConfig: () => buildTestConfig(mode),
     buildProvider: () => ({
       name: mode,
@@ -95,6 +129,8 @@ function createSubjectUnderTest({
     sendRetryDelaysMs,
     sleep,
   });
+  return (payload) =>
+    sendConsolidated({ action: 'send_consolidated', ...payload });
 }
 
 test('SES mode sends one message per recipient and prepares attachments once', async () => {
@@ -354,6 +390,204 @@ test('Function URL handler rejects unsigned requests', async () => {
   }
 });
 
+test('Function URL handler validates and sends branded version 1 requests', async () => {
+  const names = [
+    'LAMBDA_API_KEY',
+    'EMAIL_PROVIDER_MODE',
+    'SES_SENDER_EMAIL',
+    'EMAIL_EXTERNAL_WEBHOOK_URL',
+    'EMAIL_EXTERNAL_AUTH_SECRET',
+  ];
+  const originalEnvironment = Object.fromEntries(
+    names.map((name) => [name, process.env[name]])
+  );
+  const originalFetch = global.fetch;
+  let externalPayload;
+  Object.assign(process.env, {
+    LAMBDA_API_KEY: 'http-secret',
+    EMAIL_PROVIDER_MODE: 'EXTERNAL',
+    SES_SENDER_EMAIL: 'noreply@semaphor.cloud',
+    EMAIL_EXTERNAL_WEBHOOK_URL: 'https://mail.example.com/send',
+    EMAIL_EXTERNAL_AUTH_SECRET: 'external-secret',
+  });
+  global.fetch = async (_url, init) => {
+    externalPayload = JSON.parse(init.body);
+    return new Response(
+      JSON.stringify({ success: true, providerMessageId: 'external-branded' })
+    );
+  };
+
+  try {
+    const response = await handler({
+      version: '2.0',
+      requestContext: { http: { method: 'POST' } },
+      headers: { 'x-api-key': 'http-secret' },
+      body: JSON.stringify({
+        action: 'send_consolidated_branded_v1',
+        recipients: ['user@example.com'],
+        subject: 'Résumé hebdomadaire',
+        message: 'Author message',
+        attachments: [],
+        branding: {
+          version: 1,
+          fromName: 'Respark Reports',
+          replyTo: 'reply@respark.com',
+          bcc: 'archive@respark.com',
+          accentColor: '#1a6ef4',
+          intro: 'Your report is ready.',
+          footer: 'Prepared for Respark.',
+        },
+      }),
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(externalPayload.contractVersion, 2);
+    assert.equal(externalPayload.fromName, 'Respark Reports');
+    assert.equal(externalPayload.replyTo, 'reply@respark.com');
+    assert.equal(externalPayload.bcc, 'archive@respark.com');
+    assert.equal(externalPayload.subject, 'Résumé hebdomadaire');
+    assert.match(externalPayload.html, /Your report is ready\./u);
+    assert.match(externalPayload.html, /Author message/u);
+    assert.match(externalPayload.html, /Prepared for Respark\./u);
+  } finally {
+    global.fetch = originalFetch;
+    for (const name of names) {
+      if (originalEnvironment[name] === undefined) delete process.env[name];
+      else process.env[name] = originalEnvironment[name];
+    }
+  }
+});
+
+test('Function URL handler returns 400 for an invalid branded action matrix', async () => {
+  const originalSecret = process.env.LAMBDA_API_KEY;
+  const originalFetch = global.fetch;
+  let fetchCalled = false;
+  process.env.LAMBDA_API_KEY = 'http-secret';
+  global.fetch = async () => {
+    fetchCalled = true;
+    throw new Error('fetch must not be called');
+  };
+
+  try {
+    const response = await handler({
+      version: '2.0',
+      requestContext: { http: { method: 'POST' } },
+      headers: { 'x-api-key': 'http-secret' },
+      body: JSON.stringify({
+        action: 'send_consolidated_branded_v1',
+        recipients: ['user@example.com'],
+        branding: null,
+      }),
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(fetchCalled, false);
+  } finally {
+    global.fetch = originalFetch;
+    if (originalSecret === undefined) delete process.env.LAMBDA_API_KEY;
+    else process.env.LAMBDA_API_KEY = originalSecret;
+  }
+});
+
+test('Function URL unsupported-action response names every accepted HTTP action', async () => {
+  const originalSecret = process.env.LAMBDA_API_KEY;
+  process.env.LAMBDA_API_KEY = 'http-secret';
+
+  try {
+    const response = await handler({
+      version: '2.0',
+      requestContext: { http: { method: 'POST' } },
+      headers: { 'x-api-key': 'http-secret' },
+      body: JSON.stringify({ action: 'unsupported_action' }),
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(JSON.parse(response.body), {
+      success: false,
+      error:
+        'Supported HTTP actions are send_consolidated, send_consolidated_from_domain_v1, send_consolidated_branded_v1, send_consolidated_branded_v2, sender_domain_setup, sender_domain_status, and sender_domain_delete',
+    });
+  } finally {
+    if (originalSecret === undefined) delete process.env.LAMBDA_API_KEY;
+    else process.env.LAMBDA_API_KEY = originalSecret;
+  }
+});
+
+test('Function URL routes authenticated domain actions and returns typed failures', async () => {
+  const originalSecret = process.env.LAMBDA_API_KEY;
+  process.env.LAMBDA_API_KEY = 'http-secret';
+  const seen = [];
+
+  try {
+    const success = await handleHttpFunctionUrlEvent(
+      {
+        version: '2.0',
+        requestContext: { http: { method: 'POST' } },
+        headers: { 'x-api-key': 'http-secret' },
+        body: JSON.stringify({
+          action: 'sender_domain_setup',
+          domain: 'respark.com',
+          allowExisting: false,
+        }),
+      },
+      {
+        getEmailSenderConfig: () => buildTestConfig('SES'),
+        handleSenderDomainAction: async (payload) => {
+          seen.push(payload);
+          return {
+            success: true,
+            verificationStatus: 'PENDING',
+            dnsRecords: [],
+          };
+        },
+      }
+    );
+    assert.equal(success.statusCode, 200);
+    assert.equal(seen[0].action, 'sender_domain_setup');
+
+    const removed = await handleHttpFunctionUrlEvent(
+      {
+        version: '2.0',
+        requestContext: { http: { method: 'POST' } },
+        headers: { 'x-api-key': 'http-secret' },
+        body: JSON.stringify({
+          action: 'sender_domain_delete',
+          domain: 'respark.com',
+        }),
+      },
+      {
+        getEmailSenderConfig: () => buildTestConfig('SES'),
+        handleSenderDomainAction: async (payload) => {
+          seen.push(payload);
+          return { success: true };
+        },
+      }
+    );
+    assert.equal(removed.statusCode, 200);
+    assert.equal(seen[1].action, 'sender_domain_delete');
+
+    const unsupported = await handleHttpFunctionUrlEvent(
+      {
+        version: '2.0',
+        requestContext: { http: { method: 'POST' } },
+        headers: { 'x-api-key': 'http-secret' },
+        body: JSON.stringify({
+          action: 'sender_domain_status',
+          domain: 'respark.com',
+        }),
+      },
+      {
+        getEmailSenderConfig: () => buildTestConfig('EXTERNAL'),
+      }
+    );
+    assert.equal(unsupported.statusCode, 400);
+    assert.equal(JSON.parse(unsupported.body).code, 'UNSUPPORTED_PROVIDER');
+  } finally {
+    if (originalSecret === undefined) delete process.env.LAMBDA_API_KEY;
+    else process.env.LAMBDA_API_KEY = originalSecret;
+  }
+});
+
 test('EXTERNAL mode sends one message per recipient', async () => {
   const sentMessages = [];
 
@@ -377,6 +611,202 @@ test('EXTERNAL mode sends one message per recipient', async () => {
   assert.equal(result.provider, 'EXTERNAL');
   assert.equal(result.successCount, 2);
   assert.equal(result.failureCount, 0);
+});
+
+test('branded action carries the resolved envelope to the provider', async () => {
+  const sentMessages = [];
+  let preparedBranding;
+  const sendConsolidated = createSubjectUnderTest({
+    mode: 'SES',
+    recipients: ['user@example.com'],
+    providerSend: async (message) => {
+      sentMessages.push(message);
+      return { success: true, providerMessageId: 'ses-branded' };
+    },
+    prepareEmailDelivery: async ({ branding }) => {
+      preparedBranding = branding;
+      return buildPreparedDelivery();
+    },
+  });
+
+  const branding = {
+    version: 1,
+    fromName: 'Respark Reports',
+    replyTo: 'reply@respark.com',
+    bcc: 'archive@respark.com',
+    accentColor: '#1a6ef4',
+  };
+  const result = await sendConsolidated({
+    action: 'send_consolidated_branded_v1',
+    branding,
+    attachments: [],
+  });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(preparedBranding, branding);
+  assert.deepEqual(sentMessages[0], {
+    brandingVersion: 1,
+    from: 'Respark Reports <reports@acme.com>',
+    fromName: 'Respark Reports',
+    fromAddress: 'reports@acme.com',
+    to: ['user@example.com'],
+    replyTo: 'reply@respark.com',
+    bcc: 'archive@respark.com',
+    subject: 'Weekly KPI Report',
+    textBody: 'Hello',
+    htmlBody: '<p>Hello</p>',
+    attachments: buildPreparedDelivery().attachmentsForProvider,
+    metadata: buildPreparedDelivery().metadata,
+  });
+});
+
+test('branded version 2 uses its required custom From address with branding version 1', async () => {
+  const sentMessages = [];
+  const sendConsolidated = createSubjectUnderTest({
+    mode: 'SES',
+    recipients: ['user@example.com'],
+    providerSend: async (message) => {
+      sentMessages.push(message);
+      return { success: true, providerMessageId: 'ses-v2' };
+    },
+    prepareEmailDelivery: async ({ fromAddress }) => {
+      assert.equal(fromAddress, 'reports@respark.com');
+      return buildPreparedDelivery();
+    },
+  });
+
+  await sendConsolidated({
+    action: 'send_consolidated_branded_v2',
+    fromAddress: 'reports@respark.com',
+    branding: {
+      version: 1,
+      fromName: 'Respark Reports',
+      accentColor: '#1a6ef4',
+    },
+    attachments: [],
+  });
+
+  assert.equal(sentMessages[0].from, 'Respark Reports <reports@respark.com>');
+  assert.equal(sentMessages[0].fromAddress, 'reports@respark.com');
+  assert.equal(sentMessages[0].brandingVersion, 1);
+});
+
+test('unbranded domain action uses its required custom From address', async () => {
+  const sentMessages = [];
+  const sendConsolidated = createSubjectUnderTest({
+    mode: 'SES',
+    recipients: ['user@example.com'],
+    providerSend: async (message) => {
+      sentMessages.push(message);
+      return { success: true, providerMessageId: 'ses-domain' };
+    },
+    prepareEmailDelivery: async ({ branding, fromAddress }) => {
+      assert.equal(branding, null);
+      assert.equal(fromAddress, 'reports@respark.com');
+      return buildPreparedDelivery();
+    },
+  });
+
+  await sendConsolidated({
+    action: 'send_consolidated_from_domain_v1',
+    fromAddress: 'reports@respark.com',
+    attachments: [],
+  });
+
+  assert.equal(sentMessages[0].from, 'Acme Analytics <reports@respark.com>');
+  assert.equal(sentMessages[0].fromAddress, 'reports@respark.com');
+  assert.equal(sentMessages[0].brandingVersion, null);
+});
+
+test('EXTERNAL mode refuses branded version 2 before constructing a provider', async () => {
+  let providerConstructed = false;
+  const sendConsolidated = createSendConsolidated({
+    getEmailSenderConfig: () => buildTestConfig('EXTERNAL'),
+    buildProvider: () => {
+      providerConstructed = true;
+      throw new Error('provider should not be constructed');
+    },
+  });
+
+  await assert.rejects(
+    sendConsolidated({
+      action: 'send_consolidated_branded_v2',
+      fromAddress: 'reports@respark.com',
+      branding: {
+        version: 1,
+        fromName: 'Respark Reports',
+        accentColor: '#1a6ef4',
+      },
+    }),
+    /not supported with EMAIL_PROVIDER_MODE=EXTERNAL/u
+  );
+  assert.equal(providerConstructed, false);
+});
+
+test('EXTERNAL mode refuses the unbranded custom-domain action', async () => {
+  let providerConstructed = false;
+  const sendConsolidated = createSendConsolidated({
+    getEmailSenderConfig: () => buildTestConfig('EXTERNAL'),
+    buildProvider: () => {
+      providerConstructed = true;
+      throw new Error('provider should not be constructed');
+    },
+  });
+
+  await assert.rejects(
+    sendConsolidated({
+      action: 'send_consolidated_from_domain_v1',
+      fromAddress: 'reports@respark.com',
+    }),
+    /not supported with EMAIL_PROVIDER_MODE=EXTERNAL/u
+  );
+  assert.equal(providerConstructed, false);
+});
+
+test('branded action suppresses BCC when it equals the recipient', async () => {
+  const sentMessages = [];
+  const sendConsolidated = createSubjectUnderTest({
+    mode: 'SES',
+    recipients: ['Archive@respark.com'],
+    providerSend: async (message) => {
+      sentMessages.push(message);
+      return { success: true, providerMessageId: 'ses-branded' };
+    },
+    prepareEmailDelivery: async () => buildPreparedDelivery(),
+  });
+
+  await sendConsolidated({
+    action: 'send_consolidated_branded_v1',
+    branding: {
+      version: 1,
+      fromName: 'Respark Reports',
+      bcc: 'archive@respark.com',
+      accentColor: '#1a6ef4',
+    },
+    attachments: [],
+  });
+
+  assert.equal(sentMessages[0].bcc, null);
+});
+
+test('invalid branded requests fail before a provider is constructed', async () => {
+  let providerConstructed = false;
+  const sendConsolidated = createSendConsolidated({
+    getEmailSenderConfig: () => buildTestConfig('SES'),
+    buildProvider: () => {
+      providerConstructed = true;
+      throw new Error('provider should not be constructed');
+    },
+  });
+
+  await assert.rejects(
+    sendConsolidated({
+      action: 'send_consolidated_branded_v1',
+      branding: null,
+    }),
+    /branding must be an object/u
+  );
+  assert.equal(providerConstructed, false);
 });
 
 test('body-only direct emails can be sent without attachments', async () => {

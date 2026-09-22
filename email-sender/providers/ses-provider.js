@@ -27,15 +27,21 @@ function createSesProvider({ sesRegion = 'us-east-1' } = {}) {
           subject: message.subject,
           textBody: message.textBody,
           htmlBody: message.htmlBody,
+          replyTo: message.replyTo,
           attachments,
         });
 
+        const sendRawEmailInput = {
+          RawMessage: {
+            Data: rawEmail,
+          },
+        };
+        if (message.bcc) {
+          sendRawEmailInput.Destinations = [...message.to, message.bcc];
+        }
+
         const response = await ses
-          .sendRawEmail({
-            RawMessage: {
-              Data: rawEmail,
-            },
-          })
+          .sendRawEmail(sendRawEmailInput)
           .promise();
 
         return {

@@ -4,7 +4,7 @@
   "description": "External email provider Lambda for semaphor report scheduler",
   "main": "app.js",
   "scripts": {
-    "test": "echo \"No tests configured\"",
+    "test": "node --test",
     "generate:signed-event": "node scripts/generate-signed-event.js"
   },
   "license": "ISC",
