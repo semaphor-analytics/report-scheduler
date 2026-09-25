@@ -12,16 +12,16 @@ import type {
 } from '../types';
 
 import {
-  findResolvedNumericFormat,
+  findResolvedMeasureFormat,
   findResolvedTemporalBucketFormat,
   formatDate,
-  formatNumericCanonical,
+  formatMeasureCanonical,
   formatTemporalBucket,
   presentPivotHeader,
   requirePivotHeaderMembers,
   requirePivotResultColumnIdentities,
   resolveTemporalBucketPresentation,
-  type NumericCanonicalFormat,
+  type MeasureCanonicalFormat,
   type PivotResultColumnClassification,
   type ResolvedTemporalBucketFormat,
   type TemporalBucketMetadata,
@@ -88,10 +88,10 @@ function resolveDisplayTimezone(
 function numericFormatsByVisibleColumn(
   formatting: ExportFormattingConfig,
   visibleColumns: readonly string[],
-): ReadonlyMap<string, NumericCanonicalFormat> {
-  const formats = new Map<string, NumericCanonicalFormat>();
+): ReadonlyMap<string, MeasureCanonicalFormat> {
+  const formats = new Map<string, MeasureCanonicalFormat>();
   for (const columnKey of visibleColumns) {
-    const format = findResolvedNumericFormat({
+    const format = findResolvedMeasureFormat({
       snapshot: formatting.presentationExecutionSnapshot,
       scope: formatting.scope,
       target: { kind: 'column', columnKey },
@@ -183,7 +183,7 @@ function formatCellValue(
   columnKey: string,
   columnSettings: ColumnSettings | undefined,
   formatting: ExportFormattingConfig,
-  numericFormatsByColumn: ReadonlyMap<string, NumericCanonicalFormat>,
+  numericFormatsByColumn: ReadonlyMap<string, MeasureCanonicalFormat>,
   temporalFormatsByColumn: ReadonlyMap<string, ResolvedTemporalBucketFormat>,
   temporalMetadataByColumn: ReadonlyMap<string, TemporalBucketMetadata>,
   rawTemporalResolution: RawTemporalExportResolution,
@@ -227,7 +227,7 @@ function formatCellValue(
   if (typeof value === 'number') {
     const format = numericFormatsByColumn.get(columnKey);
     if (format) {
-      return formatNumericCanonical(value, format);
+      return formatMeasureCanonical(value, format);
     }
     return String(value);
   }
@@ -370,7 +370,7 @@ function formatSingleRow(
   visibleColumns: string[],
   visibleColumnKeys: ReadonlySet<string>,
   formatting: ExportFormattingConfig,
-  numericFormatsByColumn: ReadonlyMap<string, NumericCanonicalFormat>,
+  numericFormatsByColumn: ReadonlyMap<string, MeasureCanonicalFormat>,
   temporalFormatsByColumn: ReadonlyMap<string, ResolvedTemporalBucketFormat>,
   temporalMetadataByColumn: ReadonlyMap<string, TemporalBucketMetadata>,
   rawTemporalResolution: RawTemporalExportResolution,

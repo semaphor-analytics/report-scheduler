@@ -4,7 +4,7 @@ import {
   generateCSV,
 } from './formatter';
 import type { ColumnInfo, ExportFormattingConfig } from '../types';
-import type { NumericCanonicalFormat } from 'react-semaphor/format-utils';
+import type { MeasureCanonicalFormat } from 'react-semaphor/format-utils';
 
 describe('formatter', () => {
   const defaultFormatting: ExportFormattingConfig = {
@@ -41,21 +41,18 @@ describe('formatter', () => {
 
   function withNumericFormat(
     columnKey: string,
-    format: NumericCanonicalFormat,
+    format: MeasureCanonicalFormat,
   ): ExportFormattingConfig {
+    const scope = { dashboardId: 'dashboard-1', cardId: 'card-1' };
+    const target = { kind: 'column', columnKey } as const;
     return {
       ...defaultFormatting,
       presentationExecutionSnapshot: {
         ...defaultFormatting.presentationExecutionSnapshot,
         resolvedFormats: [
-          {
-            scope: {
-              dashboardId: 'dashboard-1',
-              cardId: 'card-1',
-            },
-            target: { kind: 'column', columnKey },
-            format,
-          },
+          format.type === 'duration'
+            ? { scope, target, format }
+            : { scope, target, format },
         ],
       },
     };
@@ -772,6 +769,20 @@ describe('formatter', () => {
       const result = formatRowsForExport(data, columns, formatting);
 
       expect(result[0][0]).toBe('$1,234.50');
+    });
+
+    it('formats durations from the carried canonical column format', () => {
+      const data = [{ total_time: 209595 }];
+      const columns: ColumnInfo[] = [{ field: 'total_time' }];
+      const formatting = withNumericFormat('total_time', {
+        type: 'duration',
+        inputUnit: 'second',
+        outputStyle: 'compact',
+      });
+
+      const result = formatRowsForExport(data, columns, formatting);
+
+      expect(result[0][0]).toBe('2d 10hr 13min 15s');
     });
 
     it('formats whole percents from the carried canonical column format', () => {
