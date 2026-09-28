@@ -114,29 +114,6 @@ export function paginateTableData(data, options = {}) {
   return [page];
 }
 
-function groupRowsWithSubtotals(rows) {
-  const groups = [];
-  let currentGroup = [];
-
-  rows.forEach((row, index) => {
-    currentGroup.push(row);
-
-    // End group at subtotal or last row
-    if (row.type === 'subtotal' || index === rows.length - 1) {
-      if (currentGroup.length > 0) {
-        groups.push([...currentGroup]);
-        currentGroup = [];
-      }
-    }
-  });
-
-  if (currentGroup.length > 0) {
-    groups.push(currentGroup);
-  }
-
-  return groups;
-}
-
 function createNewPage(headers, pageNumber, metadata) {
   return {
     headers: headers,

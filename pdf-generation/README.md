@@ -73,10 +73,14 @@ npm test
 npm run test:watch
 
 # targeted suites
-npm run test:wide-layout
 npm run test:subtotal-grouping
 npm run test:path-safety
 ```
+
+The table layout engine (column widths, page fit and wide-table bands) lives
+in react-semaphor's shared format-utils (`pdf-table-layout`), with its unit
+tests; this package tests the bundle it uses (`pdf-table-layout-adapter`) and
+the rendered PDFs.
 
 Manual smoke/performance scripts are kept under `scripts/manual/`:
 
@@ -432,8 +436,9 @@ node test-local.js --url "https://example.com/visual?isPdfRender=true" --visual 
 ### Build and Deploy
 
 ```bash
-# From the scheduler repository root, generate the tiny shared-policy adapter.
-npm run build:pdf-export-policy
+# From the scheduler repository root, generate the small shared adapters
+# (Fast PDF policy and table layout).
+npm run build:pdf-shared
 
 # Build with container (required for Lambda layers)
 sam build --use-container
@@ -735,8 +740,8 @@ sam local invoke GeneratePdfFunction --event event.json
 ### 3. Build and Deploy
 
 ```bash
-# From the scheduler repository root, generate the policy adapter and build.
-npm run build:pdf-export-policy
+# From the scheduler repository root, generate the shared adapters and build.
+npm run build:pdf-shared
 sam build --use-container
 
 # Deploy to dev

@@ -16,5 +16,7 @@ local-test/output/
 output/
 pdf-generation/output/
 
-# Generated from the React-free react-semaphor export policy at build time
+# Generated at build time from React-free react-semaphor format-utils
+# (the export policy and the PDF table layout engine)
 pdf-generation/lib/generated/pdf-export-policy.js
+pdf-generation/lib/generated/pdf-table-layout.js

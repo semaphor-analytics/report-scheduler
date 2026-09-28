@@ -104,7 +104,7 @@ commented out. After copying it to `.env`:
 
 # Or deploy manually
 npm ci --include=dev
-npm run build:pdf-export-policy
+npm run build:pdf-shared
 cd pdf-generation && npm ci && cd ..
 cd schedule-processor && npm ci && cd ..
 cd email-sender && npm ci && cd ..
@@ -367,7 +367,7 @@ For detailed SES setup instructions, see [SES-SETUP.md](SES-SETUP.md)
 
 ```bash
 npm ci --include=dev
-npm run build:pdf-export-policy
+npm run build:pdf-shared
 cd pdf-generation && npm ci && cd ..
 cd schedule-processor && npm ci && cd ..
 cd email-sender && npm ci && cd ..
@@ -466,7 +466,7 @@ sam list stack-outputs --stack-name semaphor-report-scheduler
   - `NPM_CONFIG_OMIT= npm ci --include=dev`
   - `export PATH="$(pwd)/node_modules/.bin:$PATH"`
   - `esbuild --version`
-  - `npm run build:pdf-export-policy`
+  - `npm run build:pdf-shared`
   - `sam build --use-container --no-cached`
 - If `npm config get omit` prints `dev`, clear it for the build shell or use `NPM_CONFIG_OMIT=` inline as above.
 - If `./deploy.sh` reports a missing AWS SDK v3 package under
@@ -479,7 +479,7 @@ sam list stack-outputs --stack-name semaphor-report-scheduler
   ```bash
   rm -rf .aws-sam
   npm ci --include=dev
-  npm run build:pdf-export-policy
+  npm run build:pdf-shared
   cd pdf-generation && npm ci && cd ..
   cd schedule-processor && npm ci && cd ..
   cd email-sender && npm ci && cd ..

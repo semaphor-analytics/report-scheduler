@@ -6,6 +6,7 @@ import { normalizePageSize } from '../page-size-utils.js';
 import { buildWideTableLayout } from './wide-table-layout.js';
 import {
   groupRowsBySubtotal,
+  segmentRowsByKeepPlan,
   splitSubtotalGroupForPagination,
 } from './subtotal-groups.js';
 import { buildTableFooterTemplate } from './table-footer.js';
@@ -153,9 +154,13 @@ export function renderPivotTableHtml(pages, options = {}) {
         })
         .join('');
 
-      const rowGroups = groupRowsBySubtotal(section.rows || []);
-      const groupedBodyHtml = rowGroups
-        .flatMap((group) => splitSubtotalGroupForPagination(group))
+      // A Matrix carries the shared keep plan; legacy Pivot groups by subtotal.
+      const bodySegments =
+        segmentRowsByKeepPlan(section.rows || []) ||
+        groupRowsBySubtotal(section.rows || []).flatMap((group) =>
+          splitSubtotalGroupForPagination(group),
+        );
+      const groupedBodyHtml = bodySegments
         .map((groupSegment) => {
           const groupRowsHtml = groupSegment.rows
             .map((row) => {
@@ -344,11 +349,4 @@ export function renderPivotTableHtml(pages, options = {}) {
   `;
 
   return { html, layoutApplied };
-}
-// Helper function to detect if a table is a pivot table
-export async function isPivotTable(page) {
-  return await page.evaluate(() => {
-    const pivotTable = document.querySelector('table[data-pivot-table="true"]');
-    return !!pivotTable;
-  });
 }
