@@ -280,6 +280,7 @@ Resources:
                   - ses:SendRawEmail
                   - ses:CreateEmailIdentity
                   - ses:GetEmailIdentity
+                  - ses:PutEmailIdentityDkimSigningAttributes
                   - ses:DeleteEmailIdentity
                 Resource: '*'
 

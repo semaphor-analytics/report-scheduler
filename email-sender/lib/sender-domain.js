@@ -2,6 +2,7 @@ const {
   CreateEmailIdentityCommand,
   DeleteEmailIdentityCommand,
   GetEmailIdentityCommand,
+  PutEmailIdentityDkimSigningAttributesCommand,
   SESv2Client,
 } = require('@aws-sdk/client-sesv2');
 
@@ -211,6 +212,33 @@ function createSenderDomainService({
     }
   }
 
+  async function restartEasyDkim(domain, previous) {
+    let restarted;
+    try {
+      restarted = await getClient().send(
+        new PutEmailIdentityDkimSigningAttributesCommand({
+          EmailIdentity: domain,
+          SigningAttributesOrigin: 'AWS_SES',
+        })
+      );
+    } catch (error) {
+      throw domainOperationFailed(error);
+    }
+    // The restart response carries the DKIM status and tokens but not the
+    // identity type or sending status; keep those from the earlier read.
+    return {
+      ...previous,
+      DkimAttributes: {
+        ...previous.DkimAttributes,
+        Status: restarted?.DkimStatus ?? previous.DkimAttributes?.Status,
+        Tokens: restarted?.DkimTokens ?? previous.DkimAttributes?.Tokens,
+        SigningHostedZone:
+          restarted?.SigningHostedZone ??
+          previous.DkimAttributes?.SigningHostedZone,
+      },
+    };
+  }
+
   function normalizeIdentity(domain, response) {
     return {
       success: true,
@@ -254,13 +282,28 @@ function createSenderDomainService({
 
     async status(domain) {
       requireDomain(domain);
-      const response = await getIdentity(domain, { allowMissing: true });
+      let response = await getIdentity(domain, { allowMissing: true });
       if (!response) {
         return {
           success: true,
           verificationStatus: 'FAILED',
           dnsRecords: [],
         };
+      }
+      // SES searches DNS for 72 hours after setup and then marks Easy DKIM
+      // FAILED and stops looking. An admin who published the records late
+      // would otherwise stay FAILED forever, so a manual check on a failed
+      // identity re-arms the search. This keeps the existing tokens; the
+      // returned records are stored in case SES ever issues new ones.
+      // Only plain Easy DKIM is restarted: the restart call sets the signing
+      // method to AWS_SES, so on a BYODKIM (EXTERNAL) or regional
+      // (AWS_SES_<REGION>) identity it would replace the owner's DKIM setup.
+      if (
+        response.IdentityType === 'DOMAIN' &&
+        response.DkimAttributes?.Status === 'FAILED' &&
+        response.DkimAttributes?.SigningAttributesOrigin === 'AWS_SES'
+      ) {
+        response = await restartEasyDkim(domain, response);
       }
       return normalizeIdentity(domain, response);
     },

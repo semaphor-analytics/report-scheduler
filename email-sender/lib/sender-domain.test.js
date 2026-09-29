@@ -287,3 +287,108 @@ test('constructed records that exceed DNS name length are invalid', async () => 
       error.code === 'DOMAIN_OPERATION_FAILED' && error.statusCode === 502
   );
 });
+
+test('status restarts Easy DKIM when SES gave up and reports the new status', async () => {
+  const commands = [];
+  const service = createService(async (command) => {
+    commands.push(command);
+    if (command.constructor.name === 'GetEmailIdentityCommand') {
+      return identityResponse({ DkimAttributes: { Status: 'FAILED', SigningAttributesOrigin: 'AWS_SES', Tokens: TOKENS, SigningHostedZone: SIGNING_HOSTED_ZONE } });
+    }
+    assert.equal(command.constructor.name, 'PutEmailIdentityDkimSigningAttributesCommand');
+    assert.deepEqual(command.input, {
+      EmailIdentity: 'respark.com',
+      SigningAttributesOrigin: 'AWS_SES',
+    });
+    return { DkimStatus: 'PENDING', DkimTokens: TOKENS, SigningHostedZone: SIGNING_HOSTED_ZONE };
+  });
+
+  const result = await service.status('respark.com');
+  assert.equal(result.verificationStatus, 'PENDING');
+  assert.equal(result.dnsRecords.length, 3);
+  assert.equal(result.dnsRecords[0].name, 'tokenOne._domainkey.respark.com');
+  assert.deepEqual(commands.map((command) => command.constructor.name), [
+    'GetEmailIdentityCommand',
+    'PutEmailIdentityDkimSigningAttributesCommand',
+  ]);
+});
+
+test('status does not restart DKIM for pending or verified identities', async () => {
+  for (const status of ['PENDING', 'SUCCESS', 'TEMPORARY_FAILURE']) {
+    const commands = [];
+    const service = createService(async (command) => {
+      commands.push(command);
+      return identityResponse({
+        VerifiedForSendingStatus: status === 'SUCCESS',
+        DkimAttributes: { Status: status, Tokens: TOKENS, SigningHostedZone: SIGNING_HOSTED_ZONE },
+      });
+    });
+    await service.status('respark.com');
+    assert.deepEqual(commands.map((command) => command.constructor.name), [
+      'GetEmailIdentityCommand',
+    ]);
+  }
+});
+
+test('status never restarts a failed identity that does not use plain Easy DKIM', async () => {
+  // The restart sets the signing method to AWS_SES, which would replace a
+  // BYODKIM or regional DKIM setup. A missing origin is left alone too.
+  for (const origin of ['EXTERNAL', 'AWS_SES_EU_WEST_1', undefined]) {
+    const commands = [];
+    const service = createService(async (command) => {
+      commands.push(command);
+      return identityResponse({
+        DkimAttributes: {
+          Status: 'FAILED',
+          ...(origin ? { SigningAttributesOrigin: origin } : {}),
+          Tokens: TOKENS,
+          SigningHostedZone: SIGNING_HOSTED_ZONE,
+        },
+      });
+    });
+
+    const result = await service.status('respark.com');
+    assert.equal(result.verificationStatus, 'FAILED', String(origin));
+    assert.deepEqual(
+      commands.map((command) => command.constructor.name),
+      ['GetEmailIdentityCommand'],
+      String(origin)
+    );
+  }
+});
+
+test('status on a BYODKIM identity without Easy DKIM records fails without changing it', async () => {
+  const commands = [];
+  const service = createService(async (command) => {
+    commands.push(command);
+    return identityResponse({
+      DkimAttributes: { Status: 'FAILED', SigningAttributesOrigin: 'EXTERNAL' },
+    });
+  });
+
+  await assert.rejects(
+    () => service.status('respark.com'),
+    (error) =>
+      error instanceof SenderDomainRequestError &&
+      error.code === 'DOMAIN_OPERATION_FAILED'
+  );
+  assert.deepEqual(commands.map((command) => command.constructor.name), [
+    'GetEmailIdentityCommand',
+  ]);
+});
+
+test('a failed DKIM restart is an ambiguous 5xx failure, not a silent FAILED', async () => {
+  const service = createService(async (command) => {
+    if (command.constructor.name === 'GetEmailIdentityCommand') {
+      return identityResponse({ DkimAttributes: { Status: 'FAILED', SigningAttributesOrigin: 'AWS_SES', Tokens: TOKENS, SigningHostedZone: SIGNING_HOSTED_ZONE } });
+    }
+    throw new Error('throttled');
+  });
+
+  await assert.rejects(
+    () => service.status('respark.com'),
+    (error) =>
+      error instanceof SenderDomainRequestError &&
+      error.code === 'DOMAIN_OPERATION_FAILED' && error.statusCode === 502
+  );
+});
