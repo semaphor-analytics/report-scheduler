@@ -1,7 +1,8 @@
+import { jest } from '@jest/globals';
 import { completeJob, updateJobStatus } from './api-client';
 
 const originalFetch = global.fetch;
-beforeEach(() => { global.fetch = jest.fn(); });
+beforeEach(() => { global.fetch = jest.fn<typeof fetch>(); });
 afterEach(() => { global.fetch = originalFetch; });
 
 it.each([400, 403, 503])('preserves bounded Matrix errors at HTTP %s for both callbacks', async status => {

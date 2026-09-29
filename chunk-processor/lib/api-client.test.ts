@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import {
   ExportQueryRejectedError,
   fetchChunkStatus,
@@ -6,10 +7,10 @@ import {
 
 describe('queryData table totals projection', () => {
   beforeEach(() => {
-    global.fetch = jest.fn().mockResolvedValue({
+    global.fetch = jest.fn<typeof fetch>().mockResolvedValue({
       ok: true,
       json: async () => ({ records: [] }),
-    }) as jest.Mock;
+    } as Response);
   });
 
   it('omits tableTotalsRequest from an ordinary chunk query', async () => {
@@ -22,7 +23,7 @@ describe('queryData table totals projection', () => {
     });
 
     const body = JSON.parse(
-      (global.fetch as jest.Mock).mock.calls[0][1].body,
+      String(jest.mocked(global.fetch).mock.calls[0][1]?.body),
     );
     expect(body).not.toHaveProperty('tableTotalsRequest');
   });
@@ -48,17 +49,17 @@ describe('queryData table totals projection', () => {
     });
 
     const body = JSON.parse(
-      (global.fetch as jest.Mock).mock.calls[0][1].body,
+      String(jest.mocked(global.fetch).mock.calls[0][1]?.body),
     );
     expect(body.tableTotalsRequest).toEqual(tableTotalsRequest);
   });
 
   it('classifies an HTTP 400 query rejection as non-retryable', async () => {
-    global.fetch = jest.fn().mockResolvedValue({
+    global.fetch = jest.fn<typeof fetch>().mockResolvedValue({
       ok: false,
       status: 400,
       text: async () => 'stable ordering is required',
-    }) as jest.Mock;
+    } as Response);
 
     await expect(
       queryData({
@@ -76,11 +77,11 @@ describe('queryData table totals projection', () => {
   });
 
   it('keeps server failures retryable', async () => {
-    global.fetch = jest.fn().mockResolvedValue({
+    global.fetch = jest.fn<typeof fetch>().mockResolvedValue({
       ok: false,
       status: 503,
       text: async () => 'temporarily unavailable',
-    }) as jest.Mock;
+    } as Response);
 
     await expect(
       queryData({
@@ -99,10 +100,10 @@ describe('queryData table totals projection', () => {
 
 describe('fetchChunkStatus', () => {
   it('returns null only for a missing chunk', async () => {
-    global.fetch = jest.fn().mockResolvedValue({
+    global.fetch = jest.fn<typeof fetch>().mockResolvedValue({
       ok: false,
       status: 404,
-    }) as jest.Mock;
+    } as Response);
 
     await expect(
       fetchChunkStatus('missing', 'https://app.example.com', 'key'),
@@ -110,19 +111,19 @@ describe('fetchChunkStatus', () => {
   });
 
   it('fails closed when chunk status is unavailable', async () => {
-    global.fetch = jest.fn().mockResolvedValue({
+    global.fetch = jest.fn<typeof fetch>().mockResolvedValue({
       ok: false,
       status: 503,
       text: async () => 'unavailable',
-    }) as jest.Mock;
+    } as Response);
 
     await expect(
       fetchChunkStatus('chunk-1', 'https://app.example.com', 'key'),
     ).rejects.toThrow('Failed to fetch chunk status (503)');
 
-    global.fetch = jest.fn().mockRejectedValue(
+    global.fetch = jest.fn<typeof fetch>().mockRejectedValue(
       new Error('network unavailable'),
-    ) as jest.Mock;
+    );
     await expect(
       fetchChunkStatus('chunk-1', 'https://app.example.com', 'key'),
     ).rejects.toThrow('network unavailable');

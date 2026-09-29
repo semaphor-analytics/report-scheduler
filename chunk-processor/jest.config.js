@@ -1,5 +1,7 @@
+const { createDefaultEsmPreset } = require('ts-jest');
+
 module.exports = {
-  preset: 'ts-jest',
+  ...createDefaultEsmPreset({ tsconfig: 'tsconfig.test.json' }),
   testEnvironment: 'node',
   testMatch: ['**/*.test.ts'],
   moduleFileExtensions: ['ts', 'js'],

@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import { mkdtemp, readFile, rm } from 'fs/promises';
 import os from 'os';
 import path from 'path';

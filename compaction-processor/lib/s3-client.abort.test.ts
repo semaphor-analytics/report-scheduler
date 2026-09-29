@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import { S3Client } from '@aws-sdk/client-s3';
 import { PassThrough } from 'node:stream';
 

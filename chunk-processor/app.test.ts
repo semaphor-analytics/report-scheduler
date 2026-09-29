@@ -1,24 +1,15 @@
-import { handler } from './app';
+import { jest } from '@jest/globals';
 import type { ChunkInput } from './types';
-import {
-  fetchChunkStatus,
-  queryData,
-  updateChunkStatus,
-} from './lib/api-client';
-import {
-  fetchRawTemporalClassification,
-  fetchTableTotalsMetadata,
-  uploadChunk,
-  uploadRawTemporalClassification,
-  uploadTableTotalsMetadata,
-} from './lib/s3-client';
 
-jest.mock('./lib/api-client', () => ({
+jest.unstable_mockModule('./lib/api-client', () => ({
+  ExportQueryRejectedError: class ExportQueryRejectedError extends Error {
+    readonly retryable = false;
+  },
   fetchChunkStatus: jest.fn(),
   queryData: jest.fn(),
   updateChunkStatus: jest.fn(),
 }));
-jest.mock('./lib/s3-client', () => ({
+jest.unstable_mockModule('./lib/s3-client', () => ({
   fetchRawTemporalClassification: jest.fn(),
   fetchTableTotalsMetadata: jest.fn(),
   getRawTemporalClassificationKey: jest.fn(
@@ -29,9 +20,24 @@ jest.mock('./lib/s3-client', () => ({
     (jobId: string) => `exports/${jobId}/deltas/001.totals.json`,
   ),
   uploadChunk: jest.fn(),
+  uploadExportAttempt: jest.fn(),
   uploadRawTemporalClassification: jest.fn(),
   uploadTableTotalsMetadata: jest.fn(),
 }));
+
+const { handler } = await import('./app');
+const {
+  fetchChunkStatus,
+  queryData,
+  updateChunkStatus,
+} = await import('./lib/api-client');
+const {
+  fetchRawTemporalClassification,
+  fetchTableTotalsMetadata,
+  uploadChunk,
+  uploadRawTemporalClassification,
+  uploadTableTotalsMetadata,
+} = await import('./lib/s3-client');
 
 const request = {
   source: 'documentFlatTable',

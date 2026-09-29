@@ -1,20 +1,26 @@
-import { handler } from './app';
-import { completeJob, updateJobStatus } from './lib/api-client';
-import { cleanupChunks, compactChunks } from './lib/compactor';
-import { fetchRawTemporalClassificationByKey } from './lib/s3-client';
+import { jest } from '@jest/globals';
 import type { ChunkResult, CompactionInput } from './types';
 
-jest.mock('./lib/api-client', () => ({
+jest.unstable_mockModule('./lib/api-client', () => ({
+  ExportQueryRejectedError: class ExportQueryRejectedError extends Error {
+    readonly retryable = false;
+  },
   completeJob: jest.fn(),
+  rejectExportResponse: jest.fn(),
   updateJobStatus: jest.fn(),
 }));
-jest.mock('./lib/compactor', () => ({
+jest.unstable_mockModule('./lib/compactor', () => ({
   cleanupChunks: jest.fn(),
   compactChunks: jest.fn(),
 }));
-jest.mock('./lib/s3-client', () => ({
+jest.unstable_mockModule('./lib/s3-client', () => ({
   fetchRawTemporalClassificationByKey: jest.fn(),
 }));
+
+const { handler } = await import('./app');
+const { completeJob, updateJobStatus } = await import('./lib/api-client');
+const { cleanupChunks, compactChunks } = await import('./lib/compactor');
+const { fetchRawTemporalClassificationByKey } = await import('./lib/s3-client');
 
 const declaredSqlFormatting = {
   scope: { dashboardId: 'dashboard-1', cardId: 'card-1' },

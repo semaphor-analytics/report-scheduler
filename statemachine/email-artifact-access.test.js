@@ -3,7 +3,6 @@ const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const YAML = require('yaml');
-const { matrixAttemptKey } = require('react-semaphor/format-utils');
 
 const template = YAML.parse(readFileSync(join(__dirname, '../template.yaml'), 'utf8'), {
   customTags: ['!Ref', '!Sub', '!GetAtt'].map(tag => ({ tag, resolve: (_doc, node) => {
@@ -12,7 +11,8 @@ const template = YAML.parse(readFileSync(join(__dirname, '../template.yaml'), 'u
   } })),
 });
 
-test('existing email role can read final Matrix artifacts, not checkpoints or chunks', () => {
+test('existing email role can read final Matrix artifacts, not checkpoints or chunks', async () => {
+  const { matrixAttemptKey } = await import('react-semaphor/format-utils');
   const resources = template.Resources;
   assert.equal(resources.EmailSenderFunction.Properties.Role, 'EmailSenderFunctionRole.Arn');
   const role = resources.EmailSenderFunctionRole.Properties.Policies[0].PolicyDocument.Statement

@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -9,7 +10,7 @@ let deadlineAt: number;
 beforeEach(async () => {
   deadlineAt = Date.now() + 60_000;
   jest.resetModules(); directory = await mkdtemp(path.join(tmpdir(), 'matrix-finalize-'));
-  process.env.LOCAL_EXPORT_STORAGE_DIR = directory; global.fetch = jest.fn();
+  process.env.LOCAL_EXPORT_STORAGE_DIR = directory; global.fetch = jest.fn<typeof fetch>();
 });
 afterEach(async () => {
   global.fetch = originalFetch;

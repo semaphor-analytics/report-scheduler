@@ -1,8 +1,9 @@
-import { processMatrixBatch } from './matrix-batch';
-import { uploadExportAttempt } from './s3-client';
+import { jest } from '@jest/globals';
 import { gzipSync } from 'node:zlib';
 import { MATRIX_EXPORT_TRANSFER_BYTES } from 'react-semaphor/format-utils';
-jest.mock('./s3-client', () => ({ uploadExportAttempt: jest.fn() }));
+jest.unstable_mockModule('./s3-client', () => ({ uploadExportAttempt: jest.fn() }));
+const { processMatrixBatch } = await import('./matrix-batch');
+const { uploadExportAttempt } = await import('./s3-client');
 const originalFetch = global.fetch;
 const deadlineAt = Date.now() + 60_000;
 const input = { acquisition: 'continuation' as const, jobId: 'job', sequence: 1, deadlineAt };
@@ -11,7 +12,7 @@ const work = { kind: 'work', sequence: 1, deadlineAt, checkpointKey: 'exports/jo
   { key: 'exports/job/attempts/a/checkpoint.json', content: '{}', contentType: 'application/json' },
 ] };
 const response = (body: unknown, status = 200) => ({ ok: status === 200, status, json: async () => body }) as Response;
-beforeEach(() => { jest.clearAllMocks(); global.fetch = jest.fn(); jest.mocked(uploadExportAttempt).mockResolvedValue(undefined); });
+beforeEach(() => { jest.clearAllMocks(); global.fetch = jest.fn<typeof fetch>(); jest.mocked(uploadExportAttempt).mockResolvedValue(undefined); });
 afterAll(() => { global.fetch = originalFetch; });
 it('finishes uploads before proposing commit, and returns only bounded control state', async () => {
   jest.mocked(global.fetch).mockResolvedValueOnce(response(work)).mockImplementationOnce(async () => {

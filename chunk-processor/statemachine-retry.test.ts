@@ -1,10 +1,11 @@
 import { readFileSync } from 'fs';
-import path from 'path';
 import jsonata from 'jsonata';
+
+const stateMachinePath = new URL('../statemachine/export.asl.json', import.meta.url);
 
 describe('export state machine retry policy', () => {
   it('reuses existing workers for bounded continuation and finalization retries', () => {
-    const definition = JSON.parse(readFileSync(path.resolve(__dirname, '../statemachine/export.asl.json'), 'utf8'));
+    const definition = JSON.parse(readFileSync(stateMachinePath, 'utf8'));
     const { States: states } = definition;
     expect(states.ProcessMatrixBatch.Resource).toBe('${ChunkProcessorArn}');
     expect(states.ProcessMatrixBatch.ResultPath).toBe('$.continuation');
@@ -24,7 +25,7 @@ describe('export state machine retry policy', () => {
   });
 
   it('evaluates bounded Matrix retry waits, counters and completed-only dispatch against a fake clock', async () => {
-    const { States: states } = JSON.parse(readFileSync(path.resolve(__dirname, '../statemachine/export.asl.json'), 'utf8'));
+    const { States: states } = JSON.parse(readFileSync(stateMachinePath, 'utf8'));
     let now = 1_800_000_000_000;
     const evaluate = (expression: string, input: object) => {
       const query = jsonata(expression.slice(2, -2));
@@ -53,7 +54,7 @@ describe('export state machine retry policy', () => {
   it('does not retry deterministic query rejections and retains transient retries', () => {
     const definition = JSON.parse(
       readFileSync(
-        path.resolve(__dirname, '../statemachine/export.asl.json'),
+        stateMachinePath,
         'utf8',
       ),
     );
