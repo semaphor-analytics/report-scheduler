@@ -219,6 +219,12 @@ function createSenderDomainService({
         new PutEmailIdentityDkimSigningAttributesCommand({
           EmailIdentity: domain,
           SigningAttributesOrigin: 'AWS_SES',
+          SigningAttributes: {
+            NextSigningKeyLength:
+              previous.DkimAttributes?.NextSigningKeyLength ??
+              previous.DkimAttributes?.CurrentSigningKeyLength ??
+              'RSA_2048_BIT',
+          },
         })
       );
     } catch (error) {

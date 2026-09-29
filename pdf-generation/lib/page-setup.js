@@ -1,4 +1,5 @@
 import { smartWait, detectContentType, waitForFrameworkReady } from './content-stability.js';
+import { redactForLog } from './log-redaction.js';
 
 export async function setupPage(page, url) {
   console.log('Setting up page...');
@@ -19,7 +20,7 @@ export async function setupPage(page, url) {
     height: 1753,
   });
   
-  console.log('Navigating to URL:', url);
+  console.log('Navigating to URL:', redactForLog(url));
   
   // For localhost/dev servers, use more aggressive wait strategy
   const isLocalDev = url.includes('localhost') || url.includes('127.0.0.1') || url.includes(':3000') || url.includes(':5173');
@@ -95,16 +96,18 @@ export async function setupPage(page, url) {
 export function attachPageListeners(page) {
   // Log network responses and errors for debugging
   page.on('response', (response) => {
-    console.log(`Response: ${response.url()} - Status: ${response.status()}`);
+    console.log(
+      `Response: ${redactForLog(response.url())} - Status: ${response.status()}`
+    );
   });
   
   page.on('console', (msg) => {
-    console.log('Page Console:', msg.text());
+    console.log('Page Console:', redactForLog(msg.text()));
   });
   
   page.on('requestfailed', (req) => {
     console.log(
-      `Request failed: ${req.url()} - Error: ${req.failure().errorText}`
+      `Request failed: ${redactForLog(req.url())} - Error: ${redactForLog(req.failure()?.errorText)}`
     );
   });
 }

@@ -27,6 +27,7 @@ import {
 } from './dashboard-helpers.js';
 import { applyFixedWatermark, applyTiledWatermark } from './watermark-utils.js';
 import { applyPrintState } from './print-state-utils.js';
+import { redactForLog } from './log-redaction.js';
 
 const DOCUMENT_READY_TIMEOUT_MS = 90000;
 
@@ -40,7 +41,7 @@ export async function generatePdf(url, options = {}) {
       throw new Error("Missing or invalid 'url' parameter");
     }
 
-    console.log('Starting PDF generation for URL:', url);
+    console.log('Starting PDF generation for URL:', redactForLog(url));
     console.log('Options:', {
       isLambda: options.isLambda,
       tableMode: options.tableMode,
@@ -377,7 +378,7 @@ export async function generatePdf(url, options = {}) {
 
     return pdfBuffer;
   } catch (error) {
-    console.error('PDF Generation Error:', error);
+    console.error('PDF Generation Error:', redactForLog(error));
     throw error;
   } finally {
     await closeBrowser(browser);
@@ -399,9 +400,17 @@ async function generateAllSheetsPdf(url, options = {}) {
     console.log('Starting All Sheets PDF Generation');
     console.log('═══════════════════════════════════════════════════');
     console.log('Schedule ID:', options.scheduleId || '(immediate download)');
-    console.log('Base URL:', url);
+    console.log('Base URL:', redactForLog(url));
     console.log('Page size:', options.pageSize);
-    console.log('Options:', JSON.stringify(options, null, 2));
+    console.log('Options:', {
+      isLambda: options.isLambda,
+      pdfMode: options.pdfMode,
+      pageSize: options.pageSize,
+      orientation: options.orientation,
+      hasPassword: !!options.password,
+      scheduleId: options.scheduleId,
+      reportParams: options.reportParams,
+    });
 
     // 1. Get token and dashboardId - supports both scheduled reports and immediate downloads
     if (options.scheduleId) {
@@ -502,7 +511,7 @@ async function generateAllSheetsPdf(url, options = {}) {
 
       // Update URL with sheet ID
       const sheetUrl = updateUrlParams(url, { selectedSheetId: sheet.id });
-      console.log('  Sheet URL:', sheetUrl.substring(0, 100) + '...');
+      console.log('  Sheet URL:', redactForLog(sheetUrl));
 
       // Navigate to the sheet
       console.log('  ➜ Navigating to sheet...');
@@ -623,8 +632,7 @@ async function generateAllSheetsPdf(url, options = {}) {
     return mergedPdfBuffer;
   } catch (error) {
     console.error('\n✗✗✗ All Sheets PDF Generation Failed ✗✗✗');
-    console.error('Error:', error.message);
-    console.error('Stack:', error.stack);
+    console.error('Error:', redactForLog(error));
     throw error;
   } finally {
     console.log('Closing browser...');

@@ -6,6 +6,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { generatePdf } from './lib/pdf-generator.js';
 import { generateCsv } from './lib/csv-extractor.js';
+import { redactForLog } from './lib/log-redaction.js';
 import { generatePdfFromData } from './lib/pdf-from-data-generator.js';
 import { deliveryBlockingErrorResponseFields } from './lib/delivery-render-error.js';
 import {
@@ -423,7 +424,7 @@ async function handleDataDirectRequest(event) {
       }),
     };
   } catch (error) {
-    console.error('Data-direct PDF generation error:', error);
+    console.error('Data-direct PDF generation error:', redactForLog(error));
     return {
       statusCode:
         Number.isInteger(error?.statusCode)
@@ -509,7 +510,7 @@ export const handler = async (event) => {
     }
 
     // Url
-    console.log('Url:', url);
+    console.log('Url:', redactForLog(url));
 
     // Parse reportParams if provided
     let reportParams = {};
@@ -620,7 +621,7 @@ export const handler = async (event) => {
         targetUrl = urlObj.toString();
         console.log('  URL updated with headerLogoUrl');
       } catch (e) {
-        console.error('Error adding headerLogoUrl to URL:', e);
+        console.error('Error adding headerLogoUrl to URL:', redactForLog(e));
       }
     }
 
@@ -730,7 +731,7 @@ export const handler = async (event) => {
     if (isScheduleStepFnEvent) {
       throw error;
     }
-    console.error('Lambda Handler Error:', error);
+    console.error('Lambda Handler Error:', redactForLog(error));
     return {
       statusCode: error.message?.includes('invalid') ? 400 : 500,
       headers: { 'Content-Type': 'application/json' },

@@ -242,7 +242,7 @@ async function readRequestBody(req) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-async function handleGet(req, res, parsedUrl) {
+export async function handleGet(req, res, parsedUrl) {
   const query = parsedUrl.searchParams;
   const targetUrl = query.get('url');
   if (!targetUrl) {
@@ -277,15 +277,29 @@ async function handleGet(req, res, parsedUrl) {
     return;
   }
 
+  // Mirror the Lambda handler: reportParams carries sheetSelection and the
+  // pdfMode/documentSheetId fallbacks; malformed JSON falls back to {}.
+  let reportParams = {};
+  const reportParamsRaw = query.get('reportParams');
+  if (reportParamsRaw) {
+    try {
+      reportParams = JSON.parse(reportParamsRaw);
+    } catch (error) {
+      console.error('[Local Export Runner] Error parsing reportParams:', error);
+      reportParams = {};
+    }
+  }
+
   const tableMode = bool(query.get('tableMode'));
-  const pdfMode = query.get('pdfMode') || '';
+  const pdfMode = query.get('pdfMode') || reportParams?.pdfMode || '';
   const isVisualExport =
     targetUrl.includes('/visual/') && !tableMode && pdfMode !== 'document';
   const pdfBuffer = await generatePdf(targetUrl, {
     isLambda: false,
     tableMode,
     pdfMode,
-    documentSheetId: query.get('documentSheetId') || undefined,
+    documentSheetId:
+      query.get('documentSheetId') || reportParams?.documentSheetId || undefined,
     pageSize: query.get('pageSize') || 'A4',
     orientation: query.get('orientation') || 'portrait',
     wideTableStrategy: query.get('wideTableStrategy') || 'auto',
@@ -293,6 +307,7 @@ async function handleGet(req, res, parsedUrl) {
     reportTitle,
     filterLine: query.get('filterLine') || '',
     timezone: query.get('timezone') || 'UTC',
+    reportParams,
     format: 'pdf',
     delimiter: query.get('delimiter') || ',',
     isVisualExport,

@@ -6,6 +6,7 @@ import {
 } from './content-stability.js';
 import { extractTableData, convertToCSV } from './modes/csv-table.js';
 import { propagateDeliveryBlockingRenderError } from './delivery-render-error.js';
+import { redactForLog } from './log-redaction.js';
 
 /**
  * Generate CSV from a table URL using Puppeteer to extract formatted data
@@ -22,7 +23,7 @@ export async function generateCsv(url, options = {}) {
       throw new Error("Missing or invalid 'url' parameter");
     }
 
-    console.log('Starting CSV generation for URL:', url);
+    console.log('Starting CSV generation for URL:', redactForLog(url));
     console.log('Options:', {
       isLambda: options.isLambda,
       delimiter: options.delimiter,
@@ -97,7 +98,7 @@ export async function generateCsv(url, options = {}) {
     return csvBuffer;
 
   } catch (error) {
-    console.error('CSV generation error:', error);
+    console.error('CSV generation error:', redactForLog(error));
     const csvError = new Error(`Failed to generate CSV: ${error.message}`);
     throw propagateDeliveryBlockingRenderError(error, csvError);
 

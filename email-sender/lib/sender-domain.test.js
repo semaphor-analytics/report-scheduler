@@ -288,30 +288,58 @@ test('constructed records that exceed DNS name length are invalid', async () => 
   );
 });
 
-test('status restarts Easy DKIM when SES gave up and reports the new status', async () => {
-  const commands = [];
-  const service = createService(async (command) => {
-    commands.push(command);
-    if (command.constructor.name === 'GetEmailIdentityCommand') {
-      return identityResponse({ DkimAttributes: { Status: 'FAILED', SigningAttributesOrigin: 'AWS_SES', Tokens: TOKENS, SigningHostedZone: SIGNING_HOSTED_ZONE } });
-    }
-    assert.equal(command.constructor.name, 'PutEmailIdentityDkimSigningAttributesCommand');
-    assert.deepEqual(command.input, {
-      EmailIdentity: 'respark.com',
-      SigningAttributesOrigin: 'AWS_SES',
+for (const [description, keyAttributes, expectedKeyLength] of [
+  [
+    'preserves the configured key length',
+    { NextSigningKeyLength: 'RSA_2048_BIT', CurrentSigningKeyLength: 'RSA_2048_BIT' },
+    'RSA_2048_BIT',
+  ],
+  [
+    'preserves the next key length during rotation',
+    { NextSigningKeyLength: 'RSA_1024_BIT', CurrentSigningKeyLength: 'RSA_2048_BIT' },
+    'RSA_1024_BIT',
+  ],
+  [
+    'uses the current key length when the next is absent',
+    { CurrentSigningKeyLength: 'RSA_1024_BIT' },
+    'RSA_1024_BIT',
+  ],
+  ['uses the Easy DKIM default when both key lengths are absent', {}, 'RSA_2048_BIT'],
+]) {
+  test(`status restarts failed Easy DKIM and ${description}`, async () => {
+    const commands = [];
+    const service = createService(async (command) => {
+      commands.push(command);
+      if (command.constructor.name === 'GetEmailIdentityCommand') {
+        return identityResponse({
+          DkimAttributes: {
+            Status: 'FAILED',
+            SigningAttributesOrigin: 'AWS_SES',
+            Tokens: TOKENS,
+            SigningHostedZone: SIGNING_HOSTED_ZONE,
+            ...keyAttributes,
+          },
+        });
+      }
+      assert.equal(command.constructor.name, 'PutEmailIdentityDkimSigningAttributesCommand');
+      assert.deepEqual(command.input, {
+        EmailIdentity: 'respark.com',
+        SigningAttributesOrigin: 'AWS_SES',
+        SigningAttributes: { NextSigningKeyLength: expectedKeyLength },
+      });
+      return { DkimStatus: 'PENDING', DkimTokens: TOKENS, SigningHostedZone: SIGNING_HOSTED_ZONE };
     });
-    return { DkimStatus: 'PENDING', DkimTokens: TOKENS, SigningHostedZone: SIGNING_HOSTED_ZONE };
-  });
 
-  const result = await service.status('respark.com');
-  assert.equal(result.verificationStatus, 'PENDING');
-  assert.equal(result.dnsRecords.length, 3);
-  assert.equal(result.dnsRecords[0].name, 'tokenOne._domainkey.respark.com');
-  assert.deepEqual(commands.map((command) => command.constructor.name), [
-    'GetEmailIdentityCommand',
-    'PutEmailIdentityDkimSigningAttributesCommand',
-  ]);
-});
+    const result = await service.status('respark.com');
+    assert.equal(result.verificationStatus, 'PENDING');
+    assert.equal(result.dnsRecords.length, 3);
+    assert.equal(result.dnsRecords[0].name, 'tokenOne._domainkey.respark.com');
+    assert.deepEqual(commands.map((command) => command.constructor.name), [
+      'GetEmailIdentityCommand',
+      'PutEmailIdentityDkimSigningAttributesCommand',
+    ]);
+  });
+}
 
 test('status does not restart DKIM for pending or verified identities', async () => {
   for (const status of ['PENDING', 'SUCCESS', 'TEMPORARY_FAILURE']) {

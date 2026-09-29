@@ -2,6 +2,8 @@
  * Helper functions for fetching dashboard data and managing sheet iterations
  */
 
+import { redactForLog } from './log-redaction.js';
+
 /**
  * Fetches schedule details from the internal endpoint
  * @param {string} scheduleId - The schedule ID
@@ -146,7 +148,7 @@ export function updateUrlParams(urlString, params) {
     
     return url.toString();
   } catch (error) {
-    console.error('Error updating URL parameters:', error);
+    console.error('Error updating URL parameters:', redactForLog(error));
     throw error;
   }
 }
@@ -171,7 +173,7 @@ export function parseUrl(urlString) {
       params
     };
   } catch (error) {
-    console.error('Error parsing URL:', error);
+    console.error('Error parsing URL:', redactForLog(error));
     throw error;
   }
 }
@@ -201,7 +203,7 @@ export function extractDashboardIdFromUrl(urlString) {
     }
     return null;
   } catch (error) {
-    console.error('Error extracting dashboard ID from URL:', error);
+    console.error('Error extracting dashboard ID from URL:', redactForLog(error));
     return null;
   }
 }
@@ -224,7 +226,7 @@ export function getCurrentSheetId(reportParams, urlString) {
       const url = new URL(urlString);
       return url.searchParams.get('selectedSheetId');
     } catch (error) {
-      console.warn('Error parsing URL for sheet ID:', error);
+      console.warn('Error parsing URL for sheet ID:', redactForLog(error));
     }
   }
   
