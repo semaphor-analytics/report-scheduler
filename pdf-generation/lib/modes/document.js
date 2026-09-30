@@ -1,5 +1,6 @@
 import { normalizePageSize } from '../page-size-utils.js';
 import { createDeliveryBlockingRenderError } from '../delivery-render-error.js';
+import { redactForLog } from '../log-redaction.js';
 
 export async function waitForDocumentReady(page, timeout = 90000) {
   console.log('Document mode - waiting for print surface readiness');
@@ -98,8 +99,10 @@ export async function waitForDocumentReady(page, timeout = 90000) {
         readiness.deliveryError.message
       );
     }
+    // The diagnostics carry the view URL, whose query holds the token; the
+    // message reaches worker logs and delivery errors.
     const diagnostics = readiness.diagnostics
-      ? ` (${JSON.stringify(readiness.diagnostics)})`
+      ? ` (${redactForLog(JSON.stringify(readiness.diagnostics))})`
       : '';
     throw new Error(
       `Document render did not become ready: ${readiness.reason}${diagnostics}`

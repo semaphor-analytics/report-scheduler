@@ -458,6 +458,128 @@ export async function waitForDashboardReady(page, timeout = 3000) {
 }
 
 /**
+ * Hides the ready indicator element so it never appears in the PDF. Called
+ * after the dashboard ready wait succeeds.
+ */
+export async function hideReadyIndicator(page) {
+  await page.evaluate(() => {
+    const idleCheck = document.getElementById('idle-check');
+    if (idleCheck) {
+      idleCheck.style.visibility = 'hidden';
+      idleCheck.style.display = 'none';
+      idleCheck.setAttribute('aria-hidden', 'true');
+      idleCheck.textContent = '';
+    }
+  });
+}
+
+/** @typedef {{ key: string, label: string }} PrintHold */
+
+export const RECHECK_TIMEOUT_MS = 15000;
+const RECHECK_STABLE_MS = 300;
+
+/**
+ * Re-waits on window.__SEMAPHOR_READY__ after the worker's own layout changes
+ * (print state, content loading, page preparation), which can enlarge a Matrix
+ * viewport and start new cell work after the first ready wait. Waits two
+ * animation frames so effects from the worker's `resize` can register holds,
+ * then polls until `ready` has held for `stableMs` or `timeoutMs` passes.
+ * A render error fails fast, as in `waitForDashboardReady`.
+ * @param {import('puppeteer-core').Page} page
+ * @param {{ timeoutMs?: number, stableMs?: number }} [input]
+ * @returns {Promise<{ ready: true, waitedMs: number } | { ready: false, waitedMs: number, holds: PrintHold[] }>}
+ */
+export async function recheckReadyBeforeCapture(
+  page,
+  { timeoutMs = RECHECK_TIMEOUT_MS, stableMs = RECHECK_STABLE_MS } = {},
+) {
+  const startedAt = Date.now();
+  const result = await page.evaluate(async (maxWait, stableFor) => {
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve)),
+    );
+    const start = Date.now();
+    let readySince = null;
+    for (;;) {
+      const renderError = document.querySelector(
+        '[data-semaphor-render-error-code]'
+      );
+      if (renderError) {
+        return {
+          error: {
+            code:
+              renderError.getAttribute('data-semaphor-render-error-code') ||
+              'render_failed',
+            message:
+              renderError.getAttribute('data-semaphor-render-error-message') ||
+              'Semaphor render failed',
+          },
+        };
+      }
+      const state = window.__SEMAPHOR_READY__;
+      const now = Date.now();
+      if (state?.ready === true) {
+        if (readySince === null) readySince = now;
+        if (now - readySince >= stableFor) return { ready: true };
+      } else {
+        readySince = null;
+      }
+      if (now - start >= maxWait) {
+        const holds = Array.isArray(state?.holds) ? state.holds : [];
+        return {
+          ready: false,
+          holds: holds.map((hold) => ({
+            key: String(hold?.key ?? ''),
+            label: String(hold?.label ?? ''),
+          })),
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }, timeoutMs, stableMs);
+
+  if (result.error) {
+    throw createDeliveryBlockingRenderError(
+      result.error.code,
+      result.error.message
+    );
+  }
+  const waitedMs = Date.now() - startedAt;
+  return result.ready
+    ? { ready: true, waitedMs }
+    : { ready: false, waitedMs, holds: result.holds };
+}
+
+/**
+ * The caller rule for a recheck result (decision D12). A Matrix still loading
+ * cells stops the capture with `matrix_incomplete`, which is not
+ * delivery-blocking, so the Step Functions retry still applies. Without a
+ * Matrix hold, a timeout captures as today.
+ * @param {Awaited<ReturnType<typeof recheckReadyBeforeCapture>>} result
+ * @param {{ timeoutMs?: number }} [input]
+ * @returns {{ recheckMs: number, recheckTimedOut: boolean }}
+ */
+export function applyRecheckResult(result, { timeoutMs = RECHECK_TIMEOUT_MS } = {}) {
+  if (result.ready) {
+    return { recheckMs: result.waitedMs, recheckTimedOut: false };
+  }
+  const matrixHolds = result.holds.filter((hold) => hold.key.startsWith('matrix:'));
+  if (matrixHolds.length > 0) {
+    const labels = matrixHolds
+      .slice(0, 3)
+      .map((hold) => hold.label)
+      .join(', ');
+    const error = new Error(
+      `Matrix "${labels}" was still loading cells after ${timeoutMs / 1000} s`
+    );
+    error.code = 'matrix_incomplete';
+    throw error;
+  }
+  console.log('Capture-point ready recheck timed out without a Matrix hold - proceeding');
+  return { recheckMs: result.waitedMs, recheckTimedOut: true };
+}
+
+/**
  * Fail closed when the rendered page has exposed a typed delivery error.
  * Call this at the final artifact boundary as well as during readiness waits,
  * because dashboard rendering may fail after the bounded ready timeout.

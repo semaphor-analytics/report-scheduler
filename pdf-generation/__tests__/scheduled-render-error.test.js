@@ -84,4 +84,27 @@ describe('scheduled render errors', () => {
       }),
     ).rejects.toThrow('Chromium crashed');
   });
+
+  it('throws matrix_incomplete so the Step Functions retry can run', async () => {
+    const error = new Error(
+      'Sheet "Overview" (1 of 2), recheck: Matrix "Margin" was still loading cells after 15 s',
+    );
+    error.code = 'matrix_incomplete';
+    mocks.generatePdf.mockRejectedValue(error);
+
+    await expect(
+      handler({
+        source: 'schedule_stepfn',
+        schedule: {
+          scheduleId: 'schedule-1',
+          leaseOwner: 'lease-1',
+        },
+        attachment: {
+          viewUrl: 'https://app.example.com/view/dashboard-1',
+          title: 'Revenue report',
+          format: 'pdf',
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'matrix_incomplete' });
+  });
 });

@@ -1,0 +1,15 @@
+{
+  "description": "Shared by react-semaphor listPrintSheets and the scheduler's listPrintSheetsFromTemplate. Both must map `templateSheets` to `expected` exactly.",
+  "templateSheets": [
+    { "id": "overview", "title": "Overview", "frames": [] },
+    { "id": "cash-report", "kind": "document", "title": "Cash report", "document": { "version": 1, "sections": [] } },
+    { "id": "sales", "kind": "dashboard", "title": "", "frames": [] },
+    { "id": "appendix", "kind": "document", "document": { "version": 1, "sections": [] } }
+  ],
+  "expected": [
+    { "sheetId": "overview", "kind": "dashboard", "title": "Overview" },
+    { "sheetId": "cash-report", "kind": "document", "title": "Cash report" },
+    { "sheetId": "sales", "kind": "dashboard", "title": "Sheet 3" },
+    { "sheetId": "appendix", "kind": "document", "title": "Sheet 4" }
+  ]
+}

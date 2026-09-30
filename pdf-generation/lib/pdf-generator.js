@@ -11,15 +11,22 @@ import * as aggregateTableMode from './modes/aggregate-table.js';
 import * as documentMode from './modes/document.js';
 import { encryptPdfBuffer } from '../pdf-encrypt.js';
 import {
+  hideReadyIndicator,
   throwIfDeliveryBlockingRenderError,
+  recheckReadyBeforeCapture,
+  applyRecheckResult,
   waitForDashboardReady,
 } from './content-stability.js';
-import { mergePDFsWithMetadata } from './pdf-merger.js';
+import {
+  DOCUMENT_READY_TIMEOUT_MS,
+  listPrintSheetsFromTemplate,
+  logSheetTiming,
+  renderAllSheetsPdf,
+} from './sheet-capture.js';
 import { applyPdfMetadata } from './pdf-metadata.js';
 import {
   getScheduleDetails,
   getDashboardData,
-  updateUrlParams,
   parseUrl,
   shouldGenerateAllSheets,
   getCurrentSheetId,
@@ -29,11 +36,11 @@ import { applyFixedWatermark, applyTiledWatermark } from './watermark-utils.js';
 import { applyPrintState } from './print-state-utils.js';
 import { redactForLog } from './log-redaction.js';
 
-const DOCUMENT_READY_TIMEOUT_MS = 90000;
 
 export async function generatePdf(url, options = {}) {
   let browser = null;
   const timings = { start: Date.now() };
+  let readyTimedOut = false;
 
   try {
     // Validate URL
@@ -92,19 +99,12 @@ export async function generatePdf(url, options = {}) {
     } else {
       timings.readyWaitStart = Date.now();
       const isDashboardPage = await waitForDashboardReady(page, 15000);
+      readyTimedOut = !isDashboardPage;
       timings.readyWaitDone = Date.now();
       console.log(`⏱️  Dashboard ready wait: ${timings.readyWaitDone - timings.readyWaitStart}ms (ready: ${isDashboardPage})`);
       if (isDashboardPage) {
         console.log('Dashboard ready indicator detected');
-        await page.evaluate(() => {
-          const idleCheck = document.getElementById('idle-check');
-          if (idleCheck) {
-            idleCheck.style.visibility = 'hidden';
-            idleCheck.style.display = 'none';
-            idleCheck.setAttribute('aria-hidden', 'true');
-            idleCheck.textContent = '';
-          }
-        });
+        await hideReadyIndicator(page);
       }
     }
 
@@ -124,7 +124,9 @@ export async function generatePdf(url, options = {}) {
     let dimensions;
     if (options.pdfMode === 'document') {
       console.log('Document mode: Waiting for fixed-layout document pages');
+      timings.documentReadyStart = Date.now();
       await documentMode.waitForDocumentReady(page, DOCUMENT_READY_TIMEOUT_MS);
+      timings.documentReadyDone = Date.now();
       dimensions = await page.evaluate(() => ({
         finalHeight: Math.max(document.body.scrollHeight, document.body.offsetHeight),
         finalWidth: Math.max(document.body.scrollWidth, document.body.offsetWidth),
@@ -239,6 +241,18 @@ export async function generatePdf(url, options = {}) {
       } else {
         await applyTiledWatermark(page, options.watermarkText);
       }
+    }
+
+    // Re-wait on the ready flag after the worker's layout changes (D12). Only
+    // the dashboard view renders the Matrix viewer.
+    let recheck = { recheckMs: 0, recheckTimedOut: false };
+    if (
+      options.pdfMode !== 'document' &&
+      !options.tableMode &&
+      !options.isVisualExport
+    ) {
+      recheck = applyRecheckResult(await recheckReadyBeforeCapture(page));
+      console.log(`⏱️  Capture-point ready recheck: ${recheck.recheckMs}ms (timed out: ${recheck.recheckTimedOut})`);
     }
 
     console.log(
@@ -370,6 +384,27 @@ export async function generatePdf(url, options = {}) {
     console.log('───────────────────────────────────────');
     console.log(`  TOTAL:              ${totalTime}ms (${(totalTime / 1000).toFixed(1)}s)`);
     console.log('═══════════════════════════════════════\n');
+    // A Document's readiness wait happens inside content loading here; the
+    // timing line reports it as readyMs, as the all-sheets path does.
+    const documentReadyMs =
+      timings.documentReadyDone !== undefined
+        ? timings.documentReadyDone - timings.documentReadyStart
+        : 0;
+    logSheetTiming({
+      index: 0,
+      total: 1,
+      kind: options.pdfMode === 'document' ? 'document' : 'dashboard',
+      navigationMs: timings.navigationDone - timings.navigationStart,
+      readyMs: timings.readyWaitDone - timings.readyWaitStart + documentReadyMs,
+      readyTimedOut,
+      contentMs:
+        (timings.contentLoadDone - timings.contentLoadStart - documentReadyMs) +
+        (timings.preparePageDone - timings.preparePageStart),
+      recheckMs: recheck.recheckMs,
+      recheckTimedOut: recheck.recheckTimedOut,
+      pdfMs: timings.pdfGenerateDone - timings.pdfGenerateStart,
+      bytes: pdfBuffer.length,
+    });
     if (options.pdfMode === 'document' && totalTime > DOCUMENT_READY_TIMEOUT_MS) {
       console.warn(
         `⚠️  Document PDF generation exceeded the ${DOCUMENT_READY_TIMEOUT_MS / 1000}s readiness target. Review the timing summary above to identify the slow stage.`
@@ -415,7 +450,7 @@ async function generateAllSheetsPdf(url, options = {}) {
     // 1. Get token and dashboardId - supports both scheduled reports and immediate downloads
     if (options.scheduleId) {
       // Scheduled report path - fetch from schedule endpoint
-      console.log('\n[Step 1/6] Fetching schedule details...');
+      console.log('\n[Step 1/4] Fetching schedule details...');
       const scheduleData = await getScheduleDetails(options.scheduleId);
 
       if (!scheduleData.token) {
@@ -431,7 +466,7 @@ async function generateAllSheetsPdf(url, options = {}) {
       console.log('  ✓ Schedule data retrieved');
     } else {
       // Immediate download path - extract from URL
-      console.log('\n[Step 1/6] Extracting credentials from URL...');
+      console.log('\n[Step 1/4] Extracting credentials from URL...');
       const { params } = parseUrl(url);
       token = params.token;
       dashboardId = extractDashboardIdFromUrl(url) || params.dashboardId;
@@ -450,7 +485,7 @@ async function generateAllSheetsPdf(url, options = {}) {
     console.log('  Dashboard ID:', dashboardId);
 
     // 2. Fetch dashboard data to get sheets
-    console.log('\n[Step 2/6] Fetching dashboard metadata...');
+    console.log('\n[Step 2/4] Fetching dashboard metadata...');
     const dashboardData = await getDashboardData(dashboardId, token);
 
     if (!dashboardData.sheets || dashboardData.sheets.length === 0) {
@@ -465,171 +500,32 @@ async function generateAllSheetsPdf(url, options = {}) {
       );
     });
 
-    const dashboardSheets = dashboardData.sheets.filter(
-      (sheet) => sheet?.kind !== 'document'
-    );
-    const skippedDocumentSheets =
-      dashboardData.sheets.length - dashboardSheets.length;
+    const sheets = listPrintSheetsFromTemplate(dashboardData.sheets);
 
-    if (skippedDocumentSheets > 0) {
-      console.log(
-        `  ↳ Skipping ${skippedDocumentSheets} document sheet(s); dashboard PDF export only includes dashboard sheets`
-      );
-    }
-
-    if (dashboardSheets.length === 0) {
-      throw new Error('No dashboard sheets found for dashboard PDF export');
-    }
-
-    // 3. Launch browser
-    console.log('\n[Step 3/6] Launching browser...');
+    // 3. Launch browser; each sheet gets its own fresh page
+    console.log('\n[Step 3/4] Launching browser...');
     browser = await launchBrowser(options.isLambda);
-    const page = await browser.newPage();
     console.log('  ✓ Browser launched');
 
-    // Attach debug listeners if needed
-    if (options.debug) {
-      attachPageListeners(page);
-    }
-
-    // 4. Parse URL to get base and params
-    const { baseUrl, params } = parseUrl(url);
-
-    // 5. Generate PDF for each sheet
-    console.log('\n[Step 4/6] Generating PDFs for each dashboard sheet...');
-    const pdfSheets = [];
-
-    for (let i = 0; i < dashboardSheets.length; i++) {
-      const sheet = dashboardSheets[i];
-      console.log(`\n─────────────────────────────────────────────`);
-      console.log(
-        `Processing Sheet ${i + 1}/${dashboardSheets.length}: "${
-          sheet.title || 'Untitled'
-        }"`
-      );
-      console.log(`─────────────────────────────────────────────`);
-
-      // Update URL with sheet ID
-      const sheetUrl = updateUrlParams(url, { selectedSheetId: sheet.id });
-      console.log('  Sheet URL:', redactForLog(sheetUrl));
-
-      // Navigate to the sheet
-      console.log('  ➜ Navigating to sheet...');
-      await setupPage(page, sheetUrl);
-      console.log('  ✓ Navigation complete');
-
-      // Wait for dashboard to be ready
-      console.log('  ➜ Waiting for dashboard ready...');
-      const isDashboardReady = await waitForDashboardReady(page, 15000);
-      if (isDashboardReady) {
-        console.log('  ✓ Dashboard ready');
-        await page.evaluate(() => {
-          const idleCheck = document.getElementById('idle-check');
-          if (idleCheck) {
-            idleCheck.style.visibility = 'hidden';
-            idleCheck.style.display = 'none';
-            idleCheck.setAttribute('aria-hidden', 'true');
-            idleCheck.textContent = '';
-          }
-        });
-      } else {
-        console.log(
-          '  ⚠ Dashboard ready indicator not found (continuing anyway)'
-        );
-      }
-
-      // Apply expanded state for custom components (if provided)
-      if (options.expandedState) {
-        console.log('  ➜ Applying expanded state for custom components...');
-        const printStateResult = await applyPrintState(page, options.expandedState);
-        console.log(`  ✓ Applied ${printStateResult.applied} state changes`);
-      }
-
-      // Load all content
-      console.log('  ➜ Loading content...');
-      const dimensions = await loadAllContent(page, {
-        tableMode: options.tableMode,
-      });
-      console.log('  ✓ Content loaded:', `${dimensions.finalHeight}px height`);
-
-      // Apply mode-specific preparation and get PDF options
-      const mode = options.tableMode ? tableMode : dashboardMode;
-      await mode.preparePage(page);
-      const pdfOptions = mode.getPdfOptions(
-        dimensions,
-        options.pageSize,
-        options
-      );
-
-      // Apply watermark if enabled
-      if (options.watermarkEnabled && options.watermarkText) {
-        if (options.tableMode) {
-          await applyFixedWatermark(page, options.watermarkText);
-        } else {
-          await applyTiledWatermark(page, options.watermarkText);
-        }
-      }
-
-      console.log('  ➜ Generating PDF...');
-
-      // Generate PDF for this sheet
-      await throwIfDeliveryBlockingRenderError(page);
-      const pdfBuffer = await page.pdf(pdfOptions);
-
-      if (!pdfBuffer || pdfBuffer.length === 0) {
-        throw new Error(`Empty PDF buffer generated for sheet: ${sheet.title}`);
-      }
-
-      console.log(
-        `  ✓ PDF generated: ${(pdfBuffer.length / 1024).toFixed(2)} KB`
-      );
-
-      // Store PDF with metadata
-      pdfSheets.push({
-        buffer: pdfBuffer,
-        sheetId: sheet.id,
-        title: sheet.title || `Sheet ${i + 1}`,
-      });
-    }
-
-    // 6. Merge all PDFs
-    console.log('\n[Step 5/6] Merging all sheet PDFs...');
-    console.log(`  Merging ${pdfSheets.length} PDFs...`);
-    let mergedPdfBuffer = await mergePDFsWithMetadata(pdfSheets);
-    console.log(
-      `  ✓ Merged PDF size: ${(mergedPdfBuffer.length / 1024).toFixed(2)} KB`
-    );
-
-    // 7. Encrypt if password provided
-    if (options.password) {
-      console.log('\n[Step 6/6] Encrypting PDF...');
-      mergedPdfBuffer = await encryptPdfBuffer(
-        mergedPdfBuffer,
-        options.password,
-        {
-          metadata: {
-            title: options.reportTitle,
-          },
-        }
-      );
-      console.log('  ✓ PDF encrypted');
-    } else {
-      mergedPdfBuffer = await applyPdfMetadata(mergedPdfBuffer, {
-        title: options.reportTitle,
-      });
-      console.log('\n[Step 6/6] Skipping encryption (no password provided)');
-    }
+    // 4. Capture every sheet in dashboard order, merge, then encrypt or stamp
+    console.log(`\n[Step 4/4] Capturing ${sheets.length} sheet(s)...`);
+    const pdfBuffer = await renderAllSheetsPdf({
+      browser,
+      viewUrl: url,
+      sheets,
+      options,
+    });
 
     console.log('\n═══════════════════════════════════════════════════');
     console.log('✓ All Sheets PDF Generation Complete');
     console.log('═══════════════════════════════════════════════════');
-    console.log(`Total sheets processed: ${pdfSheets.length}`);
+    console.log(`Total sheets processed: ${sheets.length}`);
     console.log(
-      `Final merged PDF size: ${(mergedPdfBuffer.length / 1024).toFixed(2)} KB`
+      `Final merged PDF size: ${(pdfBuffer.length / 1024).toFixed(2)} KB`
     );
     console.log('═══════════════════════════════════════════════════\n');
 
-    return mergedPdfBuffer;
+    return pdfBuffer;
   } catch (error) {
     console.error('\n✗✗✗ All Sheets PDF Generation Failed ✗✗✗');
     console.error('Error:', redactForLog(error));

@@ -5,6 +5,7 @@
   "main": "app.js",
   "scripts": {
     "build": "tsc --noEmit && esbuild app.ts --bundle --platform=node --target=es2020 --format=cjs --sourcemap --outfile=dist/app.js",
+    "build:watch": "esbuild app.ts --bundle --platform=node --target=es2020 --format=cjs --sourcemap --outfile=dist/app.js --watch=forever",
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js"
   },
   "dependencies": {
@@ -12,7 +13,7 @@
     "date-fns": "^3.6.0",
     "date-fns-tz": "^3.2.0",
     "esbuild": "^0.27.3",
-    "react-semaphor": "0.1.520"
+    "react-semaphor": "0.1.523"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
