@@ -13,7 +13,7 @@
     "date-fns": "^3.6.0",
     "date-fns-tz": "^3.2.0",
     "esbuild": "^0.27.3",
-    "react-semaphor": "0.1.523"
+    "react-semaphor": "0.1.524"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
