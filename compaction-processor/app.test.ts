@@ -199,7 +199,7 @@ describe('compaction handler table totals', () => {
     expect(compactChunks).toHaveBeenCalledWith({
       jobId: 'job-1',
       chunkKeys: ['001.csv', '002.csv'],
-      footer: '$30.00\n',
+      footer: '$30.00\r\n',
     });
     expect(completeJob).toHaveBeenCalledWith(
       expect.objectContaining({ totalRows: 30 }),

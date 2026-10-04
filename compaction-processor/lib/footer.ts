@@ -1,18 +1,20 @@
 import {
   buildFlatTableExportTotalsFooter,
+  parseCsvDelimiter,
   parseFlatTableExportTotalsByColumnId,
   parseFlatTableExportTotalsRequest,
   parsePresentationExecutionSnapshot,
   parsePresentationScope,
   PresentationExecutionSnapshotError,
   validateCardExportPresentationSnapshot,
+  type CsvDelimiter,
   type PresentationExecutionSnapshot,
   type PresentationScope,
 } from 'react-semaphor/format-utils';
 import type { ChunkResult } from '../types';
 
 type CompactionFooterFormatting = {
-  delimiter: string;
+  delimiter: CsvDelimiter;
   useFormattedValues: boolean;
   visibleColumns: string[];
   tableTotalsLabelColumnKey?: string;
@@ -62,11 +64,9 @@ function parseCompactionPresentationEnvelope(
 function parseFooterFormatting(input: unknown): CompactionFooterFormatting {
   const { formatting, snapshot, scope } =
     parseCompactionPresentationEnvelope(input);
-  if (
-    typeof formatting.delimiter !== 'string' ||
-    formatting.delimiter.length === 0
-  ) {
-    throw new Error('formatting.delimiter must be a non-empty string');
+  const delimiter = parseCsvDelimiter(formatting.delimiter);
+  if (!delimiter) {
+    throw new Error('formatting.delimiter must be a comma, semicolon or tab');
   }
   if (
     !Array.isArray(formatting.visibleColumns) ||
@@ -116,7 +116,7 @@ function parseFooterFormatting(input: unknown): CompactionFooterFormatting {
   }
 
   return {
-    delimiter: formatting.delimiter,
+    delimiter,
     useFormattedValues: formatting.useFormattedValues !== false,
     visibleColumns: formatting.visibleColumns as string[],
     ...(typeof formatting.tableTotalsLabelColumnKey === 'string'

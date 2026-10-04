@@ -33,6 +33,7 @@ function formatting(overrides: Record<string, unknown> = {}) {
       resolvedFormats: [],
     },
     delimiter: ',',
+    csvEncoding: 'utf-8-bom',
     includeHeaders: true,
     ...overrides,
   };
@@ -294,12 +295,29 @@ describe('parseExportFormattingConfig', () => {
     );
   });
 
+  it('requires the app-resolved CSV encoding and a contract delimiter', () => {
+    expect(parseExportFormattingConfig(formatting({ csvEncoding: 'utf-8', delimiter: '\t' }))).toMatchObject({
+      csvEncoding: 'utf-8',
+      delimiter: '\t',
+    });
+    expect(() => parseExportFormattingConfig(formatting({ csvEncoding: undefined }))).toThrow(
+      "formatting.csvEncoding must be 'utf-8-bom' or 'utf-8'",
+    );
+    expect(() => parseExportFormattingConfig(formatting({ csvEncoding: 'utf-8-sig' }))).toThrow(
+      "formatting.csvEncoding must be 'utf-8-bom' or 'utf-8'",
+    );
+    expect(() => parseExportFormattingConfig(formatting({ delimiter: '|' }))).toThrow(
+      'formatting.delimiter must be a comma, semicolon or tab',
+    );
+  });
+
   it('rejects a pre-Phase-E payload without the required snapshot', () => {
     expect(() =>
       parseExportFormattingConfig({
         useFormattedValues: true,
         timezone: 'UTC',
         delimiter: ',',
+        csvEncoding: 'utf-8-bom',
         includeHeaders: true,
         columnSettings: {
           revenue: {

@@ -353,9 +353,9 @@ describe("executeBriefingRun", () => {
       name: "semaphor_get_dashboard_analysis_context",
       arguments: {
         dashboardId: "dash_revenue",
-        include_query_inputs: true,
-        max_cards: 30,
-        response_format: "json",
+        includeQueryInputs: true,
+        maxCards: 30,
+        responseFormat: "json",
       },
     });
     const evidence = callbacks.completions[0]?.body.result.evidence as
@@ -762,7 +762,7 @@ class ProjectPhysicalFallbackModelClient extends FakeInsightLoopModelClient {
               databaseName: "analytics",
               schemaName: "reporting",
               tableName: "orders",
-              response_format: "json",
+              responseFormat: "json",
             },
             purpose: "Inspect fields for reporting.orders.",
           },

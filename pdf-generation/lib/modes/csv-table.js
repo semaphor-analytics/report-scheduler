@@ -1,3 +1,9 @@
+import {
+  encodeCsvFile,
+  parseCsvDelimiter,
+  parseCsvEncoding,
+} from '../generated/csv-file.js';
+
 /**
  * Extract formatted table data from the page DOM
  * This extracts the already-formatted text content that users see
@@ -193,119 +199,43 @@ export async function extractTableData(page, tableInfo, options = {}) {
   });
 }
 
+/** A table row's cells; a cell spanning n columns is followed by n - 1 empty cells. */
+function rowCells(cells) {
+  return cells.flatMap((cell) => [
+    cell.text,
+    ...Array.from({ length: Math.max((cell.colspan || 1) - 1, 0) }, () => ''),
+  ]);
+}
+
 /**
- * Convert extracted table data to CSV format
+ * The CSV file for extracted table data, written through the shared CSV file
+ * contract. The caller passes the resolved encoding; the renderer never picks
+ * one.
  */
 export function convertToCSV(tableData, options = {}) {
-  const delimiter = options.delimiter || ',';
+  const delimiter = parseCsvDelimiter(options.delimiter ?? ',');
+  if (!delimiter) {
+    throw new Error('CSV delimiter must be a comma, semicolon or tab');
+  }
+  const encoding = parseCsvEncoding(options.csvEncoding);
+  if (!encoding) {
+    throw new Error("CSV encoding must be 'utf-8-bom' or 'utf-8'");
+  }
   const includeHeaders = options.includeHeaders !== false;
   const includeSubtotals = options.includeSubtotals !== false;
   const includeGrandTotal = options.includeGrandTotal !== false;
 
-  const csvRows = [];
-
-  // Add headers
-  if (includeHeaders && tableData.headers.length > 0) {
-    // Process each header row
-    tableData.headers.forEach(headerRow => {
-      const rowValues = [];
-
-      headerRow.forEach(cell => {
-        // Add the cell text
-        rowValues.push(escapeCSVValue(cell.text, delimiter));
-
-        // Add empty cells for colspan > 1
-        for (let i = 1; i < (cell.colspan || 1); i++) {
-          rowValues.push('');
-        }
-      });
-
-      csvRows.push(rowValues.join(delimiter));
-    });
+  const rows = [];
+  if (includeHeaders) {
+    tableData.headers.forEach((headerRow) => rows.push(rowCells(headerRow)));
+  }
+  (tableData.rows || []).forEach((row) => {
+    if (!includeSubtotals && row.isSubtotal && !row.isGrandTotal) return;
+    rows.push(rowCells(row.cells));
+  });
+  if (includeGrandTotal) {
+    (tableData.grandTotalRows || []).forEach((row) => rows.push(rowCells(row.cells)));
   }
 
-  // Add data rows (excluding grand totals which are handled separately)
-  if (tableData.rows) {
-    tableData.rows.forEach(row => {
-      // Skip subtotals if not wanted
-      if (!includeSubtotals && row.isSubtotal && !row.isGrandTotal) return;
-
-      const rowValues = [];
-
-      row.cells.forEach(cell => {
-        // The text is already formatted by the frontend
-        rowValues.push(escapeCSVValue(cell.text, delimiter));
-
-        // Handle colspan for merged cells
-        for (let i = 1; i < (cell.colspan || 1); i++) {
-          rowValues.push('');
-        }
-      });
-
-      csvRows.push(rowValues.join(delimiter));
-    });
-  }
-
-  // Add grand total rows at the end
-  if (includeGrandTotal && tableData.grandTotalRows && tableData.grandTotalRows.length > 0) {
-    tableData.grandTotalRows.forEach(row => {
-      const rowValues = [];
-
-      row.cells.forEach(cell => {
-        rowValues.push(escapeCSVValue(cell.text, delimiter));
-
-        // Handle colspan for merged cells
-        for (let i = 1; i < (cell.colspan || 1); i++) {
-          rowValues.push('');
-        }
-      });
-
-      csvRows.push(rowValues.join(delimiter));
-    });
-  }
-
-  // Add metadata footer if requested
-  if (options.includeMetadata) {
-    csvRows.push('');
-    csvRows.push('---');
-    csvRows.push(`Generated: ${new Date().toISOString()}`);
-
-    if (options.reportTitle) {
-      csvRows.push(`Report: ${options.reportTitle}`);
-    }
-
-    if (tableData.metadata) {
-      csvRows.push(`Total Rows: ${tableData.metadata.totalRows}`);
-      if (tableData.metadata.hasSubtotals) {
-        csvRows.push('Includes: Subtotals');
-      }
-      if (tableData.metadata.hasGrandTotal) {
-        csvRows.push('Includes: Grand Total');
-      }
-    }
-  }
-
-  return csvRows.join('\n');
-}
-
-/**
- * Escape a value for CSV format
- */
-function escapeCSVValue(value, delimiter) {
-  if (value === null || value === undefined) return '';
-
-  const stringValue = String(value);
-
-  // Check if value needs escaping (contains delimiter, quotes, or newlines)
-  if (
-    stringValue.includes(delimiter) ||
-    stringValue.includes('"') ||
-    stringValue.includes('\n') ||
-    stringValue.includes('\r')
-  ) {
-    // Escape quotes by doubling them and wrap in quotes
-    return `"${stringValue.replace(/"/g, '""')}"`;
-  }
-
-  return stringValue;
+  return encodeCsvFile({ rows, delimiter, encoding });
 }

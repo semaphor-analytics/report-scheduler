@@ -335,6 +335,9 @@ export async function runInsightLoop(
   );
   const executionContext: RuntimeExecutionContext = {
     projectId: resolveProjectIdFromAnalysisContext(contextResult.data),
+    ...(mcpContractPreflight.toolInputKeys
+      ? { toolInputKeys: mcpContractPreflight.toolInputKeys }
+      : {}),
   };
   const recordedBriefingGroundingLimitations = new Set<string>();
   let briefingGroundingState: BriefingGroundingState | undefined =

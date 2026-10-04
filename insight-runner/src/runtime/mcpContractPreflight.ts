@@ -13,6 +13,13 @@ export interface McpContractPreflightResult {
     code: "mcp_contract_preflight_failed" | "mcp_contract_incompatible";
     message: string;
   };
+  /**
+   * Each advertised tool's argument names, from `tools/list`, or null when
+   * the tool is listed without an input schema. The tool call policy prunes
+   * planned arguments against these instead of keeping its own copy of the
+   * server's schemas; the server rejects any other argument.
+   */
+  toolInputKeys?: Record<string, string[] | null>;
 }
 
 interface McpToolSchema {
@@ -55,6 +62,28 @@ export async function preflightMcpContracts(input: {
     };
   }
 
+  return {
+    ...checkAdvertisedContracts(tools, input.validateQuerySpecSourceRefs),
+    toolInputKeys: advertisedToolInputKeys(tools),
+  };
+}
+
+/** Argument names per tool, read from each advertised input schema. */
+export function advertisedToolInputKeys(
+  tools: McpToolSchema[],
+): Record<string, string[] | null> {
+  return Object.fromEntries(
+    tools.map((tool) => {
+      const properties = asRecord(asRecord(tool.inputSchema)?.properties);
+      return [tool.name, properties ? Object.keys(properties) : null];
+    }),
+  );
+}
+
+function checkAdvertisedContracts(
+  tools: McpToolSchema[],
+  validateQuerySpecSourceRefs: boolean,
+): McpContractPreflightResult {
   const querySpecTool = tools.find((tool) => tool.name === "semaphor_analyze");
   const recoveryPlannerTool = tools.find(
     (tool) => tool.name === "semaphor_plan_analytics_recovery",
@@ -83,7 +112,7 @@ export async function preflightMcpContracts(input: {
     );
   }
 
-  if (!input.validateQuerySpecSourceRefs) {
+  if (!validateQuerySpecSourceRefs) {
     return {
       status: "passed",
       checks: [

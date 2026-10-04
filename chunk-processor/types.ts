@@ -1,6 +1,7 @@
 /**
  * Types for the chunk-processor Lambda
  */
+import type { CsvDelimiter, CsvEncoding } from 'react-semaphor/format-utils';
 import type {
   CanonicalPivotResultContract,
   CanonicalPivotResultState,
@@ -96,7 +97,9 @@ export interface ColumnInfo {
 interface ExportFormattingBase {
   useFormattedValues?: boolean;
   timezone: string;
-  delimiter: string;
+  delimiter: CsvDelimiter;
+  /** Resolved by the app; the worker never picks a default. */
+  csvEncoding: CsvEncoding;
   includeHeaders: boolean;
   columnSettings?: Record<string, ColumnSettings>;
   visibleColumns?: string[];

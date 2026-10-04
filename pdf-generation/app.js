@@ -6,6 +6,11 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { generatePdf } from './lib/pdf-generator.js';
 import { generateCsv } from './lib/csv-extractor.js';
+import {
+  CSV_CONTENT_TYPE,
+  DEFAULT_CSV_ENCODING,
+  parseCsvEncoding,
+} from './lib/generated/csv-file.js';
 import { redactForLog } from './lib/log-redaction.js';
 import { generatePdfFromData } from './lib/pdf-from-data-generator.js';
 import { deliveryBlockingErrorResponseFields } from './lib/delivery-render-error.js';
@@ -82,7 +87,7 @@ async function generateArtifactBuffer({ format, targetUrl, options }) {
     const csvBuffer = await generateCsv(targetUrl, options);
     return {
       fileBuffer: csvBuffer,
-      contentType: 'text/csv',
+      contentType: CSV_CONTENT_TYPE,
       fileExtension: 'csv',
       layoutApplied: null,
     };
@@ -250,6 +255,9 @@ async function handleScheduledStepFunctionRequest(event) {
       settings.delimiter ||
       reportParams?.csvOptions?.delimiter ||
       ',',
+    // No app-side producer resolves an encoding for this legacy mode.
+    csvEncoding: DEFAULT_CSV_ENCODING,
+    includeHeaders: settings.includeHeaders !== false,
     useFormattedValues: settings.useFormattedValues !== false,
     isVisualExport: targetUrl.includes('/visual/'),
     watermarkEnabled: watermark.enabled === true,
@@ -572,6 +580,8 @@ export const handler = async (event) => {
       reportParams: reportParams,
       format: format,
       delimiter: event?.queryStringParameters?.delimiter || ',',
+      csvEncoding: parseCsvEncoding(event?.queryStringParameters?.csvEncoding),
+      includeHeaders: event?.queryStringParameters?.includeHeaders !== 'false',
       useFormattedValues:
         event?.queryStringParameters?.useFormattedValues !== 'false',
       isVisualExport: isVisualExport,
@@ -579,6 +589,18 @@ export const handler = async (event) => {
       watermarkText: watermarkText,
       expandedState: expandedState,
     };
+
+    // The app resolves the encoding (D5); a CSV request without one is a bug
+    // upstream, not something the renderer should guess.
+    if (format === 'csv' && !options.csvEncoding) {
+      return {
+        statusCode: 400,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: "CSV requests require csvEncoding 'utf-8-bom' or 'utf-8'",
+        }),
+      };
+    }
 
     console.log(
       'Lambda handler - Format:',
@@ -633,7 +655,7 @@ export const handler = async (event) => {
     if (format === 'csv') {
       console.log('Generating CSV file');
       fileBuffer = await generateCsv(targetUrl, options);
-      contentType = 'text/csv';
+      contentType = CSV_CONTENT_TYPE;
       fileExtension = 'csv';
     } else {
       console.log('Generating PDF file');

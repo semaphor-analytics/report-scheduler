@@ -15,6 +15,13 @@ export interface PlannedToolCallPolicyResult {
 
 export interface RuntimeExecutionContext {
   projectId?: string;
+  /**
+   * Argument names per tool from the server's `tools/list` (preflight); null
+   * for a tool listed without an input schema. When present, planned calls
+   * are pruned to these and calls to tools the server doesn't offer this
+   * session are skipped.
+   */
+  toolInputKeys?: Record<string, string[] | null>;
   briefingGrounding?: BriefingToolPolicyGrounding;
   evidence?: EvidenceLedgerSnapshot;
 }
@@ -87,68 +94,17 @@ export function getReadOnlyPlanningTools(): Array<{
 
 const PLACEHOLDER_PATTERN = /<[^>]+>|\{\{[^}]+\}\}|\b(?:todo|tbd|placeholder)\b/i;
 
-const DISCOVERY_TOOL_ARGUMENTS: Record<string, string[]> = {
-  semaphor_get_analysis_context: [],
-  semaphor_get_access_context: [],
-  semaphor_list_dashboards: [
-    "projectId",
-    "search",
-    "limit",
-    "offset",
-    "response_format",
-  ],
-  semaphor_list_connections: ["projectId"],
-  semaphor_get_dashboard_analysis_context: [
-    "dashboardId",
-    "include_query_inputs",
-    "max_cards",
-    "response_format",
-  ],
-  semaphor_list_semantic_domains: ["projectId"],
-  semaphor_get_dashboard_details: ["dashboardId"],
-  semaphor_list_databases: ["projectId", "connectionId"],
-  semaphor_list_schemas: [
-    "projectId",
-    "connectionId",
-    "database",
-    "databaseName",
-  ],
-  semaphor_list_tables: [
-    "projectId",
-    "connectionId",
-    "database",
-    "databaseName",
-    "schema",
-    "schemaName",
-  ],
-  semaphor_find_tables: [
-    "projectId",
-    "connectionId",
-    "database",
-    "databaseName",
-    "schema",
-    "schemaName",
-    "nameCandidates",
-    "limit",
-  ],
-  semaphor_list_datasets: ["projectId", "domainId"],
-  semaphor_get_dataset_schema: [
-    "projectId",
-    "mode",
-    "domainId",
-    "datasetName",
-    "datasetId",
-    "connectionId",
-    "connectionType",
-    "connectionName",
-    "databaseName",
-    "schemaName",
-    "tableName",
-    "includeCalculatedFields",
-    "response_format",
-  ],
-  semaphor_get_domain_relationships: ["projectId", "domainId"],
-};
+/**
+ * Tools that run a query. Dropping an argument could change what they compute
+ * (for example a removed `analysisMode` would turn a period-change analysis
+ * into a plain metric query), so their arguments are never pruned: the
+ * specific validators speak first, and any argument the tool doesn't define
+ * then skips the call.
+ */
+const EXECUTION_TOOLS = new Set([
+  "semaphor_analyze",
+  "semaphor_query_sql_advanced",
+]);
 
 const PROJECT_SCOPED_TOOLS = new Set([
   "semaphor_list_dashboards",
@@ -182,6 +138,14 @@ export function applyPlannedToolCallPolicy(input: {
       continue;
     }
 
+    const advertisedKeys = input.executionContext?.toolInputKeys;
+    if (advertisedKeys && !(plannedCall.name in advertisedKeys)) {
+      violations.push(
+        `Skipped ${plannedCall.name} because the Semaphor MCP doesn't offer it to this session.`,
+      );
+      continue;
+    }
+
     const projectScoped = applyProjectContext(
       plannedCall.name,
       plannedCall.arguments,
@@ -191,7 +155,11 @@ export function applyPlannedToolCallPolicy(input: {
       violations.push(warning);
     }
 
-    const sanitized = sanitizeArguments(plannedCall.name, projectScoped.arguments);
+    const sanitized = sanitizeArguments(
+      plannedCall.name,
+      projectScoped.arguments,
+      advertisedKeys?.[plannedCall.name] ?? undefined,
+    );
     for (const warning of sanitized.warnings) {
       violations.push(warning);
     }
@@ -249,6 +217,13 @@ export function applyPlannedToolCallPolicy(input: {
         violations.push(schemaPolicy.error);
         continue;
       }
+    }
+
+    if (sanitized.unsupported.length > 0) {
+      violations.push(
+        `Skipped ${plannedCall.name} because it uses arguments the tool doesn't define: ${sanitized.unsupported.join(", ")}. Use only the arguments the tool lists.`,
+      );
+      continue;
     }
 
     calls.push({
@@ -1166,19 +1141,38 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
+/**
+ * Checks a planned call against the arguments the server advertises for the
+ * tool. The server's input schemas are strict, so an argument it doesn't
+ * define would fail the whole call. Discovery calls are pruned with a
+ * warning; execution calls keep their arguments and report the unsupported
+ * ones, so the caller skips them instead of running a different query.
+ * Without advertised keys (a client that can't list tools) the arguments pass
+ * through and the server validates them.
+ */
 function sanitizeArguments(
   toolName: string,
   args: Record<string, unknown>,
-): { arguments: Record<string, unknown>; warnings: string[] } {
-  const allowedKeys = DISCOVERY_TOOL_ARGUMENTS[toolName];
+  allowedKeys: string[] | undefined,
+): { arguments: Record<string, unknown>; warnings: string[]; unsupported: string[] } {
+  const normalizedArgs = normalizeDiscoveryArguments(toolName, args);
   if (!allowedKeys) {
     return {
-      arguments: args,
+      arguments: normalizedArgs,
       warnings: [],
+      unsupported: [],
+    };
+  }
+  if (EXECUTION_TOOLS.has(toolName)) {
+    return {
+      arguments: normalizedArgs,
+      warnings: [],
+      unsupported: Object.keys(normalizedArgs)
+        .filter((key) => !allowedKeys.includes(key))
+        .sort(),
     };
   }
 
-  const normalizedArgs = normalizeDiscoveryArguments(toolName, args);
   const sanitized = Object.fromEntries(
     Object.entries(normalizedArgs).filter(([key]) => allowedKeys.includes(key)),
   );
@@ -1188,6 +1182,7 @@ function sanitizeArguments(
 
   return {
     arguments: sanitized,
+    unsupported: [],
     warnings:
       droppedKeys.length > 0
         ? [

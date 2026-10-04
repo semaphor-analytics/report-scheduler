@@ -119,8 +119,8 @@ describe("executeBriefingPlan", () => {
     ]);
     expect(semaphor.calls[0].arguments).toMatchObject({
       dashboardId: "dash-1",
-      include_query_inputs: false,
-      max_cards: 12,
+      includeQueryInputs: false,
+      maxCards: 12,
     });
   });
 

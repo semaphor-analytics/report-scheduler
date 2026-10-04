@@ -3,8 +3,9 @@ const {
   stripHeaderLineBreaks,
 } = require('./envelope');
 
+/** Fallback only; the producer's content type wins. Matches CSV_CONTENT_TYPE. */
 function getAttachmentContentType(fileFormat) {
-  return fileFormat === 'csv' ? 'text/csv' : 'application/pdf';
+  return fileFormat === 'csv' ? 'text/csv; charset=utf-8' : 'application/pdf';
 }
 
 function getAttachmentFilename(attachmentName, fileFormat) {

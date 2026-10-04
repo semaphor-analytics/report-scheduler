@@ -1,6 +1,7 @@
 import { Readable, PassThrough } from 'node:stream';
 import { gunzipSync } from 'node:zlib';
 import { compactChunks } from './compactor';
+import { csvFilePreamble, csvRecord, encodeCsvFile } from 'react-semaphor/format-utils';
 
 describe('compactChunks', () => {
   it('destroys a stalled download and awaits upload shutdown on cancellation', async () => {
@@ -89,5 +90,36 @@ describe('compactChunks', () => {
       'Region,Revenue\nEast,1\nWest,2\nTotal,"$3.00"\n',
     );
     expect(result.totalBytes).toBe(43);
+  });
+  it('keeps a contract file intact: one BOM at byte 0, CRLF records, the footer last', async () => {
+    const chunk1 = csvFilePreamble('utf-8-bom') + csvRecord(['Region', 'Revenue'], ',') + csvRecord(['East', '1'], ',');
+    const chunk2 = csvRecord(['Café, "Nord"', '2'], ',');
+    const footer = csvRecord(['Total', '3'], ',');
+    let uploaded = Buffer.alloc(0);
+    const result = await compactChunks(
+      { jobId: 'job-2', chunkKeys: ['002.csv', '001.csv'], footer },
+      {
+        getObjectStream: async (key) => Readable.from([key === '001.csv' ? chunk1 : chunk2]),
+        uploadStream: async (_key, stream) => {
+          const chunks: Buffer[] = [];
+          for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+          uploaded = Buffer.concat(chunks);
+          return uploaded.length;
+        },
+      },
+    );
+
+    const file = gunzipSync(uploaded);
+    expect(file.toString('utf8')).toBe(
+      encodeCsvFile({
+        header: ['Region', 'Revenue'],
+        rows: [['East', '1'], ['Café, "Nord"', '2'], ['Total', '3']],
+        delimiter: ',',
+        encoding: 'utf-8-bom',
+      }),
+    );
+    expect([...file.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    expect(file.indexOf(Buffer.from([0xef, 0xbb, 0xbf]), 1)).toBe(-1);
+    expect(result.totalBytes).toBe(file.length);
   });
 });

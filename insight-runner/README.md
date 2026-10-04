@@ -232,7 +232,7 @@ at the top of this README.
 | `INSIGHT_LOOP_MODEL` | `insight-runner/.env.local` or scheduler `.env` | local runner, Lambda runner | Model name used by generated-analysis Briefings. |
 | `INSIGHT_LOOP_REASONING_EFFORT` | `insight-runner/.env.local` or scheduler `.env` | local runner, Lambda runner | Reasoning effort used by generated-analysis Briefings. Defaults to `medium`. |
 | `OPENAI_API_KEY` | `insight-runner/.env.local` or scheduler `.env` | local runner, Lambda runner | Required when `INSIGHT_LOOP_MODEL_PROVIDER=openai`. |
-| `SEMAPHOR_PROJECT_TOKEN` | `insight-runner/.env.local` | direct CLI only | Project-scoped token for direct `pnpm insight-loop run ...` commands. Not required for Semaphor App Briefing dispatch. |
+| `SEMAPHOR_PROJECT_TOKEN` | `insight-runner/.env.local` | direct CLI only | An MCP project token for direct `pnpm insight-loop run ...` commands: mint it with `POST /api/v1/token` and the `mcp` option (`"mcp": { "scopes": ["mcp:read"] }`); the MCP refuses other project tokens. Not required for Semaphor App Briefing dispatch, which mints one per run. |
 | `SEMAPHOR_MCP_URL` | `insight-runner/.env.local` | direct CLI only | MCP endpoint for direct CLI runs. UI-dispatched runs use runtime context from Semaphor App. |
 | `SEMAPHOR_MCP_TIMEOUT_MS` | `insight-runner/.env.local` | local runner and direct CLI | Timeout for MCP tool calls. |
 | `BRIEFINGS_CALLBACK_TIMEOUT_MS` | runner env | local runner, Lambda runner | Timeout for progress, complete, and fail callbacks back to Semaphor App. Defaults to 30 seconds. |
@@ -528,7 +528,9 @@ ambiguities from the full Markdown.
 
 ## Real Localhost MCP Connectivity
 
-Start `semaphor-app` locally, then provide a Semaphor project token:
+Start `semaphor-app` locally, then provide an MCP project token (minted with
+`POST /api/v1/token` and the `mcp` option; the MCP refuses other project
+tokens):
 
 ```bash
 export SEMAPHOR_PROJECT_TOKEN="..."

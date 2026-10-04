@@ -167,10 +167,10 @@ async function testGeneration() {
       const csvOptions = {
         isLambda: false,
         delimiter: options.delimiter,
+        csvEncoding: 'utf-8-bom',
         includeHeaders: true,
         includeSubtotals: true,
         includeGrandTotal: true,
-        includeMetadata: true,
         reportTitle: 'Test Report',
         timezone: 'UTC',
         debug: true,

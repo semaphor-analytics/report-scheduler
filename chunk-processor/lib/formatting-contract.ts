@@ -1,4 +1,6 @@
 import {
+  parseCsvDelimiter,
+  parseCsvEncoding,
   parsePresentationExecutionSnapshot,
   parsePresentationScope,
   PresentationExecutionSnapshotError,
@@ -12,6 +14,7 @@ const FORMATTING_KEYS = new Set([
   'timezone',
   'presentationExecutionSnapshot',
   'delimiter',
+  'csvEncoding',
   'includeHeaders',
   'columnSettings',
   'visibleColumns',
@@ -58,8 +61,13 @@ export function parseExportFormattingConfig(
   if (!timezone) {
     throw new Error('formatting.timezone must be a non-empty string');
   }
-  if (typeof input.delimiter !== 'string' || input.delimiter.length === 0) {
-    throw new Error('formatting.delimiter must be a non-empty string');
+  const delimiter = parseCsvDelimiter(input.delimiter);
+  if (!delimiter) {
+    throw new Error('formatting.delimiter must be a comma, semicolon or tab');
+  }
+  const csvEncoding = parseCsvEncoding(input.csvEncoding);
+  if (!csvEncoding) {
+    throw new Error("formatting.csvEncoding must be 'utf-8-bom' or 'utf-8'");
   }
   if (typeof input.includeHeaders !== 'boolean') {
     throw new Error('formatting.includeHeaders must be a boolean');
@@ -115,7 +123,8 @@ export function parseExportFormattingConfig(
       ? { useFormattedValues: input.useFormattedValues }
       : {}),
     timezone,
-    delimiter: input.delimiter,
+    delimiter,
+    csvEncoding,
     includeHeaders: input.includeHeaders,
     ...(columnSettings
       ? {

@@ -12,6 +12,9 @@ import type {
 } from '../types';
 
 import {
+  csvFilePreamble,
+  csvRecord,
+  csvRecords,
   findResolvedMeasureFormat,
   findResolvedTemporalBucketFormat,
   formatDate,
@@ -259,26 +262,6 @@ function formatCellValue(
   }
 
   return String(value);
-}
-
-/**
- * Escape a value for CSV output (RFC 4180 compliant).
- */
-function escapeCSVValue(value: string, delimiter: string): string {
-  // RFC 4180 compliant escaping
-  const needsQuotes =
-    value.includes(delimiter) ||
-    value.includes('"') ||
-    value.includes('\n') ||
-    value.includes('\r');
-
-  if (needsQuotes) {
-    // Escape double quotes by doubling them
-    const escaped = value.replace(/"/g, '""');
-    return `"${escaped}"`;
-  }
-
-  return value;
 }
 
 function getOwnColumnLabel(
@@ -539,21 +522,23 @@ export function formatRowsForExportWithEvidence(
 }
 
 /**
- * Generate CSV string from formatted data.
+ * Generate one chunk of the CSV file from formatted data. Chunk 1 owns the
+ * start of the file (the BOM, when the encoding has one); every record ends
+ * with the contract's separator, so compaction can concatenate chunks as-is.
  */
 export function generateCSV(
   data: string[][],
   columns: ColumnInfo[],
   formatting: ExportFormattingConfig,
   options: {
+    isFirstChunk: boolean;
     includeHeaders: boolean;
     rawRecords?: Record<string, unknown>[];
     pivotResultKind?: 'canonical' | 'legacy_raw' | 'not_pivot';
   },
 ): string {
   const { includeHeaders, rawRecords } = options;
-  const delimiter = formatting.delimiter || ',';
-  const lines: string[] = [];
+  const delimiter = formatting.delimiter;
   const visibleColumns = getVisibleColumns(
     columns,
     formatting,
@@ -577,30 +562,23 @@ export function generateCSV(
     });
   }
 
-  // Header row (first chunk only)
-  if (includeHeaders) {
-    const headers = visibleColumns.map((field) => {
-      const col = columns.find((c) => (c.key || c.field) === field);
-      const authoredLabel = getOwnColumnLabel(formatting.columnLabels, field);
-      const headerName =
-        getPivotColumnLabel(col, formatting, authoredLabel) ||
-        authoredLabel ||
-        col?.label ||
-        col?.headerName ||
-        field;
-      return escapeCSVValue(headerName, delimiter);
-    });
-    lines.push(headers.join(delimiter));
-  }
+  const header = includeHeaders
+    ? visibleColumns.map((field) => {
+        const col = columns.find((c) => (c.key || c.field) === field);
+        const authoredLabel = getOwnColumnLabel(formatting.columnLabels, field);
+        return (
+          getPivotColumnLabel(col, formatting, authoredLabel) ||
+          authoredLabel ||
+          col?.label ||
+          col?.headerName ||
+          field
+        );
+      })
+    : undefined;
 
-  // Data rows
-  for (const row of data) {
-    const escapedRow = row.map((cell) => escapeCSVValue(cell, delimiter));
-    lines.push(escapedRow.join(delimiter));
-  }
-
-  // Add trailing newline so chunks concatenate correctly without row merging
-  // Empty content stays empty (no phantom newline for empty exports)
-  const content = lines.join('\n');
-  return content ? content + '\n' : '';
+  return (
+    (options.isFirstChunk ? csvFilePreamble(formatting.csvEncoding) : '') +
+    (header ? csvRecord(header, delimiter) : '') +
+    csvRecords(data, delimiter)
+  );
 }

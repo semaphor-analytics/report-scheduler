@@ -263,9 +263,9 @@ export function buildBriefingGroundingPreflightToolCalls(
         name: "semaphor_get_dashboard_analysis_context",
         arguments: {
           dashboardId: state.source.dashboardId,
-          include_query_inputs: true,
-          max_cards: 30,
-          response_format: "json",
+          includeQueryInputs: true,
+          maxCards: 30,
+          responseFormat: "json",
         },
         purpose:
           "Ground this dashboard-sourced briefing in the known dashboard's cards, filters, metrics, dimensions, date fields, source references, and bounded card query inputs before broad discovery.",
@@ -331,7 +331,7 @@ export function buildDashboardQuerySeedRecoveryCalls(
       cardConfig: seed.cardConfig,
       cardDataSource: seed.cardDataSource,
       activeFilters: [],
-      response_format: "json",
+      responseFormat: "json",
     },
     purpose:
       `Run an authored dashboard card query${seed.cardTitle ? ` for "${seed.cardTitle}"` : ""} before deciding the briefing cannot be grounded.`,

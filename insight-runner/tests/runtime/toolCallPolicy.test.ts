@@ -298,9 +298,19 @@ describe("applyPlannedToolCallPolicy", () => {
     expect(result.violations[0]).toContain("unresolved placeholder");
   });
 
-  it("preserves supported project-scoped schema arguments and strips unsupported keys", () => {
+  // The server's input schemas are strict; the policy prunes to the argument
+  // names the server advertises in tools/list instead of keeping a copy.
+  const advertisedSchemaKeys = {
+    semaphor_get_dataset_schema: [
+      "projectId", "mode", "domainId", "datasetName", "connectionId", "connectionName",
+      "databaseName", "schemaName", "tableName", "includeCalculatedFields", "responseDetail",
+    ],
+  };
+
+  it("preserves advertised schema arguments and strips the rest", () => {
     const result = applyPlannedToolCallPolicy({
       limits: { maxToolCalls: 4 },
+      executionContext: { toolInputKeys: advertisedSchemaKeys },
       plan: plan({
         plannedToolCalls: [
           {
@@ -336,6 +346,107 @@ describe("applyPlannedToolCallPolicy", () => {
     ]);
     expect(result.violations[0]).toContain("Dropped unsupported");
     expect(result.violations[0]).toContain("unsupportedFlag");
+  });
+
+  it("drops a removed argument name such as response_format before the strict server rejects the call", () => {
+    const result = applyPlannedToolCallPolicy({
+      limits: { maxToolCalls: 4 },
+      executionContext: { toolInputKeys: advertisedSchemaKeys },
+      plan: plan({
+        plannedToolCalls: [
+          {
+            name: "semaphor_get_dataset_schema",
+            arguments: { domainId: "domain_1", datasetName: "sales_data", response_format: "json", responseFormat: "json" },
+            purpose: "inspect schema",
+          },
+        ],
+      }),
+    });
+
+    expect(result.calls[0]?.arguments).toEqual({ domainId: "domain_1", datasetName: "sales_data" });
+    expect(result.violations[0]).toContain("responseFormat, response_format");
+  });
+
+  // Third review: pruning an execution call could change what it computes.
+  const advertisedAnalyzeKeys = {
+    semaphor_analyze: ["projectId", "domainId", "datasetName", "measures", "primaryMeasure", "dateField", "timeGrain", "dimensions", "analysis", "limit", "responseFormat"],
+  };
+
+  it("rejects a removed analysisMode on semaphor_analyze with guidance instead of pruning it", () => {
+    const result = applyPlannedToolCallPolicy({
+      limits: { maxToolCalls: 4 },
+      executionContext: { toolInputKeys: advertisedAnalyzeKeys },
+      plan: plan({
+        plannedToolCalls: [
+          {
+            name: "semaphor_analyze",
+            arguments: {
+              domainId: "domain_1",
+              datasetName: "sales_data",
+              measures: [{ name: "sales", datasetName: "sales_data" }],
+              analysisMode: "period_change",
+            },
+            purpose: "period change",
+          },
+        ],
+      }),
+    });
+
+    expect(result.calls).toHaveLength(0);
+    expect(result.violations[0]).toContain('analysis: {"kind":"period_change"}');
+  });
+
+  it("skips an execution call with an argument the tool doesn't define instead of running a different query", () => {
+    const result = applyPlannedToolCallPolicy({
+      limits: { maxToolCalls: 4 },
+      executionContext: { toolInputKeys: advertisedAnalyzeKeys },
+      plan: plan({
+        plannedToolCalls: [
+          {
+            name: "semaphor_analyze",
+            arguments: {
+              domainId: "domain_1",
+              datasetName: "sales_data",
+              measures: [{ name: "sales", datasetName: "sales_data" }],
+              comparisonMode: "yoy",
+            },
+            purpose: "sales",
+          },
+        ],
+      }),
+    });
+
+    expect(result.calls).toHaveLength(0);
+    expect(result.violations[0]).toContain("arguments the tool doesn't define: comparisonMode");
+  });
+
+  it("skips a tool the server doesn't offer this session", () => {
+    const result = applyPlannedToolCallPolicy({
+      limits: { maxToolCalls: 4 },
+      executionContext: { toolInputKeys: advertisedSchemaKeys },
+      plan: plan({
+        plannedToolCalls: [
+          { name: "semaphor_query_sql_advanced", arguments: { connectionId: "c_1", sql: "SELECT 1 LIMIT 1" }, purpose: "sql" },
+        ],
+      }),
+    });
+
+    expect(result.calls).toHaveLength(0);
+    expect(result.violations[0]).toContain("doesn't offer it to this session");
+  });
+
+  it("passes arguments through when the client can't describe tool schemas", () => {
+    const result = applyPlannedToolCallPolicy({
+      limits: { maxToolCalls: 4 },
+      executionContext: { toolInputKeys: { semaphor_get_dataset_schema: null } },
+      plan: plan({
+        plannedToolCalls: [
+          { name: "semaphor_get_dataset_schema", arguments: { domainId: "domain_1", datasetName: "sales_data", extra: 1 }, purpose: "inspect" },
+        ],
+      }),
+    });
+
+    expect(result.calls[0]?.arguments).toEqual({ domainId: "domain_1", datasetName: "sales_data", extra: 1 });
   });
 
   it("injects execution project id into project-scoped MCP calls", () => {
@@ -376,9 +487,9 @@ describe("applyPlannedToolCallPolicy", () => {
             name: "semaphor_get_dashboard_analysis_context",
             arguments: {
               dashboardId: "dash_1",
-              include_query_inputs: true,
-              max_cards: 30,
-              response_format: "json",
+              includeQueryInputs: true,
+              maxCards: 30,
+              responseFormat: "json",
             },
             purpose: "ground dashboard",
           },
@@ -391,9 +502,9 @@ describe("applyPlannedToolCallPolicy", () => {
         name: "semaphor_get_dashboard_analysis_context",
         arguments: {
           dashboardId: "dash_1",
-          include_query_inputs: true,
-          max_cards: 30,
-          response_format: "json",
+          includeQueryInputs: true,
+          maxCards: 30,
+          responseFormat: "json",
         },
         purpose: "ground dashboard",
       },

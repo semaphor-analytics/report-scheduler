@@ -101,6 +101,7 @@ const formatting = {
     ],
   },
   delimiter: ',',
+  csvEncoding: 'utf-8-bom',
   includeHeaders: true,
   tableTotalsLabelColumnKey: 'region',
   visibleColumns: ['region', 'revenue'],

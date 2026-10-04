@@ -217,6 +217,7 @@ export async function handler(event: ChunkInput | MatrixBatchInput): Promise<Chu
       },
     );
     const csvContent = generateCSV(formattedResult.rows, columns, formatting, {
+      isFirstChunk,
       includeHeaders: isFirstChunk && formatting.includeHeaders,
       rawRecords: records, // Pass raw records for header fallback if columns is empty
       pivotResultKind: pivotResultLifecycle.kind,

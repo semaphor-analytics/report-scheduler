@@ -125,7 +125,7 @@ export function buildAnswerRecoveryKernelCall(input: {
         semanticTargets: input.grounding?.semanticTargets ?? [],
         physicalTargets: input.grounding?.physicalTargets ?? [],
         remainingToolCalls: Math.max(input.remainingToolCalls - 1, 0),
-        response_format: "json",
+        responseFormat: "json",
       },
       purpose:
         "Ask the Semaphor App analytics recovery kernel to plan governed recovery calls for unmet Briefing answer obligations.",

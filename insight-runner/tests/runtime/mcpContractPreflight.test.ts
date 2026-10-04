@@ -324,3 +324,24 @@ function fieldRefUnionSchema(): unknown {
     ],
   };
 }
+
+describe("advertised tool input keys", () => {
+  it("reads each tool's argument names from tools/list, null when a tool has no input schema", async () => {
+    const semaphor = {
+      callTool: async () => ({ toolName: "x", ok: true }),
+      listTools: async () => [
+        { name: "semaphor_plan_analytics_recovery", inputSchema: { type: "object", properties: { operationIntent: {}, responseFormat: {} } } },
+        { name: "semaphor_get_dataset_schema", inputSchema: { type: "object", properties: { domainId: {}, datasetName: {} }, additionalProperties: false } },
+        { name: "semaphor_list_datasets" },
+      ],
+    } as unknown as SemaphorMcpClient;
+
+    const result = await preflightMcpContracts({ semaphor, validateQuerySpecSourceRefs: false });
+
+    expect(result.toolInputKeys).toEqual({
+      semaphor_plan_analytics_recovery: ["operationIntent", "responseFormat"],
+      semaphor_get_dataset_schema: ["domainId", "datasetName"],
+      semaphor_list_datasets: null,
+    });
+  });
+});

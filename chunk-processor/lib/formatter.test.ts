@@ -4,7 +4,12 @@ import {
   generateCSV,
 } from './formatter';
 import type { ColumnInfo, ExportFormattingConfig } from '../types';
-import type { MeasureCanonicalFormat } from 'react-semaphor/format-utils';
+import {
+  CSV_DELIMITERS,
+  CSV_ENCODINGS,
+  encodeCsvFile,
+  type MeasureCanonicalFormat,
+} from 'react-semaphor/format-utils';
 
 describe('formatter', () => {
   const defaultFormatting: ExportFormattingConfig = {
@@ -36,6 +41,7 @@ describe('formatter', () => {
       resolvedFormats: [],
     },
     delimiter: ',',
+    csvEncoding: 'utf-8',
     includeHeaders: true,
   };
 
@@ -901,8 +907,8 @@ describe('formatter', () => {
     ];
 
     expect(
-      generateCSV([['10']], columns, formatting, { includeHeaders: true }),
-    ).toBe('07/2026 / Revenue Current\n10\n');
+      generateCSV([['10']], columns, formatting, { isFirstChunk: true, includeHeaders: true }),
+    ).toBe('07/2026 / Revenue Current\r\n10\r\n');
   });
 
   it('preserves canonical pivot members in raw async CSV headers', () => {
@@ -934,9 +940,9 @@ describe('formatter', () => {
 
     expect(
       generateCSV([['10', '20']], columns, formatting, {
-        includeHeaders: true,
+        isFirstChunk: true, includeHeaders: true,
       }),
-    ).toBe('2026-07-01 / Revenue,2026-08-01 / Revenue\n10,20\n');
+    ).toBe('2026-07-01 / Revenue,2026-08-01 / Revenue\r\n10,20\r\n');
   });
 
   it('fails closed when a physical pivot column omits member identity', () => {
@@ -958,7 +964,7 @@ describe('formatter', () => {
     ];
 
     expect(() =>
-      generateCSV([['10']], columns, formatting, { includeHeaders: true }),
+      generateCSV([['10']], columns, formatting, { isFirstChunk: true, includeHeaders: true }),
     ).toThrow('missing_pivot_member_identity');
   });
 
@@ -979,7 +985,7 @@ describe('formatter', () => {
     ];
 
     expect(() =>
-      generateCSV([['10']], columns, formatting, { includeHeaders: true }),
+      generateCSV([['10']], columns, formatting, { isFirstChunk: true, includeHeaders: true }),
     ).toThrow('invalid identity');
   });
 
@@ -1000,7 +1006,7 @@ describe('formatter', () => {
     ];
 
     expect(() =>
-      generateCSV([['10']], columns, formatting, { includeHeaders: false }),
+      generateCSV([['10']], columns, formatting, { isFirstChunk: true, includeHeaders: false }),
     ).toThrow('missing_pivot_member_identity');
   });
 
@@ -1185,8 +1191,8 @@ describe('formatter', () => {
       },
     });
     expect(
-      generateCSV(rows, columns, formatting, { includeHeaders: false }),
-    ).toBe('10\n');
+      generateCSV(rows, columns, formatting, { isFirstChunk: true, includeHeaders: false }),
+    ).toBe('10\r\n');
   });
 
   describe('generateCSV', () => {
@@ -1202,10 +1208,10 @@ describe('formatter', () => {
       ];
 
       const result = generateCSV(data, columns, defaultFormatting, {
-        includeHeaders: true,
+        isFirstChunk: true, includeHeaders: true,
       });
 
-      expect(result).toBe('Name,Age,City\nAlice,30,NYC\nBob,25,LA\n');
+      expect(result).toBe('Name,Age,City\r\nAlice,30,NYC\r\nBob,25,LA\r\n');
     });
 
     it('uses canonical comparison column labels supplied by the query client', () => {
@@ -1217,9 +1223,9 @@ describe('formatter', () => {
         },
       };
       const result = generateCSV([['120', '100']], [], formatting, {
-        includeHeaders: true,
+        isFirstChunk: true, includeHeaders: true,
       });
-      expect(result).toBe('Sales,Sales (Previous Period)\n120,100\n');
+      expect(result).toBe('Sales,Sales (Previous Period)\r\n120,100\r\n');
     });
 
     it('uses only own string properties from a partial column-label map', () => {
@@ -1238,11 +1244,11 @@ describe('formatter', () => {
         [['first', 'second', 'third']],
         columns,
         formatting,
-        { includeHeaders: true },
+        { isFirstChunk: true, includeHeaders: true },
       );
 
       expect(result).toBe(
-        'Constructor value,String value,valueOf\nfirst,second,third\n',
+        'Constructor value,String value,valueOf\r\nfirst,second,third\r\n',
       );
     });
 
@@ -1258,10 +1264,10 @@ describe('formatter', () => {
       ];
 
       const result = generateCSV(data, columns, defaultFormatting, {
-        includeHeaders: false,
+        isFirstChunk: true, includeHeaders: false,
       });
 
-      expect(result).toBe('Alice,30,NYC\nBob,25,LA\n');
+      expect(result).toBe('Alice,30,NYC\r\nBob,25,LA\r\n');
     });
 
     it('should derive headers from rawRecords when columns is empty', () => {
@@ -1276,12 +1282,12 @@ describe('formatter', () => {
       ];
 
       const result = generateCSV(data, columns, defaultFormatting, {
-        includeHeaders: true,
+        isFirstChunk: true, includeHeaders: true,
         rawRecords,
       });
 
       // Headers derived from Object.keys(rawRecords[0]) = ['name', 'age', 'city']
-      expect(result).toBe('name,age,city\nAlice,30,NYC\nBob,25,LA\n');
+      expect(result).toBe('name,age,city\r\nAlice,30,NYC\r\nBob,25,LA\r\n');
     });
 
     it('should escape values containing delimiter', () => {
@@ -1289,10 +1295,10 @@ describe('formatter', () => {
       const columns: ColumnInfo[] = [{ field: 'greeting' }, { field: 'test' }];
 
       const result = generateCSV(data, columns, defaultFormatting, {
-        includeHeaders: false,
+        isFirstChunk: true, includeHeaders: false,
       });
 
-      expect(result).toBe('"Hello, World",Test\n');
+      expect(result).toBe('"Hello, World",Test\r\n');
     });
 
     it('should escape values containing double quotes', () => {
@@ -1300,10 +1306,10 @@ describe('formatter', () => {
       const columns: ColumnInfo[] = [{ field: 'greeting' }, { field: 'test' }];
 
       const result = generateCSV(data, columns, defaultFormatting, {
-        includeHeaders: false,
+        isFirstChunk: true, includeHeaders: false,
       });
 
-      expect(result).toBe('"Say ""Hello""",Test\n');
+      expect(result).toBe('"Say ""Hello""",Test\r\n');
     });
 
     it('should escape values containing newlines', () => {
@@ -1311,10 +1317,10 @@ describe('formatter', () => {
       const columns: ColumnInfo[] = [{ field: 'multiline' }, { field: 'test' }];
 
       const result = generateCSV(data, columns, defaultFormatting, {
-        includeHeaders: false,
+        isFirstChunk: true, includeHeaders: false,
       });
 
-      expect(result).toBe('"Line1\nLine2",Test\n');
+      expect(result).toBe('"Line1\nLine2",Test\r\n');
     });
 
     it('should use custom delimiter', () => {
@@ -1330,25 +1336,25 @@ describe('formatter', () => {
       };
 
       const result = generateCSV(data, columns, formatting, {
-        includeHeaders: false,
+        isFirstChunk: true, includeHeaders: false,
       });
 
-      expect(result).toBe('Alice;30;NYC\n');
+      expect(result).toBe('Alice;30;NYC\r\n');
     });
 
     it('should handle empty data array', () => {
       const columns: ColumnInfo[] = [{ field: 'name', headerName: 'Name' }];
 
       const result = generateCSV([], columns, defaultFormatting, {
-        includeHeaders: true,
+        isFirstChunk: true, includeHeaders: true,
       });
 
-      expect(result).toBe('Name\n');
+      expect(result).toBe('Name\r\n');
     });
 
     it('should handle empty data without headers', () => {
       const result = generateCSV([], [], defaultFormatting, {
-        includeHeaders: false,
+        isFirstChunk: true, includeHeaders: false,
       });
 
       expect(result).toBe('');
@@ -1371,13 +1377,13 @@ describe('formatter', () => {
         defaultFormatting,
       );
       const csv = generateCSV(formattedRows, columns, defaultFormatting, {
-        includeHeaders: true,
+        isFirstChunk: true, includeHeaders: true,
         rawRecords: records,
       });
 
       // Should have headers from Object.keys and actual data, with trailing newline
-      const lines = csv.split('\n');
-      expect(lines.length).toBe(5); // 1 header + 3 data rows + empty from trailing \n
+      const lines = csv.split('\r\n');
+      expect(lines.length).toBe(5); // 1 header + 3 data rows + empty from the trailing separator
       expect(lines[0]).toBe('id,name,email');
       expect(lines[1]).toBe('1,Alice,alice@example.com');
       expect(lines[2]).toBe('2,Bob,bob@example.com');
@@ -1418,10 +1424,10 @@ describe('formatter', () => {
       const columns: ColumnInfo[] = [{ field: 'name' }, { field: 'age' }];
 
       const result = generateCSV(data, columns, defaultFormatting, {
-        includeHeaders: false,
+        isFirstChunk: true, includeHeaders: false,
       });
 
-      expect(result.endsWith('\n')).toBe(true);
+      expect(result.endsWith('\r\n')).toBe(true);
 
       // Simulate chunk concatenation
       const chunk1 = generateCSV(
@@ -1429,21 +1435,64 @@ describe('formatter', () => {
         columns,
         defaultFormatting,
         {
-          includeHeaders: true,
+          isFirstChunk: true, includeHeaders: true,
         },
       );
       const chunk2 = generateCSV([['Bob', '25']], columns, defaultFormatting, {
-        includeHeaders: false,
+        isFirstChunk: true, includeHeaders: false,
       });
 
       const concatenated = chunk1 + chunk2;
-      const lines = concatenated.split('\n').filter((line) => line.length > 0);
+      const lines = concatenated.split('\r\n').filter((line) => line.length > 0);
 
       // Should have 3 lines: header, Alice, Bob (no merged rows)
       expect(lines.length).toBe(3);
       expect(lines[0]).toBe('name,age');
       expect(lines[1]).toBe('Alice,30');
       expect(lines[2]).toBe('Bob,25');
+    });
+  });
+
+  describe('CSV file standard', () => {
+    const bytes = (text: string) => Array.from(Buffer.from(text, 'utf8'));
+    const BOM = [0xef, 0xbb, 0xbf];
+    const columns: ColumnInfo[] = [
+      { field: 'account', headerName: 'Bank Account' },
+      { field: 'payee', headerName: 'Payee' },
+    ];
+    const first = [['Checking', 'Acme, "West"']];
+    const second = [['Savings', 'Café\nZoë'], ['Cash', 'semi;tab\t€']];
+
+    it('writes the BOM at the start of chunk 1 only', () => {
+      const formatting = { ...defaultFormatting, csvEncoding: 'utf-8-bom' as const };
+      const chunk1 = generateCSV(first, columns, formatting, { isFirstChunk: true, includeHeaders: true });
+      const chunk2 = generateCSV(second, columns, formatting, { isFirstChunk: false, includeHeaders: false });
+      expect(bytes(chunk1).slice(0, 3)).toEqual(BOM);
+      expect(bytes(chunk2).slice(0, 3)).not.toEqual(BOM);
+      expect(chunk2).toBe('Savings,"Café\nZoë"\r\nCash,semi;tab\t€\r\n');
+    });
+
+    it('starts chunk 1 with the BOM even without headers or rows', () => {
+      const formatting = { ...defaultFormatting, csvEncoding: 'utf-8-bom' as const };
+      expect(bytes(generateCSV([], columns, formatting, { isFirstChunk: true, includeHeaders: false }))).toEqual(BOM);
+      expect(generateCSV([], columns, { ...formatting, csvEncoding: 'utf-8' }, { isFirstChunk: true, includeHeaders: false })).toBe('');
+    });
+
+    it.each(
+      CSV_DELIMITERS.flatMap((delimiter) => CSV_ENCODINGS.map((csvEncoding) => ({ delimiter, csvEncoding }))),
+    )('concatenated chunks equal the contract file ($delimiter, $csvEncoding)', ({ delimiter, csvEncoding }) => {
+      const formatting = { ...defaultFormatting, delimiter, csvEncoding };
+      const file =
+        generateCSV(first, columns, formatting, { isFirstChunk: true, includeHeaders: true }) +
+        generateCSV(second, columns, formatting, { isFirstChunk: false, includeHeaders: false });
+      expect(file).toBe(
+        encodeCsvFile({
+          header: ['Bank Account', 'Payee'],
+          rows: [...first, ...second],
+          delimiter,
+          encoding: csvEncoding,
+        }),
+      );
     });
   });
 });

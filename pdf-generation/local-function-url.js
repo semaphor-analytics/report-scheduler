@@ -7,6 +7,10 @@ import { createGunzip } from 'zlib';
 import { fileURLToPath } from 'url';
 import { generatePdf } from './lib/pdf-generator.js';
 import { generateCsv } from './lib/csv-extractor.js';
+import {
+  CSV_CONTENT_TYPE,
+  parseCsvEncoding,
+} from './lib/generated/csv-file.js';
 import { generatePdfFromData } from './lib/pdf-from-data-generator.js';
 import {
   preloadLocalChunkedExportHandlers,
@@ -127,7 +131,7 @@ function sendFile(res, filename) {
   const isCsv = filepath.endsWith('.csv');
   const safeDownloadName = path.basename(filepath);
   res.writeHead(200, {
-    'Content-Type': isCsv ? 'text/csv; charset=utf-8' : 'application/pdf',
+    'Content-Type': isCsv ? CSV_CONTENT_TYPE : 'application/pdf',
     'Content-Disposition': `attachment; filename="${safeDownloadName}"`,
   });
   fs.createReadStream(filepath).pipe(res);
@@ -208,7 +212,7 @@ function sendExportObject(res, query) {
     return;
   }
   res.writeHead(200, {
-    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Type': CSV_CONTENT_TYPE,
     'Content-Disposition': `attachment; filename="${downloadFilename}"`,
     'Access-Control-Allow-Origin': '*',
   });
@@ -257,14 +261,22 @@ export async function handleGet(req, res, parsedUrl) {
     const delimiterMap = { comma: ',', semicolon: ';', tab: '\t' };
     const requestedDelimiter = query.get('delimiter') || ',';
     const delimiter = delimiterMap[requestedDelimiter] ?? requestedDelimiter;
+    // Mirror the Lambda: the app resolves the encoding and sends it.
+    const csvEncoding = parseCsvEncoding(query.get('csvEncoding'));
+    if (!csvEncoding) {
+      sendJson(res, 400, {
+        message: "CSV requests require csvEncoding 'utf-8-bom' or 'utf-8'",
+      });
+      return;
+    }
 
     const csvBuffer = await generateCsv(targetUrl, {
       isLambda: false,
       delimiter,
-      includeHeaders: true,
+      csvEncoding,
+      includeHeaders: query.get('includeHeaders') !== 'false',
       includeSubtotals: true,
       includeGrandTotal: true,
-      includeMetadata: true,
       useFormattedValues: query.get('useFormattedValues') !== 'false',
       reportTitle,
       timezone: query.get('timezone') || 'UTC',

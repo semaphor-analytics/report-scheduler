@@ -93,7 +93,7 @@ describe('resolveCompactionFooter', () => {
       ],
     });
 
-    expect(footer).toBe('Total,"$9,000.00"\n');
+    expect(footer).toBe('Total,"$9,000.00"\r\n');
   });
 
   it('accepts generalized temporal presentation snapshots for totals exports', () => {
@@ -154,7 +154,7 @@ describe('resolveCompactionFooter', () => {
           },
         ],
       }),
-    ).toBe('Total,"$9,000.00"\n');
+    ).toBe('Total,"$9,000.00"\r\n');
   });
 
   it('fails rather than silently omitting or duplicating an enabled footer', () => {

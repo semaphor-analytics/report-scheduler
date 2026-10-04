@@ -456,7 +456,6 @@ class ProjectPhysicalSqlModel extends FakeInsightLoopModelClient {
               databaseName: "warehouse",
               schemaName: "public",
               tableName: "weekly_revenue",
-              response_format: "json",
             },
             purpose: "Inspect the physical fields available for SQL fallback.",
           },

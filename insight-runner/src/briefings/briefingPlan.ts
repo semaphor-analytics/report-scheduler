@@ -146,9 +146,9 @@ export async function executeBriefingPlan(
       name: "semaphor_get_dashboard_analysis_context",
       arguments: {
         dashboardId: source.dashboardId,
-        include_query_inputs: false,
-        max_cards: 12,
-        response_format: "json",
+        includeQueryInputs: false,
+        maxCards: 12,
+        responseFormat: "json",
       },
     });
 

@@ -86,12 +86,8 @@ export async function generateCsv(url, options = {}) {
 
     console.log(`Extracted table data: ${tableData.rows.length} rows, ${tableData.headers.length} header rows`);
 
-    // 6. Convert to CSV format
-    const csvContent = convertToCSV(tableData, options);
-
-    // 7. Convert to Buffer with UTF-8 BOM for Excel compatibility
-    const BOM = '\uFEFF';
-    const csvBuffer = Buffer.from(BOM + csvContent, 'utf-8');
+    // 6. Convert to the CSV file (the contract writes any BOM)
+    const csvBuffer = Buffer.from(convertToCSV(tableData, options), 'utf-8');
 
     console.log(`Generated CSV with ${csvBuffer.length} bytes`);
 

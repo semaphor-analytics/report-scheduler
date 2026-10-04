@@ -583,7 +583,7 @@ class LiveProjectSemanticModel implements InsightLoopModelClient {
                 ? { dimensions: [this.config.dimension] }
                 : {}),
               limit: 25,
-              response_format: "json",
+              responseFormat: "json",
             },
             purpose: "Execute a bounded live query-spec smoke query.",
           },
