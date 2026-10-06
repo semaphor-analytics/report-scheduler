@@ -31,8 +31,13 @@ export async function processMatrixBatch(input: MatrixBatchInput): Promise<Matri
         const body: unknown = await response.json().catch(() => null);
         const detail = body && typeof body === 'object' && !Array.isArray(body) && 'error' in body
           ? body.error : undefined;
-        const message = typeof detail === 'string' && detail.trim() && detail.length <= 4096
+        const text = typeof detail === 'string' && detail.trim() && detail.length <= 4096
           ? detail.trim() : `Matrix export batch failed (${response.status}).`;
+        // The app's failure reason travels unchanged to MarkFailed inside the
+        // error message (a Lambda failure carries only its type and message).
+        const reason = body && typeof body === 'object' && !Array.isArray(body) && 'reason' in body
+          && typeof body.reason === 'string' && body.reason.length <= 64 ? body.reason : undefined;
+        const message = reason ? JSON.stringify({ error: text, reason }) : text;
         if (response.status >= 400 && response.status < 500) throw new ExportQueryRejectedError(message);
         throw new Error(message);
       }

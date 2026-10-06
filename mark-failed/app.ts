@@ -2,10 +2,14 @@
  * Mark Failed Lambda Handler
  *
  * Called by Step Functions when export processing fails after all retries.
- * Marks the export job as failed and creates a failure notification.
+ * Asks semaphor-app to fail the export job; the app stores the customer
+ * message and writes the failure notification in one transaction.
  *
- * IMPORTANT: This Lambda should NOT throw errors, as we don't want Step Functions
- * to retry it. The job has already failed - we're just recording that failure.
+ * It fails loudly (MX-D7): a non-2xx response or a network error throws, so
+ * the `MarkExportFailed` state retries it and, once retries run out, the
+ * execution ends FAILED instead of reporting success. The app still settles
+ * the job at its deadline. The app-issued failure `reason`, when the worker's
+ * failure output carries one, is forwarded unchanged; the app validates it.
  */
 
 import type { MarkFailedInput, MarkFailedResult } from './types';
@@ -18,42 +22,34 @@ export async function handler(event: MarkFailedInput): Promise<MarkFailedResult>
 
   // Extract error message from Step Functions error structure
   const errorMessage = extractErrorMessage(error);
+  const reason = extractFailureReason(error);
 
   console.log(`Marking job ${jobId} as failed`, {
     errorMessage,
+    reason,
     orchestrationError: error,
   });
 
-  try {
-    // Call the fail endpoint in semaphor-app
-    // This endpoint:
-    // 1. Updates job status to 'failed'
-    // 2. Creates a failure notification (7-day expiry)
-    const response = await fetch(
-      `${SEMAPHOR_APP_URL}/api/v1/exports/internal/jobs/${jobId}/fail`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': LAMBDA_API_KEY,
-        },
-        body: JSON.stringify({
-          error: errorMessage,
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const responseText = await response.text();
-      console.error(`Failed to mark job as failed (${response.status}): ${responseText}`);
-      // Don't throw - we still return success to prevent Step Functions retry
-    } else {
-      console.log(`Job ${jobId} marked as failed successfully`);
+  const response = await fetch(
+    `${SEMAPHOR_APP_URL}/api/v1/exports/internal/jobs/${jobId}/fail`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': LAMBDA_API_KEY,
+      },
+      body: JSON.stringify({
+        error: errorMessage,
+        ...(reason ? { reason } : {}),
+      }),
     }
-  } catch (err) {
-    // Log the error but don't throw - we don't want Step Functions to retry
-    console.error('Error calling fail endpoint:', err);
+  );
+
+  if (!response.ok) {
+    const responseText = await response.text().catch(() => '');
+    throw new Error(`Failed to mark job ${jobId} as failed (${response.status}): ${responseText.slice(0, 500)}`);
   }
+  console.log(`Job ${jobId} marked as failed successfully`);
 
   return {
     jobId,
@@ -90,6 +86,10 @@ function nonEmptyString(value: unknown): string | null {
  */
 export function normalizeExportFailureMessage(message: string): string {
   const normalized = message.trim();
+  // The worker's relay envelope: the app's error text and its failure reason.
+  const relayed = parseJsonRecord(normalized);
+  if (relayed && nonEmptyString(relayed.reason) && nonEmptyString(relayed.error))
+    return nonEmptyString(relayed.error)!;
   const queryPrefix = 'Query failed (';
   const payloadSeparator = '): ';
 
@@ -142,4 +142,19 @@ export function extractErrorMessage(
   }
 
   return errorType;
+}
+
+/**
+ * The failure reason semaphor-app issued, carried in the worker's relay
+ * envelope (`{"error": ..., "reason": ...}` as the Lambda error message).
+ * Returned unchanged: the app accepts only reasons it recognizes. Never
+ * derived here from a status or message.
+ */
+export function extractFailureReason(
+  error: { Error: string; Cause: string } | undefined,
+): string | undefined {
+  const cause = error?.Cause ? parseJsonRecord(error.Cause) : null;
+  const message = nonEmptyString(cause?.errorMessage);
+  const relayed = message ? parseJsonRecord(message) : null;
+  return nonEmptyString(relayed?.reason) ?? undefined;
 }

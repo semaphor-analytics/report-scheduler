@@ -153,6 +153,7 @@
     "MarkExportFailed": {
       "Type": "Task",
       "Resource": "${MarkFailedArn}",
+      "Retry": [{ "ErrorEquals": ["States.ALL"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2 }],
       "End": true
     }
   }

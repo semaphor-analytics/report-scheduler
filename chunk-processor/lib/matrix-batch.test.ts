@@ -121,3 +121,14 @@ it.each(['http', 'upload', 'commit'])('aborts active %s at the absolute deadline
     expect(jest.getTimerCount()).toBe(0);
   } finally { jest.useRealTimers(); }
 });
+
+it('keeps the app-issued failure reason in the thrown error for MarkFailed (MX-D17)', async () => {
+  jest.mocked(global.fetch).mockResolvedValueOnce(response({ error: 'The data source failed.', reason: 'query_failed' }, 503));
+  const failure = await processMatrixBatch(input).catch((error: Error) => error);
+  expect(JSON.parse((failure as Error).message)).toEqual({ error: 'The data source failed.', reason: 'query_failed' });
+  jest.mocked(global.fetch).mockResolvedValueOnce(response({ error: 'Too large.', reason: 'too_large' }, 400));
+  await expect(processMatrixBatch(input)).rejects.toMatchObject({ retryable: false, message: JSON.stringify({ error: 'Too large.', reason: 'too_large' }) });
+  // Without an app reason the message is the app text, and no reason is invented.
+  jest.mocked(global.fetch).mockResolvedValueOnce(response({ error: 'Busy.' }, 503));
+  await expect(processMatrixBatch(input)).rejects.toThrow(/^Busy\.$/);
+});

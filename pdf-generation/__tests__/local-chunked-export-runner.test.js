@@ -43,6 +43,43 @@ describe('local chunked export runner', () => {
       expect(extractErrorMessage({ Error: 'ExportQueryRejectedError', Cause: JSON.stringify({ errorMessage: message }) })).toBe(message);
     } finally { vi.unstubAllGlobals(); }
   });
+  it('relays the app-issued reason from the real worker through the real failure handler (MX-D17)', async () => {
+    const body = { error: 'Export exceeds its row limit.', reason: 'too_large' };
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(body), { status: 400 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetch);
+    try {
+      await expect(runLocalChunkedExport(matrixRequest(), {
+        handlers: { chunkHandler: processMatrixBatch, compactionHandler: vi.fn(), markFailedHandler: markFailed }, attempts: 4,
+      })).rejects.toMatchObject({ retryable: false });
+      expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual(body);
+    } finally { vi.unstubAllGlobals(); }
+  });
+  it('retries a failing failure handler like the state machine, then fails loudly (MX-D7)', async () => {
+    const markFailedHandler = vi.fn().mockRejectedValue(new Error('fail endpoint unavailable'));
+    const run = runLocalChunkedExport(request(), {
+      handlers: { chunkHandler: vi.fn(async () => { throw new Error('query failed'); }), compactionHandler: vi.fn(), markFailedHandler },
+      maxConcurrency: 1, attempts: 1,
+    });
+    const settled = expect(run).rejects.toThrow('fail endpoint unavailable');
+    await vi.advanceTimersByTimeAsync(2_000 + 4_000 + 8_000);
+    await settled;
+    // MaxAttempts 3 is three retries after the first call.
+    expect(markFailedHandler).toHaveBeenCalledTimes(4);
+  });
+  it('succeeds on the fourth call, as production would after the third retry', async () => {
+    const markFailedHandler = vi.fn()
+      .mockRejectedValueOnce(new Error('down')).mockRejectedValueOnce(new Error('down')).mockRejectedValueOnce(new Error('down'))
+      .mockResolvedValueOnce({ status: 'marked_failed' });
+    const run = runLocalChunkedExport(request(), {
+      handlers: { chunkHandler: vi.fn(async () => { throw new Error('query failed'); }), compactionHandler: vi.fn(), markFailedHandler },
+      maxConcurrency: 1, attempts: 1,
+    });
+    const settled = expect(run).rejects.toThrow('query failed');
+    await vi.advanceTimersByTimeAsync(2_000 + 4_000 + 8_000);
+    await settled;
+    expect(markFailedHandler).toHaveBeenCalledTimes(4);
+  });
   it('retries continuation finalization after a lost publication callback', async () => {
     const compactionHandler = vi.fn().mockRejectedValueOnce(Error('lost callback')).mockResolvedValue({ status: 'completed' });
     const markFailedHandler = vi.fn();

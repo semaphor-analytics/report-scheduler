@@ -171,7 +171,7 @@ export async function runLocalChunkedExport(input, options = {}) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await handlers.markFailedHandler({
+    await markFailedWithRetry(handlers.markFailedHandler, {
       jobId: request.jobId,
       exportToken: request.exportToken,
       error: {
@@ -180,5 +180,24 @@ export async function runLocalChunkedExport(input, options = {}) {
       },
     });
     throw error;
+  }
+}
+
+/**
+ * Mirrors the MarkExportFailed state (MX-D7): MarkFailed throws when the app
+ * did not record the failure, so it is retried like `Retry` with
+ * `MaxAttempts: 3` (three retries after the first call: four calls, waits of
+ * 2, 4 and 8 seconds) and, if it still fails, the run fails loudly instead of
+ * reporting success.
+ */
+async function markFailedWithRetry(markFailedHandler, input, attempts = 4, delayMs = 2000) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await markFailedHandler(input);
+    } catch (error) {
+      console.error(`[Local Export Runner] Marking job ${input.jobId} failed, attempt ${attempt}/${attempts}:`, error);
+      if (attempt >= attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delayMs * 2 ** (attempt - 1)));
+    }
   }
 }

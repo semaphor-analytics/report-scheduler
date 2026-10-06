@@ -16,7 +16,7 @@
   "devDependencies": {
     "concurrently": "^9.2.1",
     "esbuild": "^0.27.2",
-    "react-semaphor": "0.1.527",
+    "react-semaphor": "0.1.533",
     "yaml": "1.10.3"
   },
   "overrides": {
