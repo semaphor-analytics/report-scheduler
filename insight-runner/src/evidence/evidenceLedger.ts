@@ -442,14 +442,13 @@ function summarizeSourceResult(
         compactObject({
           id: readString(item, ["id"]),
           name: readString(item, ["name"]),
-          sourceDataset: readString(item, ["sourceDataset"]),
-          targetDataset: readString(item, ["targetDataset"]),
+          // `from` is the many side, `to` the key side (domain template 2.1).
+          from: readRelationshipEnd(item.from),
+          to: readRelationshipEnd(item.to),
           cardinality: readString(item, ["cardinality"]),
           defaultJoinType: readString(item, ["defaultJoinType"]),
           confidence: readString(item, ["confidence"]),
           description: readString(item, ["description"]),
-          sourceFields: readStringArray(item.sourceFields),
-          targetFields: readStringArray(item.targetFields),
         }),
       );
 
@@ -500,6 +499,19 @@ function readString(
     }
   }
   return undefined;
+}
+
+function readRelationshipEnd(
+  value: unknown,
+): { dataset?: string; fields?: string[] } | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const end = compactObject({
+    dataset: readString(value, ["dataset"]),
+    fields: readStringArray(value.fields),
+  });
+  return Object.keys(end).length ? end : undefined;
 }
 
 function readStringArray(value: unknown): string[] | undefined {

@@ -155,10 +155,8 @@ describe("EvidenceLedger", () => {
           relationships: [
             {
               id: "rel_1",
-              sourceDataset: "fact_inventory_movement",
-              sourceFields: ["facility_id"],
-              targetDataset: "dim_facility",
-              targetFields: ["facility_id"],
+              from: { dataset: "fact_inventory_movement", fields: ["facility_id"] },
+              to: { dataset: "dim_facility", fields: ["facility_id"] },
               cardinality: "many_to_one",
             },
           ],
@@ -170,10 +168,9 @@ describe("EvidenceLedger", () => {
       sourceSummary: {
         relationships: [
           expect.objectContaining({
-            sourceDataset: "fact_inventory_movement",
-            targetDataset: "dim_facility",
-            sourceFields: ["facility_id"],
-            targetFields: ["facility_id"],
+            from: { dataset: "fact_inventory_movement", fields: ["facility_id"] },
+            to: { dataset: "dim_facility", fields: ["facility_id"] },
+            cardinality: "many_to_one",
           }),
         ],
       },

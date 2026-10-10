@@ -1609,10 +1609,13 @@ function collectRelationshipSemanticDatasetCandidates(
       if (!relationship) {
         continue;
       }
-      const sourceDataset = readString(relationship.sourceDataset);
-      const targetDataset = readString(relationship.targetDataset);
-      const sourceFields = readStringArray(relationship.sourceFields);
-      const targetFields = readStringArray(relationship.targetFields);
+      // `from` is the many side, `to` the key side (domain template 2.1).
+      const from = asRecord(relationship.from);
+      const to = asRecord(relationship.to);
+      const fromDataset = readString(from?.dataset);
+      const toDataset = readString(to?.dataset);
+      const fromFields = readStringArray(from?.fields);
+      const toFields = readStringArray(to?.fields);
       const description = readString(relationship.description);
       const relationshipMetadata = {
         relationshipId: readString(relationship.id),
@@ -1623,31 +1626,31 @@ function collectRelationshipSemanticDatasetCandidates(
       };
 
       if (
-        sourceDataset &&
-        targetDataset &&
-        baseNames.some((name) => sameEntityName(name, sourceDataset))
+        fromDataset &&
+        toDataset &&
+        baseNames.some((name) => sameEntityName(name, fromDataset))
       ) {
         candidates.push({
           semanticDomainId: domainId,
-          datasetName: targetDataset,
-          tableName: tableNameFromSemanticDatasetName(targetDataset),
+          datasetName: toDataset,
+          tableName: tableNameFromSemanticDatasetName(toDataset),
           description,
-          fields: [...sourceFields, ...targetFields],
+          fields: [...fromFields, ...toFields],
           ...relationshipMetadata,
         });
       }
 
       if (
-        sourceDataset &&
-        targetDataset &&
-        baseNames.some((name) => sameEntityName(name, targetDataset))
+        fromDataset &&
+        toDataset &&
+        baseNames.some((name) => sameEntityName(name, toDataset))
       ) {
         candidates.push({
           semanticDomainId: domainId,
-          datasetName: sourceDataset,
-          tableName: tableNameFromSemanticDatasetName(sourceDataset),
+          datasetName: fromDataset,
+          tableName: tableNameFromSemanticDatasetName(fromDataset),
           description,
-          fields: [...sourceFields, ...targetFields],
+          fields: [...fromFields, ...toFields],
           ...relationshipMetadata,
         });
       }
