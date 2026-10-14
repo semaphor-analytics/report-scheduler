@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  DELIVERY_READY_BUDGET_MS,
+  assertReadyForDelivery,
+  deliveryReadyDeadline,
+  readyWaitTimeoutMs,
   throwIfDeliveryBlockingRenderError,
   waitForDashboardReady,
 } from '../lib/content-stability.js';
@@ -42,5 +46,64 @@ describe('waitForDashboardReady delivery errors', () => {
       message:
         'missing_temporal_bucket_metadata: Refresh and resave the report.',
     });
+  });
+});
+
+// Report attachment delivery RA-D11 (Phase 3, ledger P3-06).
+describe('assertReadyForDelivery', () => {
+  it('refuses a card attachment that never became ready', async () => {
+    const page = { evaluate: vi.fn().mockResolvedValue(null) };
+    await expect(
+      assertReadyForDelivery(page, { ready: false, deliveryStrict: true, deliveryAttachment: 'card' }),
+    ).rejects.toMatchObject({
+      code: 'RENDER_NOT_READY',
+      deliveryBlocking: true,
+      message: 'The page did not finish loading in time.',
+    });
+  });
+
+  it.each(['dashboard', 'dashboard_sheet', undefined])(
+    'prints a %s attachment as it is, so one stuck card never costs the dashboard',
+    async (deliveryAttachment) => {
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const page = { evaluate: vi.fn().mockResolvedValue(null) };
+      await expect(
+        assertReadyForDelivery(page, { ready: false, deliveryStrict: true, deliveryAttachment }),
+      ).resolves.toBeUndefined();
+    },
+  );
+
+  it.each(['card', 'dashboard'])('names the marker a %s page set, whatever the attachment', async (deliveryAttachment) => {
+    const page = {
+      evaluate: vi.fn().mockResolvedValue({ code: 'CARD_QUERY_FAILED', message: 'The card query failed.' }),
+    };
+    await expect(
+      assertReadyForDelivery(page, { ready: false, deliveryStrict: true, deliveryAttachment }),
+    ).rejects.toMatchObject({ code: 'CARD_QUERY_FAILED', deliveryBlocking: true });
+  });
+
+  it.each([
+    ['a ready delivery render', { ready: true, deliveryStrict: true, deliveryAttachment: 'card' }],
+    ['a render that is not strict, as today', { ready: false, deliveryStrict: undefined, deliveryAttachment: 'card' }],
+  ])('lets %s through without reading the page', async (_label, input) => {
+    const page = { evaluate: vi.fn() };
+    await expect(assertReadyForDelivery(page, input)).resolves.toBeUndefined();
+    expect(page.evaluate).not.toHaveBeenCalled();
+  });
+});
+
+describe('the delivery ready deadline', () => {
+  it('gives a delivery render one budget from its start, and other renders none', () => {
+    expect(deliveryReadyDeadline({ deliveryStrict: true }, 1_000)).toBe(1_000 + DELIVERY_READY_BUDGET_MS);
+    expect(deliveryReadyDeadline({}, 1_000)).toBeUndefined();
+    expect(DELIVERY_READY_BUDGET_MS).toBe(120_000);
+  });
+
+  it("waits what is left of the deadline, never less than today's wait", () => {
+    expect(readyWaitTimeoutMs(15_000, undefined, 0)).toBe(15_000);
+    expect(readyWaitTimeoutMs(15_000, 120_000, 0)).toBe(120_000);
+    expect(readyWaitTimeoutMs(15_000, 120_000, 100_000)).toBe(20_000);
+    expect(readyWaitTimeoutMs(15_000, 120_000, 110_000)).toBe(15_000);
+    expect(readyWaitTimeoutMs(15_000, 120_000, 500_000)).toBe(15_000);
   });
 });

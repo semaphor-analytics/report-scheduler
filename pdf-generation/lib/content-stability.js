@@ -580,6 +580,53 @@ export function applyRecheckResult(result, { timeoutMs = RECHECK_TIMEOUT_MS } = 
 }
 
 /**
+ * How long a delivery render (`deliveryStrict`, a scheduled report) waits for
+ * the page to become ready, counted from the start of the whole render and
+ * shared by every sheet of a dashboard. Ready means every card's query has
+ * settled, so this is mostly warehouse time: a slow but healthy query must
+ * fit. It stays well under the app's 4-minute attachment render timeout
+ * (`ATTACHMENT_RENDER_TIMEOUT_MS`), leaving room to extract rows, print and
+ * upload (report attachment delivery RA-D11, ledger P3-06).
+ */
+export const DELIVERY_READY_BUDGET_MS = 120_000;
+
+/** The render's ready deadline: set for delivery renders only. */
+export function deliveryReadyDeadline(options, startedAt = Date.now()) {
+  return options?.deliveryStrict ? startedAt + DELIVERY_READY_BUDGET_MS : undefined;
+}
+
+/**
+ * How long one ready wait may take: `baseMs` (today's wait) without a
+ * deadline; with one, whatever is left of it, never less than `baseMs`.
+ */
+export function readyWaitTimeoutMs(baseMs, deadline, now = Date.now()) {
+  return deadline === undefined ? baseMs : Math.max(baseMs, deadline - now);
+}
+
+/**
+ * What a delivery render does with a page that didn't become ready by its
+ * deadline (report attachment delivery RA-D11). A marker the page set always
+ * says why. A card attachment, which is the card alone, is refused as
+ * RENDER_NOT_READY; a dashboard or sheet prints as it is, as before, so one
+ * stuck card never costs the rest of the dashboard (ledger P3-06). Ready, or
+ * not a delivery render: nothing to do, and the page is not read.
+ * @param {Page} page - Puppeteer page instance
+ * @param {{ ready: boolean, deliveryStrict?: boolean, deliveryAttachment?: string }} input
+ */
+export async function assertReadyForDelivery(page, { ready, deliveryStrict, deliveryAttachment }) {
+  if (ready || !deliveryStrict) return;
+  await throwIfDeliveryBlockingRenderError(page);
+  if (deliveryAttachment !== 'card') {
+    console.log('Delivery render not ready by its deadline - printing the dashboard as it is');
+    return;
+  }
+  throw createDeliveryBlockingRenderError(
+    'RENDER_NOT_READY',
+    'The page did not finish loading in time.'
+  );
+}
+
+/**
  * Fail closed when the rendered page has exposed a typed delivery error.
  * Call this at the final artifact boundary as well as during readiness waits,
  * because dashboard rendering may fail after the bounded ready timeout.

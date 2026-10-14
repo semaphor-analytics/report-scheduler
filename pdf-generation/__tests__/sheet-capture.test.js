@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   waitForDashboardReady: vi.fn(async () => true),
   hideReadyIndicator: vi.fn(async () => {}),
   throwIfDeliveryBlockingRenderError: vi.fn(async () => {}),
+  assertReadyForDelivery: vi.fn(async () => {}),
   recheckReadyBeforeCapture: vi.fn(async () => ({ ready: true, waitedMs: 300 })),
   loadAllContent: vi.fn(async () => ({ finalHeight: 2000 })),
   applyPrintState: vi.fn(async () => ({ applied: 0, errors: [], settled: true })),
@@ -34,6 +35,9 @@ vi.mock('../lib/content-stability.js', async (importOriginal) => ({
   waitForDashboardReady: mocks.waitForDashboardReady,
   hideReadyIndicator: mocks.hideReadyIndicator,
   throwIfDeliveryBlockingRenderError: mocks.throwIfDeliveryBlockingRenderError,
+  // The rule itself is tested in content-stability-render-error.test.js.
+  assertReadyForDelivery: mocks.assertReadyForDelivery,
+  readyWaitTimeoutMs: (await importOriginal()).readyWaitTimeoutMs,
   recheckReadyBeforeCapture: mocks.recheckReadyBeforeCapture,
   // The real caller rule, so its outcomes are exercised through the capture.
   applyRecheckResult: (await importOriginal()).applyRecheckResult,
@@ -306,6 +310,40 @@ describe('captureSheetPdf', () => {
     expect(failure.code).toBe('print_inputs_not_captured');
     expect(failure.deliveryBlocking).toBe(true);
     expect(pages[0].close).toHaveBeenCalled();
+  });
+
+  it('stops a sheet whose readiness rule refuses it, before capturing (RA-D11)', async () => {
+    const { browser, pages } = createBrowser();
+    mocks.waitForDashboardReady.mockResolvedValueOnce(false);
+    mocks.assertReadyForDelivery.mockRejectedValueOnce(
+      Object.assign(new Error('The page did not finish loading in time.'), {
+        code: 'RENDER_NOT_READY',
+        deliveryBlocking: true,
+      }),
+    );
+
+    const failure = await captureSheetPdf(browser, {
+      sheet: dashboardSheet,
+      index: 0,
+      total: 2,
+      viewUrl: VIEW_URL,
+      options: { deliveryStrict: true, deliveryAttachment: 'dashboard', deliveryReadyDeadline: Date.now() + 60_000 },
+    }).catch((error) => error);
+
+    // The sheet waits what is left of the render's deadline, not a fixed 15 s.
+    const wait = mocks.waitForDashboardReady.mock.calls[0][1];
+    expect(wait).toBeGreaterThan(50_000);
+    expect(wait).toBeLessThanOrEqual(60_000);
+    expect(mocks.assertReadyForDelivery).toHaveBeenCalledWith(pages[0], {
+      ready: false,
+      deliveryStrict: true,
+      deliveryAttachment: 'dashboard',
+    });
+    expect(failure).toBeInstanceOf(SheetCaptureError);
+    expect(failure.phase).toBe('ready');
+    expect(failure.code).toBe('RENDER_NOT_READY');
+    expect(failure.deliveryBlocking).toBe(true);
+    expect(pages[0].pdf).not.toHaveBeenCalled();
   });
 
   it('names the sheet when the browser cannot create a page', async () => {

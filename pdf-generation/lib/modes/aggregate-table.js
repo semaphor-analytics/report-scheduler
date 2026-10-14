@@ -1,5 +1,6 @@
 // Aggregate table mode - pre-paginated approach for aggregate tables with subtotals
 
+import { assertTableRowCeiling } from '../table-row-ceiling.js';
 import { extractAggregateTableData, paginateAggregateTable } from './aggregate-table-paginator.js';
 import { normalizePageSize } from '../page-size-utils.js';
 import { buildWideTableLayout } from './wide-table-layout.js';
@@ -51,6 +52,7 @@ export async function preparePage(page, options = {}) {
   }
 
   console.log(`Extracted aggregate table: ${tableData.rows.length} rows, ${tableData.metadata.groupByCount} group-by columns`);
+  assertTableRowCeiling(tableData.rows.length, { mode: 'aggregate', deliveryStrict: options.deliveryStrict });
 
   // Paginate the data
   const pageSize = options.pageSize || 'Letter';

@@ -2,6 +2,7 @@
 // This mode is designed for tables that need to be split across multiple pages
 // Note: For pivot tables, this delegates to pivot-table.js for specialized handling
 
+import { assertTableRowCeiling } from '../table-row-ceiling.js';
 import { normalizePageSize } from '../page-size-utils.js';
 
 export function getPdfOptions(dimensions, pageSize = 'A4', options = {}) {
@@ -117,6 +118,12 @@ export async function preparePage(page, options = {}) {
       return await specializedMode.preparePage(page, options);
     }
   }
+
+  // A generic table's body rows, refused above the limit on a strict render only.
+  const rowCount = await page.evaluate(
+    () => document.querySelectorAll('table tbody tr').length,
+  );
+  assertTableRowCeiling(rowCount, { mode: 'table', deliveryStrict: options.deliveryStrict });
   
   // Clean up the page to prevent empty first page and remove unnecessary elements
   await page.evaluate(() => {

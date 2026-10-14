@@ -1,5 +1,6 @@
 // Data table mode - pre-paginated approach for simple data tables
 
+import { assertTableRowCeiling } from '../table-row-ceiling.js';
 import { extractDataTableData, paginateDataTable } from './data-table-paginator.js';
 import { normalizePageSize } from '../page-size-utils.js';
 import { buildWideTableLayout } from './wide-table-layout.js';
@@ -58,15 +59,8 @@ export async function preparePage(page, options = {}) {
   const rowCount = tableData.rows.length;
   console.log(`Extracted data table: ${rowCount} rows`);
 
-  // Check for excessively large tables that will cause OOM
-  const MAX_ROWS_FOR_PDF = 5000;
-  if (rowCount > MAX_ROWS_FOR_PDF) {
-    throw new Error(
-      `Table too large for PDF export (${rowCount.toLocaleString()} rows). ` +
-      `Maximum supported: ${MAX_ROWS_FOR_PDF.toLocaleString()} rows. ` +
-      `Please use CSV export for large datasets.`
-    );
-  }
+  // Refuse a table too large for a PDF (shared limit, every request).
+  assertTableRowCeiling(rowCount, { mode: 'data', deliveryStrict: options.deliveryStrict });
 
   // Paginate the data
   const pageSize = options.pageSize || 'Letter';

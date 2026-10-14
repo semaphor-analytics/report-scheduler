@@ -109,4 +109,9 @@ describe('local-function-url GET reportParams', () => {
     expect(options.reportParams).toEqual({});
     expect(options.documentSheetId).toBeUndefined();
   });
+
+  it('passes the delivery flags a Briefing render sends, as the Lambda does', async () => {
+    const { options } = await get({ deliveryStrict: 'true', deliveryAttachment: 'card' });
+    expect(options).toMatchObject({ deliveryStrict: true, deliveryAttachment: 'card' });
+  });
 });

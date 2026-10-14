@@ -11,6 +11,9 @@ import * as aggregateTableMode from './modes/aggregate-table.js';
 import * as documentMode from './modes/document.js';
 import { encryptPdfBuffer } from '../pdf-encrypt.js';
 import {
+  assertReadyForDelivery,
+  deliveryReadyDeadline,
+  readyWaitTimeoutMs,
   hideReadyIndicator,
   throwIfDeliveryBlockingRenderError,
   recheckReadyBeforeCapture,
@@ -65,7 +68,11 @@ export async function generatePdf(url, options = {}) {
       console.log(
         'All sheets mode detected - will generate PDFs for all dashboard sheets'
       );
-      return await generateAllSheetsPdf(url, options);
+      // One ready deadline for the whole dashboard, shared by its sheets.
+      return await generateAllSheetsPdf(url, {
+        ...options,
+        deliveryReadyDeadline: deliveryReadyDeadline(options, timings.start),
+      });
     }
 
     // 1. Launch browser
@@ -98,10 +105,18 @@ export async function generatePdf(url, options = {}) {
       timings.readyWaitDone = timings.readyWaitStart;
     } else {
       timings.readyWaitStart = Date.now();
-      const isDashboardPage = await waitForDashboardReady(page, 15000);
+      const isDashboardPage = await waitForDashboardReady(
+        page,
+        readyWaitTimeoutMs(15000, deliveryReadyDeadline(options, timings.start))
+      );
       readyTimedOut = !isDashboardPage;
       timings.readyWaitDone = Date.now();
       console.log(`⏱️  Dashboard ready wait: ${timings.readyWaitDone - timings.readyWaitStart}ms (ready: ${isDashboardPage})`);
+      await assertReadyForDelivery(page, {
+        ready: isDashboardPage,
+        deliveryStrict: options.deliveryStrict,
+        deliveryAttachment: options.deliveryAttachment,
+      });
       if (isDashboardPage) {
         console.log('Dashboard ready indicator detected');
         await hideReadyIndicator(page);
@@ -222,6 +237,11 @@ export async function generatePdf(url, options = {}) {
     }
 
     timings.preparePageStart = Date.now();
+    // Table modes replace the page HTML, which erases any delivery marker; a
+    // strict render reads them first, whatever the ready wait returned (RA-D19).
+    if (options.deliveryStrict) {
+      await throwIfDeliveryBlockingRenderError(page);
+    }
     await mode.preparePage(page, options);
     const pdfOptions = mode.getPdfOptions(
       dimensions,

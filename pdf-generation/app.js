@@ -561,6 +561,12 @@ export const handler = async (event) => {
     const options = {
       isLambda: true,
       tableMode: tableMode,
+      // A Briefing render (report attachment delivery RA-D11): markers are
+      // checked before the page is replaced, and the table ceilings apply.
+      deliveryStrict: event?.queryStringParameters?.deliveryStrict === 'true',
+      // Which kind of attachment a delivery render is: a card is refused when
+      // it never becomes ready, a dashboard prints as it is (RA-D11).
+      deliveryAttachment: event?.queryStringParameters?.deliveryAttachment || undefined,
       pdfMode: pdfMode,
       documentSheetId:
         event?.queryStringParameters?.documentSheetId ||

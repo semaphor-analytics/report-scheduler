@@ -1,6 +1,7 @@
 // Pivot table mode - simplified pre-pagination approach
 // This mode extracts table data and generates pre-paginated HTML for reliable PDF generation
 
+import { assertTableRowCeiling } from '../table-row-ceiling.js';
 import { extractPivotTableData, paginateTableData } from './pivot-table-paginator.js';
 import { normalizePageSize } from '../page-size-utils.js';
 import { buildWideTableLayout } from './wide-table-layout.js';
@@ -53,6 +54,7 @@ export async function preparePage(page, options = {}) {
   }
 
   console.log(`Extracted table data: ${tableData.rows.length} rows, ${tableData.headers.length} header rows`);
+  assertTableRowCeiling(tableData.rows.length, { mode: 'pivot', deliveryStrict: options.deliveryStrict });
 
   // Paginate the data using dynamic height calculation
   const pageSize = options.pageSize || 'Letter';

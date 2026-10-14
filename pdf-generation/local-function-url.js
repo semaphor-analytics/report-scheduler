@@ -6,6 +6,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { createGunzip } from 'zlib';
 import { fileURLToPath } from 'url';
 import { generatePdf } from './lib/pdf-generator.js';
+import { deliveryBlockingErrorResponseFields } from './lib/delivery-render-error.js';
 import { generateCsv } from './lib/csv-extractor.js';
 import {
   CSV_CONTENT_TYPE,
@@ -309,6 +310,8 @@ export async function handleGet(req, res, parsedUrl) {
   const pdfBuffer = await generatePdf(targetUrl, {
     isLambda: false,
     tableMode,
+    deliveryStrict: bool(query.get('deliveryStrict')),
+    deliveryAttachment: query.get('deliveryAttachment') || undefined,
     pdfMode,
     documentSheetId:
       query.get('documentSheetId') || reportParams?.documentSheetId || undefined,
@@ -505,6 +508,8 @@ const server = http.createServer(async (req, res) => {
     console.error('local-function-url error', error);
     sendJson(res, 500, {
       error: error instanceof Error ? error.message : 'Internal server error',
+      // Mirror the Lambda handler: a delivery-blocking failure carries its code.
+      ...deliveryBlockingErrorResponseFields(error),
     });
   }
 });

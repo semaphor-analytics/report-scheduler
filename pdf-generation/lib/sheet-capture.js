@@ -5,6 +5,8 @@ import * as tableMode from './modes/table.js';
 import * as documentMode from './modes/document.js';
 import {
   applyRecheckResult,
+  assertReadyForDelivery,
+  readyWaitTimeoutMs,
   hideReadyIndicator,
   recheckReadyBeforeCapture,
   throwIfDeliveryBlockingRenderError,
@@ -154,8 +156,16 @@ export async function captureSheetPdf(
     if (isDocument) {
       await documentMode.waitForDocumentReady(page, DOCUMENT_READY_TIMEOUT_MS);
     } else {
-      const isReady = await waitForDashboardReady(page, DASHBOARD_READY_TIMEOUT_MS);
+      const isReady = await waitForDashboardReady(
+        page,
+        readyWaitTimeoutMs(DASHBOARD_READY_TIMEOUT_MS, options.deliveryReadyDeadline),
+      );
       timing.readyTimedOut = !isReady;
+      await assertReadyForDelivery(page, {
+        ready: isReady,
+        deliveryStrict: options.deliveryStrict,
+        deliveryAttachment: options.deliveryAttachment,
+      });
       if (isReady) {
         await hideReadyIndicator(page);
       }

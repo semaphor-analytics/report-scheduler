@@ -40,6 +40,9 @@ vi.mock('../lib/content-stability.js', async (importOriginal) => ({
   waitForDashboardReady: vi.fn(async () => true),
   hideReadyIndicator: vi.fn(async () => {}),
   throwIfDeliveryBlockingRenderError: mocks.throwIfDeliveryBlockingRenderError,
+  assertReadyForDelivery: (await importOriginal()).assertReadyForDelivery,
+  deliveryReadyDeadline: (await importOriginal()).deliveryReadyDeadline,
+  readyWaitTimeoutMs: (await importOriginal()).readyWaitTimeoutMs,
   recheckReadyBeforeCapture: mocks.recheckReadyBeforeCapture,
   applyRecheckResult: (await importOriginal()).applyRecheckResult,
 }));
