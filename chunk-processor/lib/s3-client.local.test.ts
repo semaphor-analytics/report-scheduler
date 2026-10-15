@@ -28,12 +28,24 @@ describe('chunk storage local adapter', () => {
       jobId: 'job-1',
       chunkNumber: 1,
       content: 'id,name\n1,Ada\n',
+      format: 'csv',
     });
 
     expect(key).toBe('exports/job-1/deltas/001.csv');
     await expect(readFile(path.join(storageDir, key), 'utf8')).resolves.toBe(
       'id,name\n1,Ada\n',
     );
+  });
+
+  // Phase 3: an Excel chunk is sheet rows (XML), plus its sheet layout and columns sidecar.
+  it('writes Excel chunk parts, the sheet layout and the columns sidecar under their keys', async () => {
+    const { uploadChunk, uploadXlsxSheet, uploadXlsxColumns, fetchXlsxColumns } = await import('./s3-client');
+    const part = await uploadChunk({ jobId: 'job-1', chunkNumber: 12, content: '<row/>', format: 'xlsx' });
+    expect(part).toBe('exports/job-1/deltas/012.xml');
+    await expect(uploadXlsxSheet({ jobId: 'job-1', sheet: '{}' })).resolves.toBe('exports/job-1/sheet.json');
+    await expect(uploadXlsxColumns({ jobId: 'job-1', chunkNumber: 12, columns: '{"columns":[],"pending":[]}' }))
+      .resolves.toBe('exports/job-1/deltas/012.xlsx-columns.json');
+    await expect(fetchXlsxColumns({ jobId: 'job-1', chunkNumber: 12 })).resolves.toBe('{"columns":[],"pending":[]}');
   });
   it('closes immutable attempt files and never overwrites an existing attempt', async () => {
     const { uploadExportAttempt } = await import('./s3-client');

@@ -14,6 +14,7 @@ jest.unstable_mockModule('./lib/compactor', () => ({
   compactChunks: jest.fn(),
 }));
 jest.unstable_mockModule('./lib/s3-client', () => ({
+  fetchObjectText: jest.fn(),
   fetchRawTemporalClassificationByKey: jest.fn(),
 }));
 
@@ -66,6 +67,12 @@ const declaredSqlFormatting = {
       },
     ],
   },
+  timezone: 'UTC',
+  delimiter: ',',
+  csvEncoding: 'utf-8',
+  includeHeaders: true,
+  useFormattedValues: true,
+  visibleColumns: ['occurred_at'],
 };
 
 function createRawTemporalChunk(
@@ -110,6 +117,7 @@ describe('compaction handler table totals', () => {
     jest.mocked(compactChunks).mockResolvedValue({
       finalKey: 'exports/job-1/final/export.csv.gz',
       totalBytes: 100,
+      artifactBytes: 40,
     });
     jest
       .mocked(fetchRawTemporalClassificationByKey)
@@ -173,7 +181,9 @@ describe('compaction handler table totals', () => {
             },
           ],
         },
+        timezone: 'UTC',
         delimiter: ',',
+        csvEncoding: 'utf-8',
         useFormattedValues: true,
         includeHeaders: true,
         visibleColumns: ['revenue'],
@@ -199,7 +209,7 @@ describe('compaction handler table totals', () => {
     expect(compactChunks).toHaveBeenCalledWith({
       jobId: 'job-1',
       chunkKeys: ['001.csv', '002.csv'],
-      footer: '$30.00\r\n',
+      output: { format: 'csv', footer: '$30.00\r\n' },
     });
     expect(completeJob).toHaveBeenCalledWith(
       expect.objectContaining({ totalRows: 30 }),

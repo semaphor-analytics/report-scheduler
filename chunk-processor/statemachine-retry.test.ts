@@ -75,4 +75,29 @@ describe('export state machine retry policy', () => {
       },
     ]);
   });
+
+  // XL-D37: the app dispatches the file format inside `formatting`; the state
+  // machine hands that object unchanged to every chunk and to compaction.
+  it('carries the dispatched formatting, file format included, to every chunk and to compaction', () => {
+    const { States: states } = JSON.parse(readFileSync(stateMachinePath, 'utf8'));
+    const formatting = { fileFormat: 'xlsx', title: 'Orders', delimiter: ',' };
+    const dispatched = {
+      jobId: 'job-1', exportToken: 'token', cardConfig: { cardType: 'table' }, tableTotalsRequest: null, formatting,
+      chunks: [1, 2].map((chunkNumber) => ({ chunkId: `chunk-${chunkNumber}`, chunkNumber, chunkSize: 10, isFirstChunk: chunkNumber === 1, tableTotalsRequest: null })),
+    };
+    const path = (expression: string, item: Record<string, unknown>) =>
+      expression.startsWith('$$.Map.Item.Value.')
+        ? item[expression.slice('$$.Map.Item.Value.'.length)]
+        : (dispatched as Record<string, unknown>)[expression.slice(2)];
+    const chunkInputs = dispatched.chunks.map((item) => Object.fromEntries(
+      Object.entries(states.ProcessChunks.Parameters as Record<string, string>)
+        .map(([key, expression]) => [key.replace(/\.\$$/, ''), path(expression, item)]),
+    ));
+    expect(chunkInputs.map((input) => input.formatting)).toEqual([formatting, formatting]);
+    // Compaction receives the whole state: the dispatch plus the chunk results.
+    expect(states.ProcessChunks.ResultPath).toBe('$.chunkResults');
+    expect(states.ProcessChunks.Next).toBe('CompactAndNotify');
+    expect(states.CompactAndNotify.Parameters).toBeUndefined();
+    expect(states.CompactAndNotify.InputPath).toBeUndefined();
+  });
 });

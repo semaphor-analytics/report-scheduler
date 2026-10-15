@@ -27,8 +27,8 @@ const columnKeyMap = {
   version: 1 as const,
   source: 'explorer' as const,
   byRole: {
-    pivotby: { month: { role: 'pivotby', rawKey: 'month' } },
-    metric: { revenue: { role: 'metric', rawKey: 'revenue_sum' } },
+    pivotby: { month: { role: 'pivotby' as const, rawKey: 'month' } },
+    metric: { revenue: { role: 'metric' as const, rawKey: 'revenue_sum' } },
   },
 };
 

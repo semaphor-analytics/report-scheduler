@@ -1,9 +1,9 @@
 /**
  * Compaction Processor Lambda Handler
  *
- * Combines all chunk CSV files into a single gzipped file:
+ * Combines all chunk files into one export file:
  * 1. Update job status to 'compacting'
- * 2. Stream-merge all chunk files with gzip compression
+ * 2. Stream-merge all chunk files: CSV gzipped, Excel as one workbook
  * 3. Upload final file to S3
  * 4. Call job complete endpoint (creates notification)
  * 5. Clean up delta files
@@ -11,51 +11,58 @@
 
 import type { CompactionInput, CompactionResult, ChunkResult, MatrixCompactionInput } from './types';
 import { compactMatrixExport } from './lib/matrix-compaction';
-import { updateJobStatus, completeJob } from './lib/api-client';
-import { compactChunks, cleanupChunks } from './lib/compactor';
-import { resolveCompactionFooter } from './lib/footer';
-import { fetchRawTemporalClassificationByKey } from './lib/s3-client';
+import { updateJobStatus, completeJob, ExportQueryRejectedError } from './lib/api-client';
+import { compactChunks, cleanupChunks, type CompactionOutput } from './lib/compactor';
+import { resolveCompactionFooter, resolveCompactionTotals } from './lib/footer';
+import { fetchObjectText, fetchRawTemporalClassificationByKey } from './lib/s3-client';
 import {
   assertRawTemporalChunkClassificationAgreement,
-  parsePresentationExecutionSnapshot,
-  parsePresentationScope,
+  isXlsxLimitError,
   parseRawTemporalChunkClassificationEvidence,
+  parseTableExportFormatting,
+  parseTableExportSheetColumns,
+  parseXlsxSheet,
+  tableExportJobSheet,
+  requiresRawTemporalSqlChunkEvidence,
+  xlsxColumnsFingerprint,
+  xlsxLimitFailureReason,
   type RawTemporalChunkClassificationEvidence,
+  type TableExportFormatting,
+  type XlsxSheet,
 } from 'react-semaphor/format-utils';
 
 const SEMAPHOR_APP_URL =
   process.env.SEMAPHOR_APP_URL || 'https://semaphor.cloud';
 const LAMBDA_API_KEY = process.env.LAMBDA_API_KEY || '';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function requiresRawTemporalEvidence(event: CompactionInput): boolean {
-  const formatting = event.formatting;
-  if (
-    !isRecord(formatting) ||
-    formatting.useFormattedValues === false ||
-    event.cardConfig.resultOwner !== 'freeform' ||
-    typeof event.cardConfig.sql !== 'string' ||
-    !event.cardConfig.sql.trim() ||
-    (typeof event.cardConfig.python === 'string' &&
-      event.cardConfig.python.trim())
-  ) {
-    return false;
+/**
+ * Excel only (XL-D37): each chunk's returned fingerprint matches the columns
+ * it stored, and the job's sheet is the first chunk's with each column's type
+ * settled across the chunks (`tableExportJobSheet`; a chunk whose values could
+ * not type a column is no evidence). Chunks that disagree fail the job.
+ */
+async function verifiedXlsxSheet(
+  chunks: Array<ChunkResult & { s3Key: string }>,
+): Promise<{ sheet: XlsxSheet; sheetKey: string }> {
+  const withSheet = chunks.filter((result) => result.xlsxSheetKey !== undefined);
+  const sheetKey = withSheet[0]?.xlsxSheetKey;
+  if (withSheet.length !== 1 || withSheet[0] !== chunks[0] || typeof sheetKey !== 'string' || !sheetKey.trim()) {
+    throw new Error('Exactly the first chunk must return the Excel sheet layout.');
   }
-  const snapshot = parsePresentationExecutionSnapshot(
-    formatting.presentationExecutionSnapshot,
+  const chunkColumns = await Promise.all(
+    chunks.map(async (result) => {
+      if (typeof result.xlsxColumnsFingerprint !== 'string' || typeof result.xlsxColumnsKey !== 'string' || !result.xlsxColumnsKey.trim()) {
+        throw new Error(`Chunk ${result.chunkId} returned no Excel column fingerprint.`);
+      }
+      const stored = parseTableExportSheetColumns(await fetchObjectText(result.xlsxColumnsKey));
+      if (xlsxColumnsFingerprint(stored.columns) !== result.xlsxColumnsFingerprint) {
+        throw new Error(`Chunk ${result.chunkId} Excel column fingerprint does not match its durable sidecar.`);
+      }
+      return stored;
+    }),
   );
-  const scope = parsePresentationScope(formatting.scope);
-  return snapshot.resolvedFormats.some(
-    (entry) =>
-      entry.format.type === 'raw_temporal' &&
-      entry.target.kind === 'column' &&
-      entry.scope.dashboardId === scope.dashboardId &&
-      entry.scope.cardId === scope.cardId &&
-      entry.scope.attachmentIndex === scope.attachmentIndex,
-  );
+  const sheet = tableExportJobSheet(parseXlsxSheet(await fetchObjectText(sheetKey)), chunkColumns);
+  return { sheet, sheetKey };
 }
 
 function validateChunkResults(chunkResults: ChunkResult[]) {
@@ -178,7 +185,12 @@ export async function handler(
     const chunksWithRawTemporalEvidenceKeys = successfulChunks.filter(
       (result) => result.rawTemporalClassificationKey !== undefined,
     );
-    const rawTemporalEvidenceRequired = requiresRawTemporalEvidence(event);
+    const formatting: TableExportFormatting = parseTableExportFormatting(event.formatting);
+    const fileFormat = formatting.fileFormat ?? 'csv';
+    const rawTemporalEvidenceRequired = requiresRawTemporalSqlChunkEvidence({
+      formatting,
+      queryPayload: event.cardConfig,
+    });
     if (rawTemporalEvidenceRequired) {
       if (chunksWithRawTemporalEvidence.length !== successfulChunks.length) {
         throw new Error(
@@ -242,23 +254,60 @@ export async function handler(
       (sum, result) => sum + result.rowsProcessed,
       0,
     );
-    const footer = resolveCompactionFooter({
+    const xlsxColumnsKeys = successfulChunks.flatMap((result) =>
+      typeof result.xlsxColumnsKey === 'string' ? [result.xlsxColumnsKey] : [],
+    );
+    const totalsInput = {
       tableTotalsRequest: event.tableTotalsRequest,
       chunkResults,
       formatting: event.formatting,
       totalRows,
-    });
+    };
+    const xlsxSheetKeys: string[] = [];
+    let output: CompactionOutput;
+    if (fileFormat === 'xlsx') {
+      const { sheet, sheetKey } = await verifiedXlsxSheet(successfulChunks);
+      xlsxSheetKeys.push(sheetKey);
+      const totals = resolveCompactionTotals(totalsInput);
+      output = {
+        format: 'xlsx',
+        sheet,
+        // Rows the chunks wrote (after any cleanup step), plus the totals row;
+        // never the source count.
+        rowCount: totalRows + (totals ? 1 : 0),
+        ...(totals ? { totals: { role: 'total' as const, cells: totals } } : {}),
+      };
+    } else {
+      if (
+        xlsxColumnsKeys.length > 0 ||
+        successfulChunks.some((result) => result.xlsxColumnsFingerprint !== undefined || result.xlsxSheetKey !== undefined)
+      ) {
+        throw new Error('Unexpected Excel column fingerprint for a CSV export.');
+      }
+      output = { format: 'csv', footer: resolveCompactionFooter(totalsInput) };
+    }
 
     console.log(
       `Compacting ${chunkKeys.length} chunks, ${totalRows} total rows`,
     );
 
-    // 3. Stream-compact all chunks into final gzipped file
-    const { finalKey, totalBytes } = await compactChunks({
-      jobId,
-      chunkKeys,
-      footer,
-    });
+    // 3. Stream-compact all chunks into the final file
+    let compacted;
+    try {
+      compacted = await compactChunks({ jobId, chunkKeys, output });
+    } catch (error) {
+      // An Excel limit (sheet size) fails the job with its catalog reason,
+      // relayed to MarkFailed in the error message (XL-D33).
+      if (isXlsxLimitError(error)) {
+        throw new ExportQueryRejectedError(
+          JSON.stringify({ error: error.message, reason: xlsxLimitFailureReason(error) }),
+        );
+      }
+      throw error;
+    }
+    const { finalKey, totalBytes, artifactBytes } = compacted;
+    // CSV keeps today's uncompressed size; a workbook stores its own size (XL-SI-20).
+    const fileSize = output.format === 'xlsx' ? artifactBytes : totalBytes;
 
     console.log(`Compaction complete: ${finalKey}`);
 
@@ -268,7 +317,7 @@ export async function handler(
       url: SEMAPHOR_APP_URL,
       apiKey: LAMBDA_API_KEY,
       fileKey: finalKey,
-      fileSize: totalBytes,
+      fileSize,
       totalRows,
     });
 
@@ -278,6 +327,8 @@ export async function handler(
         ...chunkKeys,
         ...totalsMetadataKeys,
         ...rawTemporalClassificationKeys,
+        ...xlsxColumnsKeys,
+        ...xlsxSheetKeys,
       ]);
     } catch (cleanupError) {
       console.warn(
@@ -293,7 +344,7 @@ export async function handler(
       status: 'completed',
       finalS3Key: finalKey,
       totalRows,
-      fileSize: totalBytes,
+      fileSize,
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

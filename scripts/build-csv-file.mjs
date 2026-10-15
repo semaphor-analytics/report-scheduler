@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Bundles react-semaphor's CSV file contract (the BOM, quoting and record
-// separators every delivered CSV uses) into
+// separators every delivered CSV uses) and its export file format owner
+// (names, content types and storage of CSV and Excel artifacts) into
 // pdf-generation/lib/generated/csv-file.js (ignored by git). pdf-generation
 // has no react-semaphor dependency, so this is how it shares the contract.
 //
@@ -18,7 +19,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const specifier = 'react-semaphor/format-utils';
 const workspaceEntry = resolve(
   root,
-  '../react-semaphor/src/shared/format-utils/exporters/csv-utils.ts',
+  '../react-semaphor/src/shared/format-utils/exporters/index.ts',
 );
 
 const sourceArg = process.argv.find((arg) => arg.startsWith('--source='));

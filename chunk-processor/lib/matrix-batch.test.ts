@@ -42,6 +42,17 @@ it.each([-1, 0, 1])('checks the full response before uploads at the byte ceiling
     expect(uploadExportAttempt).toHaveBeenCalledTimes(2);
   }
 });
+// Excel exports, Phase 4 (review): Excel rows travel gzipped and may decode past the transfer budget.
+it('decodes a compressed Excel data part larger than the transfer budget and stores it decoded', async () => {
+  const rows = '<row><c s="2"/></row>'.repeat(Math.ceil((MATRIX_EXPORT_TRANSFER_BYTES + 1024) / 21));
+  jest.mocked(global.fetch).mockResolvedValueOnce(response({ ...work, objects: [
+    { key: 'exports/job/attempts/a/data.xml', contentType: 'application/xml', encoding: 'gzip-base64', content: gzipSync(rows).toString('base64') },
+    work.objects[1],
+  ] })).mockResolvedValueOnce(response({ kind: 'committed', sequence: 2, done: false, deadlineAt }));
+  await processMatrixBatch(input);
+  expect(jest.mocked(uploadExportAttempt).mock.calls[0][0]).toEqual({
+    key: 'exports/job/attempts/a/data.xml', content: rows, contentType: 'application/xml' });
+});
 it('decodes bounded layout transport but persists ordinary JSON', async () => {
   const layout = JSON.stringify({ jobId: 'job', layout: { columns: ['wide'] } });
   jest.mocked(global.fetch).mockResolvedValueOnce(response({ ...work, objects: [...work.objects,

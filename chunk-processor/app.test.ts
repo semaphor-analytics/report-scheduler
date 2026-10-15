@@ -19,6 +19,11 @@ jest.unstable_mockModule('./lib/s3-client', () => ({
   getTableTotalsMetadataKey: jest.fn(
     (jobId: string) => `exports/${jobId}/deltas/001.totals.json`,
   ),
+  fetchXlsxColumns: jest.fn(),
+  getXlsxColumnsKey: jest.fn(),
+  getXlsxSheetKey: jest.fn(),
+  uploadXlsxColumns: jest.fn(),
+  uploadXlsxSheet: jest.fn(),
   uploadChunk: jest.fn(),
   uploadExportAttempt: jest.fn(),
   uploadRawTemporalClassification: jest.fn(),

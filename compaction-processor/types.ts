@@ -17,6 +17,11 @@ export interface ChunkResult {
   tableTotalsMetadataKey?: string;
   rawTemporalClassification?: RawTemporalChunkClassificationEvidence;
   rawTemporalClassificationKey?: string;
+  /** Excel only: the chunk's column fingerprint and its durable sidecar (XL-D37). */
+  xlsxColumnsFingerprint?: string;
+  xlsxColumnsKey?: string;
+  /** Excel only, first chunk: the stored sheet layout. */
+  xlsxSheetKey?: string;
 }
 
 export interface CompactionInput {

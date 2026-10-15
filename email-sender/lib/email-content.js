@@ -3,9 +3,17 @@ const {
   stripHeaderLineBreaks,
 } = require('./envelope');
 
-/** Fallback only; the producer's content type wins. Matches CSV_CONTENT_TYPE. */
+/**
+ * Fallback only; the producer's content type wins. CSV and Excel match
+ * react-semaphor `exportFileTraits(format).contentType`.
+ */
+const ATTACHMENT_CONTENT_TYPES = {
+  csv: 'text/csv; charset=utf-8',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+
 function getAttachmentContentType(fileFormat) {
-  return fileFormat === 'csv' ? 'text/csv; charset=utf-8' : 'application/pdf';
+  return ATTACHMENT_CONTENT_TYPES[fileFormat] ?? 'application/pdf';
 }
 
 function getAttachmentFilename(attachmentName, fileFormat) {

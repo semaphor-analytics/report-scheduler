@@ -1,7 +1,8 @@
+import { jest } from '@jest/globals';
 import { Readable, PassThrough } from 'node:stream';
 import { gunzipSync } from 'node:zlib';
 import { compactChunks } from './compactor';
-import { csvFilePreamble, csvRecord, encodeCsvFile } from 'react-semaphor/format-utils';
+import { csvFilePreamble, csvRecord, defineXlsxSheet, encodeCsvFile, isXlsxLimitError } from 'react-semaphor/format-utils';
 
 describe('compactChunks', () => {
   it('destroys a stalled download and awaits upload shutdown on cancellation', async () => {
@@ -11,6 +12,7 @@ describe('compactChunks', () => {
     let started!: () => void;
     const ready = new Promise<void>(resolve => { started = resolve; });
     const outcome = expect(compactChunks({ jobId: 'job', chunkKeys: ['one', 'two'], signal: controller.signal }, {
+      getObjectSize: async () => 0,
       getObjectStream: async (_key, signal) => { expect(signal).toBeDefined(); started(); return source; },
       uploadStream: async (_key, stream, _type, signal) => {
         try { for await (const _chunk of stream) { /* drain */ } }
@@ -31,6 +33,7 @@ describe('compactChunks', () => {
     let started!: () => void;
     const ready = new Promise<void>(resolve => { started = resolve; });
     const outcome = expect(compactChunks({ jobId: 'job', chunkKeys: ['one'], signal: new AbortController().signal }, {
+      getObjectSize: async () => 0,
       getObjectStream: async () => { started(); return source; },
       uploadStream: async () => new Promise((_resolve, reject) => { failUpload = reject; }),
     })).rejects.toThrow('upload failed');
@@ -42,6 +45,7 @@ describe('compactChunks', () => {
   it('preserves DB-selected sequence rather than sorting immutable attempt names', async () => {
     let csv = '';
     await compactChunks({ jobId: 'job', chunkKeys: ['z', 'a'], preserveOrder: true, finalKey: 'attempt/final' }, {
+      getObjectSize: async () => 0,
       getObjectStream: async key => Readable.from([key]),
       uploadStream: async (key, stream) => {
         expect(key).toBe('attempt/final'); const chunks: Buffer[] = [];
@@ -53,6 +57,7 @@ describe('compactChunks', () => {
   });
   it('propagates source failure instead of publishing a successful partial file', async () => {
     await expect(compactChunks({ jobId: 'job', chunkKeys: ['bad'] }, {
+      getObjectSize: async () => 0,
       getObjectStream: async () => { throw Error('source missing'); },
       uploadStream: async (_key, stream) => { for await (const _ of stream) { /* drain */ } return 0; },
     })).rejects.toThrow('source missing');
@@ -66,10 +71,11 @@ describe('compactChunks', () => {
           'exports/job-1/deltas/002.csv',
           'exports/job-1/deltas/001.csv',
         ],
-        footer: 'Total,"$3.00"\n',
+        output: { format: 'csv', footer: 'Total,"$3.00"\n' },
       },
       {
-        getObjectStream: async (key) =>
+        getObjectSize: async () => 0,
+      getObjectStream: async (key) =>
           Readable.from(
             key.endsWith('001.csv')
               ? ['Region,Revenue\nEast,1\n']
@@ -97,9 +103,10 @@ describe('compactChunks', () => {
     const footer = csvRecord(['Total', '3'], ',');
     let uploaded = Buffer.alloc(0);
     const result = await compactChunks(
-      { jobId: 'job-2', chunkKeys: ['002.csv', '001.csv'], footer },
+      { jobId: 'job-2', chunkKeys: ['002.csv', '001.csv'], output: { format: 'csv', footer } },
       {
-        getObjectStream: async (key) => Readable.from([key === '001.csv' ? chunk1 : chunk2]),
+        getObjectSize: async () => 0,
+      getObjectStream: async (key) => Readable.from([key === '001.csv' ? chunk1 : chunk2]),
         uploadStream: async (_key, stream) => {
           const chunks: Buffer[] = [];
           for await (const chunk of stream) chunks.push(Buffer.from(chunk));
@@ -121,5 +128,34 @@ describe('compactChunks', () => {
     expect([...file.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
     expect(file.indexOf(Buffer.from([0xef, 0xbb, 0xbf]), 1)).toBe(-1);
     expect(result.totalBytes).toBe(file.length);
+  });
+
+  // Review finding: a size-limit preflight failure left the started upload's
+  // rejection unobserved, which can end the local runner's process.
+  it('refuses an Excel sheet over the size limit before any upload starts', async () => {
+    const sheet = defineXlsxSheet({ title: 'Orders', columns: [{ key: 'a', label: 'A', cellType: 'text' }], headerRows: [] });
+    const uploadStream = jest.fn(async () => 0);
+    const getObjectStream = jest.fn(async () => Readable.from(['<row/>']));
+    const error = await compactChunks(
+      { jobId: 'job', chunkKeys: ['001.xml'], output: { format: 'xlsx', sheet, rowCount: 1 } },
+      { getObjectSize: async () => 4 * 1024 ** 3, getObjectStream, uploadStream },
+    ).catch((caught: unknown) => caught);
+    expect(isXlsxLimitError(error)).toBe(true);
+    expect(uploadStream).not.toHaveBeenCalled();
+    expect(getObjectStream).not.toHaveBeenCalled();
+  });
+
+  it('observes the upload when a source fails without a signal', async () => {
+    let uploadSettled = false;
+    await expect(compactChunks({ jobId: 'job', chunkKeys: ['bad'] }, {
+      getObjectSize: async () => 0,
+      getObjectStream: async () => { throw Error('source missing'); },
+      uploadStream: async (_key, stream) => {
+        try { for await (const _ of stream) { /* drain */ } return 0; }
+        finally { uploadSettled = true; }
+      },
+    })).rejects.toThrow('source missing');
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(uploadSettled).toBe(true);
   });
 });

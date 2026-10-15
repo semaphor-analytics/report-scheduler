@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const {
   buildEmailBodies,
   createRawEmail,
+  getAttachmentContentType,
+  getAttachmentFilename,
   insertHtmlAfterBodyOpen,
   renderBrandedEmail,
   wrapEmailHtml,
@@ -343,4 +345,13 @@ test('branded plain sample matches the golden fixture shared with the app', () =
   const bodies = buildEmailBodies(brandedPlainSample.input);
   assert.equal(bodies.htmlBody, brandedPlainSample.htmlBody);
   assert.equal(bodies.textBody, brandedPlainSample.textBody);
+});
+
+// Excel exports Phase 5: a Matrix Excel attachment. The producer sends its
+// content type; the fallback and the file name still know Excel.
+test('names and types an Excel attachment when the producer sends no content type', () => {
+  assert.equal(getAttachmentContentType('xlsx'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  assert.equal(getAttachmentContentType('csv'), 'text/csv; charset=utf-8');
+  assert.equal(getAttachmentContentType('pdf'), 'application/pdf');
+  assert.match(getAttachmentFilename('Revenue', 'xlsx'), /^Revenue_.+\.xlsx$/);
 });

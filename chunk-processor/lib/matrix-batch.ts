@@ -1,7 +1,7 @@
 import { uploadExportAttempt } from './s3-client';
 import { ExportQueryRejectedError } from './api-client';
 import { gunzipSync } from 'node:zlib';
-import { matrixBatchInputSchema, parseMatrixBatchResponse, MATRIX_EXPORT_TRANSFER_BYTES, type MatrixBatchInput, type MatrixBatchResult } from 'react-semaphor/format-utils';
+import { matrixBatchInputSchema, parseMatrixBatchResponse, MATRIX_EXPORT_DECODED_PART_BYTES, MATRIX_EXPORT_TRANSFER_BYTES, type MatrixBatchInput, type MatrixBatchResult } from 'react-semaphor/format-utils';
 
 export type { MatrixBatchInput, MatrixBatchResult } from 'react-semaphor/format-utils';
 
@@ -51,8 +51,12 @@ export async function processMatrixBatch(input: MatrixBatchInput): Promise<Matri
       for (const object of result.objects) {
         // Transport-only compression avoids double-escaping a wide JSON layout.
         // Persist the original JSON, and bound decompression before allocation.
+        // A JSON layout decodes within the transfer budget; an Excel data part
+        // (gzipped because its markup is large) within the decoded part budget.
         const content = object.encoding === 'gzip-base64'
-          ? gunzipSync(Buffer.from(object.content, 'base64'), { maxOutputLength: MATRIX_EXPORT_TRANSFER_BYTES }).toString('utf8')
+          ? gunzipSync(Buffer.from(object.content, 'base64'), {
+              maxOutputLength: object.contentType === 'application/json' ? MATRIX_EXPORT_TRANSFER_BYTES : MATRIX_EXPORT_DECODED_PART_BYTES,
+            }).toString('utf8')
           : object.content;
         check();
         await uploadExportAttempt({ key: object.key, content, contentType: object.contentType }, controller.signal);

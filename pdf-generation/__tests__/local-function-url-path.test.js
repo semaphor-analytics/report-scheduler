@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   hasCompletedLocalExport,
   isValidArtifactSignature,
+  localExportFileFormat,
   resolveLocalExportDownloadFilename,
   resolveExportObjectPath,
   resolveOutputFilePath,
@@ -49,9 +50,21 @@ describe('completed local exports', () => {
     try {
       expect(hasCompletedLocalExport('job-1', outputDir)).toBe(true);
       expect(hasCompletedLocalExport('job-2', outputDir)).toBe(false);
+      fs.mkdirSync(path.join(outputDir, 'exports/job-2/final'), { recursive: true });
+      fs.writeFileSync(path.join(outputDir, 'exports/job-2/final/export.xlsx'), 'complete');
+      expect(hasCompletedLocalExport('job-2', outputDir)).toBe(true);
     } finally {
       fs.rmSync(outputDir, { recursive: true, force: true });
     }
+  });
+
+  // Phase 3: a workbook is served as stored, under an Excel name.
+  it('knows an artifact\'s format by its compacted file name', () => {
+    expect(localExportFileFormat('exports/job-1/final/export.xlsx')).toBe('xlsx');
+    expect(localExportFileFormat('exports/job-1/final/export.csv.gz')).toBe('csv');
+    expect(localExportFileFormat('exports/job-1/attempts/a/export.csv.gz')).toBe('csv');
+    expect(resolveLocalExportDownloadFilename('Orders-2026-09-11T19-42-08Z.xlsx', 'xlsx')).toBe('Orders-2026-09-11T19-42-08Z.xlsx');
+    expect(resolveLocalExportDownloadFilename('Orders.csv', 'xlsx')).toBe('export.xlsx');
   });
 });
 

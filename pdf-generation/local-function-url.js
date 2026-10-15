@@ -10,6 +10,8 @@ import { deliveryBlockingErrorResponseFields } from './lib/delivery-render-error
 import { generateCsv } from './lib/csv-extractor.js';
 import {
   CSV_CONTENT_TYPE,
+  EXPORT_FILE_FORMATS,
+  exportFileTraits,
   parseCsvEncoding,
 } from './lib/generated/csv-file.js';
 import { generatePdfFromData } from './lib/pdf-from-data-generator.js';
@@ -152,15 +154,23 @@ export function resolveExportObjectPath(key, outputDir = OUTPUT_DIR) {
   return candidatePath;
 }
 
-export function resolveLocalExportDownloadFilename(value) {
+/** The export file format of a stored artifact, from its compacted file name (CSV when it has none). */
+export function localExportFileFormat(key) {
+  return EXPORT_FILE_FORMATS.find((format) =>
+    String(key || '').endsWith(`/${exportFileTraits(format).compactedFileName}`),
+  ) ?? 'csv';
+}
+
+export function resolveLocalExportDownloadFilename(value, format = 'csv') {
+  const extension = `.${exportFileTraits(format).extension}`;
   const requested = String(value || '').trim();
   if (
     !requested ||
     path.basename(requested) !== requested ||
     requested.replace(/[^a-zA-Z0-9._-]/g, '_') !== requested ||
-    !requested.toLowerCase().endsWith('.csv')
+    !requested.toLowerCase().endsWith(extension)
   ) {
-    return 'export.csv';
+    return `export${extension}`;
   }
   return requested;
 }
@@ -190,8 +200,10 @@ export function isValidArtifactSignature(key, expires, signature) {
 
 function sendExportObject(res, query) {
   const key = query.get('key') || '';
+  const traits = exportFileTraits(localExportFileFormat(key));
   const downloadFilename = resolveLocalExportDownloadFilename(
     query.get('filename'),
+    traits.format,
   );
   if (
     !isValidArtifactSignature(
@@ -213,30 +225,37 @@ function sendExportObject(res, query) {
     return;
   }
   res.writeHead(200, {
-    'Content-Type': CSV_CONTENT_TYPE,
+    'Content-Type': traits.contentType,
     'Content-Disposition': `attachment; filename="${downloadFilename}"`,
     'Access-Control-Allow-Origin': '*',
   });
   const source = fs.createReadStream(filepath);
-  const gunzip = createGunzip();
   const failDownload = (error) => {
     console.error(
-      '[Local Export Runner] Failed to decompress local CSV artifact:',
+      '[Local Export Runner] Failed to read local export artifact:',
       error instanceof Error ? error.message : error,
     );
     res.destroy(error instanceof Error ? error : undefined);
   };
   source.on('error', failDownload);
-  gunzip.on('error', failDownload);
-  source.pipe(gunzip).pipe(res);
+  // A gzipped CSV is served decoded; a workbook is already a zip (XL-D13).
+  if (traits.storedEncoding === 'gzip') {
+    const gunzip = createGunzip();
+    gunzip.on('error', failDownload);
+    source.pipe(gunzip).pipe(res);
+  } else {
+    source.pipe(res);
+  }
 }
 
 export function hasCompletedLocalExport(jobId, outputDir = OUTPUT_DIR) {
-  const filepath = resolveExportObjectPath(
-    `exports/${jobId}/final/export.csv.gz`,
-    outputDir,
-  );
-  return Boolean(filepath && fs.existsSync(filepath) && fs.statSync(filepath).isFile());
+  return EXPORT_FILE_FORMATS.some((format) => {
+    const filepath = resolveExportObjectPath(
+      `exports/${jobId}/final/${exportFileTraits(format).compactedFileName}`,
+      outputDir,
+    );
+    return Boolean(filepath && fs.existsSync(filepath) && fs.statSync(filepath).isFile());
+  });
 }
 
 async function readRequestBody(req) {
@@ -439,7 +458,7 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         outputDir: OUTPUT_DIR,
         semaphorAppUrl: process.env.SEMAPHOR_APP_URL,
-        capabilities: ['rendered-pdf', 'rendered-csv', 'fast-pdf', 'chunked-csv'],
+        capabilities: ['rendered-pdf', 'rendered-csv', 'fast-pdf', 'chunked-csv', 'chunked-xlsx'],
         activeChunkedExports: ACTIVE_EXPORTS.size,
       });
       return;

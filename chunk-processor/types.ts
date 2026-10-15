@@ -1,7 +1,6 @@
 /**
  * Types for the chunk-processor Lambda
  */
-import type { CsvDelimiter, CsvEncoding } from 'react-semaphor/format-utils';
 import type {
   CanonicalPivotResultContract,
   CanonicalPivotResultState,
@@ -14,23 +13,9 @@ import type {
   TemporalBucketMetadata,
 } from 'react-semaphor/format-utils';
 
-export interface QueryColumnKeyBinding {
-  role?: string;
-  rawKey: string;
-  outputKey?: string;
-}
-
-export interface QueryColumnKeyMap {
-  version: 1;
-  source: 'explorer';
-  byRole: Partial<
-    Record<
-      'groupby' | 'metric' | 'pivotby' | 'detail',
-      Record<string, QueryColumnKeyBinding>
-    >
-  >;
-  byMetricAlias?: Record<string, QueryColumnKeyBinding>;
-}
+/** The query's column key map: owned by react-semaphor, never mirrored here. */
+export type { QueryColumnKeyMap } from 'react-semaphor/format-utils';
+import type { QueryColumnKeyMap } from 'react-semaphor/format-utils';
 
 export interface ChunkInput {
   chunkId: string;
@@ -55,6 +40,11 @@ export interface ChunkResult {
   tableTotalsMetadataKey?: string;
   rawTemporalClassification?: RawTemporalChunkClassificationEvidence;
   rawTemporalClassificationKey?: string;
+  /** Excel only: the chunk's column fingerprint and its durable sidecar (XL-D37). */
+  xlsxColumnsFingerprint?: string;
+  xlsxColumnsKey?: string;
+  /** Excel only, first chunk: the stored sheet layout compaction wraps every chunk's rows in. */
+  xlsxSheetKey?: string;
 }
 
 export interface CardConfig {
@@ -91,43 +81,6 @@ export interface ColumnInfo {
       value: string | null;
       temporalBucket?: TemporalBucketMetadata;
     }>;
-  };
-}
-
-interface ExportFormattingBase {
-  useFormattedValues?: boolean;
-  timezone: string;
-  delimiter: CsvDelimiter;
-  /** Resolved by the app; the worker never picks a default. */
-  csvEncoding: CsvEncoding;
-  includeHeaders: boolean;
-  columnSettings?: Record<string, ColumnSettings>;
-  visibleColumns?: string[];
-  columnLabels?: Record<string, string>;
-  tableTotalsLabelColumnKey?: string;
-}
-
-export interface ExportFormattingConfig extends ExportFormattingBase {
-  scope: PresentationScope;
-  presentationExecutionSnapshot: PresentationExecutionSnapshot;
-}
-
-export interface ColumnSettings {
-  numberFormat?: {
-    style?: 'decimal' | 'currency' | 'percent';
-    currency?: string;
-    locale?: string;
-    minimumFractionDigits?: number;
-    maximumFractionDigits?: number;
-    useGrouping?: boolean;
-    percentValueMode?: 'fraction' | 'whole';
-  };
-  dateFormat?: {
-    format?: string;
-    timezone?: string;
-    sourceTimezone?: string;
-    useCustomFormat?: boolean;
-    customFormat?: string;
   };
 }
 

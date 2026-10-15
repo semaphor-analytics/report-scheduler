@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { compactChunks } from './compactor';
+import { compactChunks, type CompactionOutput } from './compactor';
 import { completeJob, updateJobStatus, ExportQueryRejectedError, rejectExportResponse } from './api-client';
-import { matrixExportDeadlineSchema, matrixAttemptKey, parseMatrixManifest } from 'react-semaphor/format-utils';
+import { fetchObjectText } from './s3-client';
+import {
+  exportFileTraits, isXlsxLimitError, matrixExportDeadlineSchema, matrixAttemptKey, parseMatrixManifest, parseXlsxSheet,
+  xlsxLimitFailureReason,
+} from 'react-semaphor/format-utils';
 
 /** Get ordered committed keys from the app, not the workflow's attempt outputs. */
 export async function compactMatrixExport(jobId: string, deadlineAt: number) {
@@ -40,11 +44,26 @@ export async function compactMatrixExport(jobId: string, deadlineAt: number) {
     }
     if (replayOnly) throw expired();
     const keys = manifest.chunks.map(chunk => chunk.dataKey);
+    const format = manifest.format ?? 'csv';
     check();
     await updateJobStatus({ jobId, url, apiKey, status: 'compacting', signal: controller.signal, rejectClientErrors: true });
     check();
-    const result = await compactChunks({ jobId, chunkKeys: keys, preserveOrder: true,
-      finalKey: matrixAttemptKey(jobId, randomUUID(), 'export.csv.gz'), signal: controller.signal });
+    // Excel: the layout batch's sheet around every batch's rows (Matrix rows,
+    // totals included, are all in the batches).
+    const output: CompactionOutput = format === 'xlsx'
+      ? { format: 'xlsx', sheet: parseXlsxSheet(await fetchObjectText(manifest.sheetKey!)), rowCount: manifest.totalRows }
+      : { format: 'csv' };
+    check();
+    let result;
+    try {
+      result = await compactChunks({ jobId, chunkKeys: keys, preserveOrder: true, output,
+        finalKey: matrixAttemptKey(jobId, randomUUID(), exportFileTraits(format).compactedFileName), signal: controller.signal });
+    } catch (error) {
+      // More rows or sheet data than Excel holds: final, with its catalog reason (XL-D33).
+      if (isXlsxLimitError(error))
+        throw new ExportQueryRejectedError(JSON.stringify({ error: error.message, reason: xlsxLimitFailureReason(error) }));
+      throw error;
+    }
     check();
     if (result.totalBytes !== manifest.totalBytes) throw new Error('Compacted bytes do not match committed Matrix data.');
     // The existing callback field is uncompressed bytes; the app independently

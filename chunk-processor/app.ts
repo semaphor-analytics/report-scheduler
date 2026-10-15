@@ -4,8 +4,9 @@
  * Processes a single chunk of export data:
  * 1. Check idempotency (skip if already completed)
  * 2. Query data from semaphor-app with export token
- * 3. Format data as CSV
- * 4. Upload to S3
+ * 3. Format the rows: CSV records, or Excel sheet rows
+ * 4. Upload to S3 (Excel: the first chunk also writes the sheet layout, and
+ *    every chunk its column fingerprint, before it is completed)
  * 5. Update chunk status in semaphor-app
  */
 
@@ -15,25 +16,53 @@ import {
   queryData,
   fetchChunkStatus,
   updateChunkStatus,
+  ExportQueryRejectedError,
 } from './lib/api-client';
-import { formatRowsForExportWithEvidence, generateCSV } from './lib/formatter';
 import { resolvePivotExportResultLifecycle } from './lib/pivot-result-lifecycle';
-import { parseExportFormattingConfig } from './lib/formatting-contract';
 import {
   fetchTableTotalsMetadata,
   fetchRawTemporalClassification,
+  fetchXlsxColumns,
+  getXlsxColumnsKey,
+  getXlsxSheetKey,
   getRawTemporalClassificationKey,
   getTableTotalsMetadataKey,
   uploadChunk,
   uploadTableTotalsMetadata,
   uploadRawTemporalClassification,
+  uploadXlsxColumns,
+  uploadXlsxSheet,
 } from './lib/s3-client';
 import {
+  csvFilePreamble,
+  csvRecord,
+  csvRecords,
+  defineTableExportSheet,
+  encodeXlsxRows,
+  exportCellText,
+  isXlsxLimitError,
+  parseTableExportSheetColumns,
+  serializeTableExportSheetColumns,
+  serializeXlsxSheet,
+  tableExportSheetColumns,
+  tableExportXlsxRows,
+  xlsxColumnsFingerprint,
+  xlsxLimitFailureReason,
   parseFlatTableExportTotalsByColumnId,
   parseFlatTableExportTotalsRequest,
   parseRawTemporalChunkClassificationEvidence,
+  parseTableExportFormatting,
+  prepareTableExport,
+  requiresRawTemporalSqlChunkEvidence,
 } from 'react-semaphor/format-utils';
-import { requiresRawTemporalSqlChunkEvidence } from './lib/raw-temporal-row-presentation';
+
+/** The card types the table formatter serves; Table and Detail Table, plus the deprecated pivot and aggregate tables API callers still reach. */
+function tableCardType(queryPayload: Record<string, unknown>) {
+  const cardType = queryPayload.cardType;
+  return cardType === 'detailTable' || cardType === 'pivotTable' || cardType === 'aggregateTable'
+    ? cardType
+    : 'table';
+}
 
 const SEMAPHOR_APP_URL =
   process.env.SEMAPHOR_APP_URL || 'https://semaphor.cloud';
@@ -81,7 +110,20 @@ export async function handler(event: ChunkInput | MatrixBatchInput): Promise<Chu
 
   let mayMarkChunkFailed = false;
   try {
-    const formatting = parseExportFormattingConfig(rawFormatting);
+    const formatting = parseTableExportFormatting(rawFormatting);
+    const fileFormat = formatting.fileFormat ?? 'csv';
+    // A chunk replayed after completion returns its stored fingerprint, never
+    // a new one, so the retry path needs no warehouse query (XL-D37).
+    const storedXlsxColumns = async () =>
+      fileFormat === 'xlsx'
+        ? {
+            xlsxColumnsFingerprint: xlsxColumnsFingerprint(
+              parseTableExportSheetColumns(await fetchXlsxColumns({ jobId, chunkNumber })).columns,
+            ),
+            xlsxColumnsKey: getXlsxColumnsKey(jobId, chunkNumber),
+            ...(isFirstChunk ? { xlsxSheetKey: getXlsxSheetKey(jobId) } : {}),
+          }
+        : {};
     const rawTemporalEvidenceRequired = requiresRawTemporalSqlChunkEvidence({
       formatting,
       queryPayload,
@@ -115,12 +157,14 @@ export async function handler(event: ChunkInput | MatrixBatchInput): Promise<Chu
             await fetchRawTemporalClassification({ jobId, chunkNumber }),
           )
         : undefined;
+      const xlsxColumns = await storedXlsxColumns();
       console.log(`Chunk ${chunkId} already completed, skipping`);
       return {
         chunkId,
         status: 'already_completed',
         rowsProcessed: completedState.rowCount,
         s3Key: completedState.s3Key,
+        ...xlsxColumns,
         ...(rawTemporalClassification
           ? {
               rawTemporalClassification,
@@ -143,11 +187,13 @@ export async function handler(event: ChunkInput | MatrixBatchInput): Promise<Chu
             await fetchRawTemporalClassification({ jobId, chunkNumber }),
           )
         : undefined;
+      const xlsxColumns = await storedXlsxColumns();
       return {
         chunkId,
         status: 'already_completed',
         rowsProcessed: completedState.rowCount,
         s3Key: completedState.s3Key,
+        ...xlsxColumns,
         tableTotalsByColumnId,
         tableTotalsMetadataKey: getTableTotalsMetadataKey(jobId),
         ...(rawTemporalClassification
@@ -203,32 +249,69 @@ export async function handler(event: ChunkInput | MatrixBatchInput): Promise<Chu
 
     console.log(`Queried ${rowCount} rows for chunk ${chunkNumber}`);
 
-    // 4. Format data as CSV
-    const formattedResult = formatRowsForExportWithEvidence(
-      records,
-      columns,
+    // 4. Format the rows through the one table formatter.
+    const formattedResult = prepareTableExport({
       formatting,
+      cardType: tableCardType(queryPayload),
+      queryPayload,
+    }).format(
       {
-        queryPayload,
+        records,
+        columns,
+        resultColumns: columns.flatMap((column) => {
+          const key = column.key || ('field' in column ? column.field : undefined);
+          return key ? [{ key, dataType: column.dataType }] : [];
+        }),
         columnKeyMap:
           canonicalPivotResult?.columnKeyMap || queryResponse.columnKeyMap,
         columnMetadata: queryResponse.columnMetadata,
         pivotResultKind: pivotResultLifecycle.kind,
       },
+      { withHeader: isFirstChunk },
     );
-    const csvContent = generateCSV(formattedResult.rows, columns, formatting, {
-      isFirstChunk,
-      includeHeaders: isFirstChunk && formatting.includeHeaders,
-      rawRecords: records, // Pass raw records for header fallback if columns is empty
-      pivotResultKind: pivotResultLifecycle.kind,
-    });
+    let partContent: string;
+    let xlsxFingerprint: string | undefined;
+    let xlsxSheetKey: string | undefined;
+    if (fileFormat === 'xlsx') {
+      // Excel: rows join by concatenation, so each chunk writes its own sheet
+      // rows; the first chunk also writes the sheet layout (title, header,
+      // widths, number formats) that compaction wraps them in. Style indexes
+      // depend only on column position, so every chunk agrees (XL-SI-9).
+      const sheet = defineTableExportSheet(formatting.title, formattedResult);
+      partContent = encodeXlsxRows(sheet, tableExportXlsxRows(formattedResult.rows));
+      xlsxFingerprint = xlsxColumnsFingerprint(sheet.columns);
+      if (isFirstChunk) xlsxSheetKey = await uploadXlsxSheet({ jobId, sheet: serializeXlsxSheet(sheet) });
+    } else {
+      // CSV: chunk 1 owns the start of the file (the BOM, when the encoding
+      // has one) and the header; every record ends with the separator, so
+      // compaction can concatenate chunks as they are.
+      partContent =
+        (isFirstChunk ? csvFilePreamble(formatting.csvEncoding) : '') +
+        (formattedResult.header
+          ? csvRecord(formattedResult.header, formatting.delimiter)
+          : '') +
+        csvRecords(
+          formattedResult.rows.map((row) => row.map(exportCellText)),
+          formatting.delimiter,
+        );
+    }
 
     // 5. Upload to S3
     const s3Key = await uploadChunk({
       jobId,
       chunkNumber,
-      content: csvContent,
+      content: partContent,
+      format: fileFormat,
     });
+    // A column these rows could not type (all dates empty) is marked, so
+    // compaction takes its type from the chunks that could.
+    const xlsxColumnsKey = xlsxFingerprint
+      ? await uploadXlsxColumns({
+          jobId,
+          chunkNumber,
+          columns: serializeTableExportSheetColumns(tableExportSheetColumns(formattedResult)),
+        })
+      : undefined;
     const tableTotalsMetadataKey = tableTotalsByColumnId
       ? await uploadTableTotalsMetadata({
           jobId,
@@ -251,6 +334,8 @@ export async function handler(event: ChunkInput | MatrixBatchInput): Promise<Chu
       status: 'completed',
       rowsProcessed: rowCount,
       s3Key,
+      ...(xlsxFingerprint ? { xlsxColumnsFingerprint: xlsxFingerprint, xlsxColumnsKey } : {}),
+      ...(xlsxSheetKey ? { xlsxSheetKey } : {}),
       ...(tableTotalsByColumnId ? { tableTotalsByColumnId } : {}),
       ...(tableTotalsMetadataKey ? { tableTotalsMetadataKey } : {}),
       ...(formattedResult.rawTemporalClassification
@@ -310,6 +395,13 @@ export async function handler(event: ChunkInput | MatrixBatchInput): Promise<Chu
       }
     }
 
+    // An Excel limit fails the job at once with its catalog reason, relayed
+    // to MarkFailed in the error message (XL-D33); retrying cannot help.
+    if (isXlsxLimitError(error)) {
+      throw new ExportQueryRejectedError(
+        JSON.stringify({ error: error.message, reason: xlsxLimitFailureReason(error) }),
+      );
+    }
     // Re-throw to trigger Step Functions retry
     throw error;
   }

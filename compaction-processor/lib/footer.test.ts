@@ -53,6 +53,7 @@ const formatting = {
   },
   timezone: 'UTC',
   delimiter: ',',
+  csvEncoding: 'utf-8',
   includeHeaders: true,
   useFormattedValues: true,
   visibleColumns: ['region', 'revenue'],

@@ -5,6 +5,7 @@
 import {
   S3Client,
   GetObjectCommand,
+  HeadObjectCommand,
   DeleteObjectsCommand,
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
@@ -55,6 +56,24 @@ export async function getObjectStream(key: string, signal?: AbortSignal): Promis
   return signal ? addAbortSignal(signal, stream) : stream;
 }
 
+/** An object's stored size in bytes (an Excel export declares its fragment bytes before streaming, XL-SI-13a). */
+export async function getObjectSize(key: string, signal?: AbortSignal): Promise<number> {
+  signal?.throwIfAborted();
+  const size = LOCAL_STORAGE_DIR
+    ? (await stat(localObjectPath(key))).size
+    : (await s3Client.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: key }), { abortSignal: signal })).ContentLength;
+  if (!Number.isSafeInteger(size) || (size as number) < 0) throw new Error(`Invalid size for export object: ${key}`);
+  return size as number;
+}
+
+/** A small text object beside the chunks (the Excel sheet layout or a column fingerprint sidecar). Parsing belongs to the caller. */
+export async function fetchObjectText(key: string): Promise<string> {
+  if (LOCAL_STORAGE_DIR) return readFile(localObjectPath(key), 'utf8');
+  const response = await s3Client.send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key }));
+  if (!response.Body) throw new Error(`No body returned for S3 object: ${key}`);
+  return response.Body.transformToString();
+}
+
 /**
  * Fetch the durable raw-temporal classification stored beside a completed
  * chunk. Parsing and contract validation remain owned by the caller so this
@@ -96,7 +115,13 @@ export async function uploadStream(
     const filePath = localObjectPath(key);
     await mkdir(path.dirname(filePath), { recursive: true });
     signal?.throwIfAborted();
-    await pipeline(stream, createWriteStream(filePath), { signal });
+    try {
+      await pipeline(stream, createWriteStream(filePath), { signal });
+    } catch (error) {
+      // Like an aborted multipart upload: a failed write leaves no file.
+      await unlink(filePath).catch(() => undefined);
+      throw error;
+    }
     return (await stat(filePath)).size;
   }
   // Upload.abort() only races done() in the installed SDK. Cancel actual sends
