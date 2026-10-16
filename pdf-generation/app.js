@@ -4,13 +4,16 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { generatePdf } from './lib/pdf-generator.js';
-import { generateCsv } from './lib/csv-extractor.js';
+import { renderArtifact } from './lib/render-artifact.js';
+import { imageCaptureErrorResponseFields } from './lib/image-capture.js';
 import {
-  CSV_CONTENT_TYPE,
   DEFAULT_CSV_ENCODING,
   parseCsvEncoding,
 } from './lib/generated/csv-file.js';
+import {
+  parseImageCaptureRequest,
+  renderedFileTraits,
+} from './lib/generated/rendered-file.js';
 import { redactForLog } from './lib/log-redaction.js';
 import { generatePdfFromData } from './lib/pdf-from-data-generator.js';
 import { deliveryBlockingErrorResponseFields } from './lib/delivery-render-error.js';
@@ -80,26 +83,6 @@ function appendHeaderLogoUrl(baseUrl, headerLogoUrl) {
   } catch {
     return baseUrl;
   }
-}
-
-async function generateArtifactBuffer({ format, targetUrl, options }) {
-  if (format === 'csv') {
-    const csvBuffer = await generateCsv(targetUrl, options);
-    return {
-      fileBuffer: csvBuffer,
-      contentType: CSV_CONTENT_TYPE,
-      fileExtension: 'csv',
-      layoutApplied: null,
-    };
-  }
-
-  const pdfBuffer = await generatePdf(targetUrl, options);
-  return {
-    fileBuffer: pdfBuffer,
-    contentType: 'application/pdf',
-    fileExtension: 'pdf',
-    layoutApplied: pdfBuffer?.layoutApplied || null,
-  };
 }
 
 async function uploadArtifactToS3({
@@ -269,7 +252,7 @@ async function handleScheduledStepFunctionRequest(event) {
   };
 
   const { fileBuffer, contentType, fileExtension, layoutApplied } =
-    await generateArtifactBuffer({
+    await renderArtifact({
       format,
       targetUrl,
       options,
@@ -396,7 +379,7 @@ async function handleDataDirectRequest(event) {
       Bucket: bucketName,
       Key: fileKey,
       Body: pdfBuffer,
-      ContentType: 'application/pdf',
+      ContentType: renderedFileTraits('pdf').contentType,
       ACL: 'private',
     };
 
@@ -427,7 +410,7 @@ async function handleDataDirectRequest(event) {
         layoutApplied,
         s3Bucket: bucketName,
         s3Key: fileKey,
-        contentType: 'application/pdf',
+        contentType: renderedFileTraits('pdf').contentType,
         sizeBytes: outputBytes,
       }),
     };
@@ -594,6 +577,11 @@ export const handler = async (event) => {
       watermarkEnabled: watermarkEnabled,
       watermarkText: watermarkText,
       expandedState: expandedState,
+      // A PNG's size, parsed and clamped here again (PNG exports PN-SI-2).
+      image:
+        format === 'png'
+          ? parseImageCaptureRequest(event?.queryStringParameters ?? {})
+          : undefined,
     };
 
     // The app resolves the encoding (D5); a CSV request without one is a bug
@@ -653,87 +641,30 @@ export const handler = async (event) => {
       }
     }
 
-    // Generate file based on format
-    let fileBuffer;
-    let contentType;
-    let fileExtension;
+    // Generate file based on format: one switch for every renderer request.
+    const { fileBuffer, contentType, fileExtension, layoutApplied } =
+      await renderArtifact({ format, targetUrl, options });
 
-    if (format === 'csv') {
-      console.log('Generating CSV file');
-      fileBuffer = await generateCsv(targetUrl, options);
-      contentType = CSV_CONTENT_TYPE;
-      fileExtension = 'csv';
-    } else {
-      console.log('Generating PDF file');
-      fileBuffer = await generatePdf(targetUrl, options);
-      contentType = 'application/pdf';
-      fileExtension = 'pdf';
-    }
-
-    // Upload the PDF to S3
-    const bucketName = process.env.S3_BUCKET_NAME;
-    if (!bucketName) {
-      throw new Error('S3_BUCKET_NAME environment variable is not set');
-    }
-
-    // Determine S3 prefix based on whether this is a scheduled report
-    let prefix = 'pdfs';
-    let tags = {};
-
-    if (scheduleId) {
-      // For scheduled reports, use emails prefix and minimal tags
-      prefix = 'emails';
-      tags = {
-        scheduleId: scheduleId || 'unknown',
-        leaseOwner: leaseOwner || '',
-        recipients: email || 'none',
-        format: format || 'pdf',
-        attachmentName: attachmentMetadata?.name || 'Report',
-        attachmentIndex: String(attachmentMetadata?.attachmentIndex ?? 0),
-        totalAttachments: String(attachmentMetadata?.totalAttachments ?? 1),
-      };
-    }
-
-    const outputFilename = buildExportFilename(
-      attachmentMetadata?.name || options.reportTitle || 'Report',
+    // Scheduled reports go under emails/ with minimal tags; downloads and
+    // Briefing renders under pdfs/.
+    const uploaded = await uploadArtifactToS3({
+      fileBuffer,
+      contentType,
       fileExtension,
-    );
-    const fileKey = `${prefix}/${outputFilename}`;
-    console.log('S3 upload:', fileKey, '- Format:', format);
-
-    const tagging = buildTaggingString(tags);
-
-    const uploadParams = {
-      Bucket: bucketName,
-      Key: fileKey,
-      Body: fileBuffer,
-      ContentType: contentType,
-      ACL: 'private',
-    };
-
-    // Only add Tagging if we have valid tags
-    if (tagging) {
-      uploadParams.Tagging = tagging;
-    }
-
-    console.log(`Uploading ${fileExtension.toUpperCase()} to S3...`);
-    await s3.send(new PutObjectCommand(uploadParams));
-    console.log(
-      `${fileExtension.toUpperCase()} uploaded to S3: ${bucketName}/${fileKey}`
-    );
-
-    // Generate presigned URL for download
-    const presignedUrl = await getSignedUrl(
-      s3,
-      new GetObjectCommand({
-        Bucket: bucketName,
-        Key: fileKey,
-        ResponseContentDisposition: `attachment; filename="${outputFilename}"`,
-      }),
-      { expiresIn: 60 * 60 }
-    );
-
-    const layoutApplied = format === 'pdf' ? fileBuffer?.layoutApplied || null : null;
+      reportTitle: attachmentMetadata?.name || options.reportTitle || 'Report',
+      scheduleId,
+      leaseOwner,
+      format: format || 'pdf',
+      extraTags: scheduleId
+        ? {
+            recipients: email || 'none',
+            attachmentName: attachmentMetadata?.name || 'Report',
+            attachmentIndex: String(attachmentMetadata?.attachmentIndex ?? 0),
+            totalAttachments: String(attachmentMetadata?.totalAttachments ?? 1),
+          }
+        : {},
+    });
+    console.log('S3 upload:', uploaded.fileKey, '- Format:', format);
 
     console.log('Returning presigned URL.');
     return {
@@ -744,14 +675,12 @@ export const handler = async (event) => {
         'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
       },
       body: JSON.stringify({
-        url: presignedUrl,
-        s3Bucket: bucketName,
-        s3Key: fileKey,
+        url: uploaded.presignedUrl,
+        s3Bucket: uploaded.bucketName,
+        s3Key: uploaded.fileKey,
         attachmentName: attachmentMetadata?.name || options.reportTitle || 'Report',
         format: fileExtension,
-        sizeBytes: Buffer.isBuffer(fileBuffer)
-          ? fileBuffer.length
-          : Buffer.byteLength(fileBuffer || ''),
+        sizeBytes: uploaded.sizeBytes,
         ...(layoutApplied ? { layoutApplied } : {}),
       }),
     };
@@ -761,12 +690,16 @@ export const handler = async (event) => {
     }
     console.error('Lambda Handler Error:', redactForLog(error));
     return {
-      statusCode: error.message?.includes('invalid') ? 400 : 500,
+      statusCode:
+        typeof error?.statusCode === 'number'
+          ? error.statusCode
+          : error.message?.includes('invalid') ? 400 : 500,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message: error.message || 'Internal server error',
         error: error.message,
         ...deliveryBlockingErrorResponseFields(error),
+        ...imageCaptureErrorResponseFields(error),
       }),
     };
   }

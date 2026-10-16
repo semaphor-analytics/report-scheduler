@@ -22,19 +22,12 @@ import {
 } from './content-stability.js';
 import {
   DOCUMENT_READY_TIMEOUT_MS,
-  listPrintSheetsFromTemplate,
   logSheetTiming,
   renderAllSheetsPdf,
+  resolvePrintSheets,
 } from './sheet-capture.js';
 import { applyPdfMetadata } from './pdf-metadata.js';
-import {
-  getScheduleDetails,
-  getDashboardData,
-  parseUrl,
-  shouldGenerateAllSheets,
-  getCurrentSheetId,
-  extractDashboardIdFromUrl,
-} from './dashboard-helpers.js';
+import { shouldGenerateAllSheets, getCurrentSheetId } from './dashboard-helpers.js';
 import { applyFixedWatermark, applyTiledWatermark } from './watermark-utils.js';
 import { applyPrintState } from './print-state-utils.js';
 import { redactForLog } from './log-redaction.js';
@@ -448,7 +441,6 @@ export async function generatePdf(url, options = {}) {
  */
 async function generateAllSheetsPdf(url, options = {}) {
   let browser = null;
-  let token, dashboardId;
 
   try {
     console.log('═══════════════════════════════════════════════════');
@@ -467,60 +459,10 @@ async function generateAllSheetsPdf(url, options = {}) {
       reportParams: options.reportParams,
     });
 
-    // 1. Get token and dashboardId - supports both scheduled reports and immediate downloads
-    if (options.scheduleId) {
-      // Scheduled report path - fetch from schedule endpoint
-      console.log('\n[Step 1/4] Fetching schedule details...');
-      const scheduleData = await getScheduleDetails(options.scheduleId);
-
-      if (!scheduleData.token) {
-        throw new Error('No authentication token found in schedule');
-      }
-
-      if (!scheduleData.dashboardId) {
-        throw new Error('No dashboard ID found in schedule');
-      }
-
-      token = scheduleData.token;
-      dashboardId = scheduleData.dashboardId;
-      console.log('  ✓ Schedule data retrieved');
-    } else {
-      // Immediate download path - extract from URL
-      console.log('\n[Step 1/4] Extracting credentials from URL...');
-      const { params } = parseUrl(url);
-      token = params.token;
-      dashboardId = extractDashboardIdFromUrl(url) || params.dashboardId;
-
-      if (!token) {
-        throw new Error('No authentication token found in URL');
-      }
-
-      if (!dashboardId) {
-        throw new Error('No dashboard ID found in URL');
-      }
-
-      console.log('  ✓ Credentials extracted from URL');
-    }
-
-    console.log('  Dashboard ID:', dashboardId);
-
-    // 2. Fetch dashboard data to get sheets
-    console.log('\n[Step 2/4] Fetching dashboard metadata...');
-    const dashboardData = await getDashboardData(dashboardId, token);
-
-    if (!dashboardData.sheets || dashboardData.sheets.length === 0) {
-      throw new Error('No sheets found in dashboard');
-    }
-
-    console.log(`  ✓ Dashboard has ${dashboardData.sheets.length} sheets:`);
-    dashboardData.sheets.forEach((sheet, index) => {
-      console.log(
-        `    ${index + 1}. "${sheet.title || 'Untitled'}" ` +
-          `(ID: ${sheet.id}, kind: ${sheet.kind || 'dashboard'})`
-      );
-    });
-
-    const sheets = listPrintSheetsFromTemplate(dashboardData.sheets);
+    // 1 and 2. The dashboard's sheets, as every all-sheets export lists them.
+    console.log('\n[Step 1/4] Resolving the dashboard and its sheets...');
+    const sheets = await resolvePrintSheets(url, options);
+    console.log(`  ✓ Dashboard has ${sheets.length} sheets`);
 
     // 3. Launch browser; each sheet gets its own fresh page
     console.log('\n[Step 3/4] Launching browser...');

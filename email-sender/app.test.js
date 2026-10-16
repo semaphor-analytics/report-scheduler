@@ -1007,3 +1007,28 @@ test('prepareEmailDelivery keeps external provider URLs on the short expiry', as
     /emails%2Freport\.pdf|emails\/report\.pdf/
   );
 });
+
+// PNG exports SPEC §3.6: a PNG card attachment is a rendered file under pdfs/,
+// attached with the content type the app sends and a .png name; above the
+// size limit it becomes a download link, as every attachment does.
+for (const mode of ['SES', 'EXTERNAL']) test(`${mode} attaches a PNG card image with its content type`, async () => {
+  const { getAttachmentFilename } = require('./lib/email-content');
+  const png = Buffer.from('89504e470d0a1a0a', 'hex');
+  const prepare = (limit = 100000) => prepareEmailDelivery({
+    artifacts: [{ name: getAttachmentFilename('Orders', 'png'), rawName: 'Orders', format: 'png',
+      contentType: 'image/png', s3Bucket: 'bucket', s3Key: 'pdfs/Orders-2026-10-16.png', sizeBytes: png.length }],
+    emailContext: { recipientEmails: ['a@example.com'], emailSubject: 'Orders', emailMessage: 'Report',
+      senderEmail: 'reports@example.com', companyName: 'Acme' },
+    provider: { name: mode }, config: { ...buildTestConfig(mode), emailMaxRawSizeBytes: limit },
+    storage: { getObject: () => ({ promise: async () => ({ Body: png }) }) },
+  });
+  const prepared = await prepare();
+  assert.equal(prepared.usedLinkFallback, false);
+  assert.match(prepared.attachmentsForProvider[0].name, /^Orders_.+\.png$/);
+  assert.equal(prepared.attachmentsForProvider[0].contentType, 'image/png');
+  if (mode === 'SES') assert.deepEqual(prepared.attachmentsForProvider[0].fileBuffer, png);
+  const linked = await prepare(10);
+  assert.equal(linked.usedLinkFallback, true);
+  assert.deepEqual(linked.attachmentsForProvider, []);
+  assert.match(linked.htmlBody, /Orders/);
+});

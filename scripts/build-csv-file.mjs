@@ -1,9 +1,14 @@
 #!/usr/bin/env node
-// Bundles react-semaphor's CSV file contract (the BOM, quoting and record
-// separators every delivered CSV uses) and its export file format owner
-// (names, content types and storage of CSV and Excel artifacts) into
-// pdf-generation/lib/generated/csv-file.js (ignored by git). pdf-generation
-// has no react-semaphor dependency, so this is how it shares the contract.
+// Bundles react-semaphor's export file contracts from format-utils into
+// pdf-generation/lib/generated/ (ignored by git). pdf-generation has no
+// react-semaphor dependency, so this is how it shares them:
+//   csv-file.js       the CSV file contract (the BOM, quoting and record
+//                     separators every delivered CSV uses) and the export file
+//                     format owner (names, content types and storage of CSV
+//                     and Excel artifacts);
+//   rendered-file.js  the rendered file contract (PDF, PNG and zip names and
+//                     content types, the image size and scale rule; PNG
+//                     exports SPEC §2.1 to §2.3).
 //
 //   --source=package    the installed react-semaphor; deploys use this.
 //   --source=workspace  the sibling ../react-semaphor checkout, for checking
@@ -39,15 +44,17 @@ if (source === 'workspace' && !existsSync(workspaceEntry)) {
   process.exit(1);
 }
 
-await build({
-  entryPoints: [resolve(root, 'scripts/csv-file-entry.mjs')],
-  outfile: resolve(root, 'pdf-generation/lib/generated/csv-file.js'),
-  bundle: true,
-  platform: 'node',
-  format: 'esm',
-  target: 'node20',
-  treeShaking: true,
-  logLevel: 'warning',
-  ...(source === 'workspace' ? { alias: { [specifier]: workspaceEntry } } : {}),
-});
-console.log(`Built the CSV file contract adapter from the ${source}.`);
+for (const adapter of ['csv-file', 'rendered-file']) {
+  await build({
+    entryPoints: [resolve(root, `scripts/${adapter}-entry.mjs`)],
+    outfile: resolve(root, `pdf-generation/lib/generated/${adapter}.js`),
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node20',
+    treeShaking: true,
+    logLevel: 'warning',
+    ...(source === 'workspace' ? { alias: { [specifier]: workspaceEntry } } : {}),
+  });
+}
+console.log(`Built the CSV and rendered file contract adapters from the ${source}.`);

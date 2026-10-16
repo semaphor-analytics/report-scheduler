@@ -17,6 +17,12 @@ import { applyFixedWatermark, applyTiledWatermark } from './watermark-utils.js';
 import { mergePDFsWithMetadata } from './pdf-merger.js';
 import { applyPdfMetadata } from './pdf-metadata.js';
 import { encryptPdfBuffer } from '../pdf-encrypt.js';
+import {
+  extractDashboardIdFromUrl,
+  getDashboardData,
+  getScheduleDetails,
+  parseUrl,
+} from './dashboard-helpers.js';
 
 export const DOCUMENT_READY_TIMEOUT_MS = 90000;
 const DASHBOARD_READY_TIMEOUT_MS = 15000;
@@ -77,6 +83,53 @@ export function listPrintSheetsFromTemplate(templateSheets) {
         ? sheet.title
         : `Sheet ${index + 1}`,
   }));
+}
+
+/**
+ * The dashboard's sheets in order, as a Full dashboard export lists them: the
+ * token and dashboard come from the schedule (a scheduled report) or from the
+ * view URL (an immediate download). The all-sheets PDF and the all-sheets PNG
+ * both read this list (PNG exports PN-SI-13).
+ * @param {string} viewUrl
+ * @param {{ scheduleId?: string }} [options]
+ * @returns {Promise<PrintSheetRef[]>}
+ */
+export async function resolvePrintSheets(viewUrl, options = {}) {
+  let token;
+  let dashboardId;
+  if (options.scheduleId) {
+    const scheduleData = await getScheduleDetails(options.scheduleId);
+    if (!scheduleData.token) {
+      throw new Error('No authentication token found in schedule');
+    }
+    if (!scheduleData.dashboardId) {
+      throw new Error('No dashboard ID found in schedule');
+    }
+    token = scheduleData.token;
+    dashboardId = scheduleData.dashboardId;
+  } else {
+    const { params } = parseUrl(viewUrl);
+    token = params.token;
+    dashboardId = extractDashboardIdFromUrl(viewUrl) || params.dashboardId;
+    if (!token) {
+      throw new Error('No authentication token found in URL');
+    }
+    if (!dashboardId) {
+      throw new Error('No dashboard ID found in URL');
+    }
+  }
+
+  const dashboardData = await getDashboardData(dashboardId, token);
+  if (!dashboardData.sheets || dashboardData.sheets.length === 0) {
+    throw new Error('No sheets found in dashboard');
+  }
+  dashboardData.sheets.forEach((sheet, index) => {
+    console.log(
+      `    ${index + 1}. "${sheet.title || 'Untitled'}" ` +
+        `(ID: ${sheet.id}, kind: ${sheet.kind || 'dashboard'})`
+    );
+  });
+  return listPrintSheetsFromTemplate(dashboardData.sheets);
 }
 
 const PRINT_VIEW_PATH = /^(.*\/view\/dashboard\/[^/]+)(?:\/(?:document|visual)\/[^/]+)?\/?$/;

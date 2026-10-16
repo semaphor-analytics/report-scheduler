@@ -1,7 +1,13 @@
 import { smartWait, detectContentType, waitForFrameworkReady } from './content-stability.js';
 import { redactForLog } from './log-redaction.js';
 
-export async function setupPage(page, url) {
+/**
+ * Opens `url` on `page`. `viewport` (an image render, PNG exports SPEC §3.5)
+ * sets the size and device scale; absent, every PDF and CSV render keeps the
+ * fixed 1,240 by 1,753 page.
+ * @param {{ viewport?: { width: number, height: number, deviceScaleFactor: 1 | 2 } }} [options]
+ */
+export async function setupPage(page, url, { viewport } = {}) {
   console.log('Setting up page...');
   
   // Disable caching to ensure a fresh state on each run
@@ -15,10 +21,12 @@ export async function setupPage(page, url) {
   );
   
   // Set viewport
-  await page.setViewport({
-    width: 1240,
-    height: 1753,
-  });
+  await page.setViewport(
+    viewport ?? {
+      width: 1240,
+      height: 1753,
+    },
+  );
   
   console.log('Navigating to URL:', redactForLog(url));
   

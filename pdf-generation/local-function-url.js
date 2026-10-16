@@ -5,9 +5,13 @@ import http from 'http';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createGunzip } from 'zlib';
 import { fileURLToPath } from 'url';
-import { generatePdf } from './lib/pdf-generator.js';
+import { renderArtifact } from './lib/render-artifact.js';
+import {
+  RENDERED_FILE_KINDS,
+  parseImageCaptureRequest,
+  renderedFileTraits,
+} from './lib/generated/rendered-file.js';
 import { deliveryBlockingErrorResponseFields } from './lib/delivery-render-error.js';
-import { generateCsv } from './lib/csv-extractor.js';
 import {
   CSV_CONTENT_TYPE,
   EXPORT_FILE_FORMATS,
@@ -132,9 +136,14 @@ function sendFile(res, filename) {
   }
 
   const isCsv = filepath.endsWith('.csv');
+  const renderedKind = RENDERED_FILE_KINDS.find((kind) =>
+    filepath.endsWith(`.${renderedFileTraits(kind).extension}`),
+  );
   const safeDownloadName = path.basename(filepath);
   res.writeHead(200, {
-    'Content-Type': isCsv ? CSV_CONTENT_TYPE : 'application/pdf',
+    'Content-Type': isCsv
+      ? CSV_CONTENT_TYPE
+      : renderedFileTraits(renderedKind ?? 'pdf').contentType,
     'Content-Disposition': `attachment; filename="${safeDownloadName}"`,
   });
   fs.createReadStream(filepath).pipe(res);
@@ -290,7 +299,7 @@ export async function handleGet(req, res, parsedUrl) {
       return;
     }
 
-    const csvBuffer = await generateCsv(targetUrl, {
+    const { fileBuffer: csvBuffer } = await renderArtifact({ format: 'csv', targetUrl, options: {
       isLambda: false,
       delimiter,
       csvEncoding,
@@ -302,7 +311,7 @@ export async function handleGet(req, res, parsedUrl) {
       timezone: query.get('timezone') || 'UTC',
       filterLine: query.get('filterLine') || '',
       debug: true,
-    });
+    } });
 
     const output = writeOutput(csvBuffer, 'csv', reportTitle);
     sendJson(res, 200, { url: output.url });
@@ -322,11 +331,30 @@ export async function handleGet(req, res, parsedUrl) {
     }
   }
 
+  // A PNG: a card, a sheet or every dashboard sheet as a zip (PNG exports SPEC §3.5).
+  if (format === 'png') {
+    const artifact = await renderArtifact({
+      format: 'png',
+      targetUrl,
+      options: {
+        isLambda: false,
+        image: parseImageCaptureRequest(Object.fromEntries(query)),
+        reportParams,
+        deliveryStrict: bool(query.get('deliveryStrict')),
+        deliveryAttachment: query.get('deliveryAttachment') || undefined,
+        expandedState: query.get('expandedState') || null,
+      },
+    });
+    const output = writeOutput(artifact.fileBuffer, artifact.fileExtension, reportTitle);
+    sendJson(res, 200, { url: output.url });
+    return;
+  }
+
   const tableMode = bool(query.get('tableMode'));
   const pdfMode = query.get('pdfMode') || reportParams?.pdfMode || '';
   const isVisualExport =
     targetUrl.includes('/visual/') && !tableMode && pdfMode !== 'document';
-  const pdfBuffer = await generatePdf(targetUrl, {
+  const { fileBuffer: pdfBuffer } = await renderArtifact({ format: 'pdf', targetUrl, options: {
     isLambda: false,
     tableMode,
     deliveryStrict: bool(query.get('deliveryStrict')),
@@ -348,7 +376,7 @@ export async function handleGet(req, res, parsedUrl) {
     watermarkEnabled: bool(query.get('watermarkEnabled')),
     watermarkText: query.get('watermarkText') || '',
     expandedState: query.get('expandedState') || null,
-  });
+  } });
 
   const output = writeOutput(pdfBuffer, 'pdf', reportTitle);
   sendJson(res, 200, {

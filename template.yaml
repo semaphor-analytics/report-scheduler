@@ -169,7 +169,13 @@ Resources:
             Resource:
               - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/pdfs/*'
               - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/emails/*'
+              # Finished export files a Briefing attaches, never chunk parts: Matrix
+              # attempts and compacted table exports, CSV and Excel (react-semaphor
+              # exportFileTraits compactedFileName; pinned by email-sender-file-access.test.js).
               - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*/attempts/*/export.csv.gz'
+              - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*/attempts/*/export.xlsx'
+              - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*/final/export.csv.gz'
+              - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*/final/export.xlsx'
           - Sid: AllowChunkProcessorAccess
             Effect: Allow
             Principal:
@@ -274,7 +280,13 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/pdfs/*'
                   - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/emails/*'
+                  # Finished export files a Briefing attaches, never chunk parts: Matrix
+                  # attempts and compacted table exports, CSV and Excel (react-semaphor
+                  # exportFileTraits compactedFileName; pinned by email-sender-file-access.test.js).
                   - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*/attempts/*/export.csv.gz'
+                  - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*/attempts/*/export.xlsx'
+                  - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*/final/export.csv.gz'
+                  - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*/final/export.xlsx'
               - Effect: Allow
                 Action:
                   - ses:SendRawEmail
