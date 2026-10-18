@@ -285,10 +285,12 @@ const BRAND_TEXT = '#202124';
 const BRAND_MUTED = '#71717a';
 
 // Mobile gutters for the brand cells must match the base content's 18px so the
-// header, intro, message, and footer stay flush on phones. Inserted into <head>
-// by the branded renderer only; unbranded documents stay byte-for-byte as is.
+// header, intro, message, and footer stay flush on phones, and the intro text
+// takes the base content's mobile 18px so it reads as the same body copy.
+// Inserted into <head> by the branded renderer only; unbranded documents stay
+// byte-for-byte as is.
 const BRAND_MOBILE_STYLE =
-  '<style>@media screen and (max-width: 600px) { .email-brand-cell { padding-left: 18px !important; padding-right: 18px !important; } .email-brand-card { border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; } }</style>';
+  '<style>@media screen and (max-width: 600px) { .email-brand-cell { padding-left: 18px !important; padding-right: 18px !important; } .email-brand-card { border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; } .email-brand-intro { font-size: 18px !important; } }</style>';
 
 function insertHtmlBeforeHeadClose(html, addition) {
   const document = String(html || '');
@@ -326,7 +328,7 @@ function buildBrandHeaderHtml(branding, emailLayout) {
       ? [
           '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width: 100%; border-collapse: collapse;">',
           '<tr>',
-          `<td align="left" class="email-brand-cell" style="padding: 20px 32px 0; font-family: ${BRAND_FONT}; font-size: 16px; line-height: 1.6; color: ${BRAND_TEXT};">${authoredTextToHtml(branding.intro)}</td>`,
+          `<td align="left" class="email-brand-cell email-brand-intro" style="padding: 20px 32px 0; font-family: ${BRAND_FONT}; font-size: 16px; line-height: 1.6; color: ${BRAND_TEXT};">${authoredTextToHtml(branding.intro)}</td>`,
           '</tr>',
           '</table>',
         ].join('')
