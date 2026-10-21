@@ -48,9 +48,7 @@ vi.mock('../lib/content-stability.js', async (importOriginal) => ({
 }));
 vi.mock('../lib/modes/dashboard.js', () => mocks.modeMock());
 vi.mock('../lib/modes/table.js', () => mocks.modeMock());
-vi.mock('../lib/modes/pivot-table.js', () => mocks.modeMock());
 vi.mock('../lib/modes/data-table.js', () => mocks.modeMock());
-vi.mock('../lib/modes/aggregate-table.js', () => mocks.modeMock());
 vi.mock('../lib/modes/document.js', () => ({ ...mocks.modeMock(), waitForDocumentReady: vi.fn(async () => {}) }));
 vi.mock('../lib/pdf-metadata.js', () => ({ applyPdfMetadata: vi.fn(async (buffer) => buffer) }));
 vi.mock('../lib/watermark-utils.js', () => ({ applyFixedWatermark: vi.fn(), applyTiledWatermark: vi.fn() }));

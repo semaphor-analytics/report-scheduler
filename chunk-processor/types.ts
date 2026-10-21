@@ -2,8 +2,6 @@
  * Types for the chunk-processor Lambda
  */
 import type {
-  CanonicalPivotResultContract,
-  CanonicalPivotResultState,
   FlatTableExportTotalsByColumnId,
   PivotResultColumnClassification,
   PresentationExecutionSnapshot,
@@ -85,8 +83,6 @@ export interface ColumnInfo {
 }
 
 export interface QueryResponse {
-  pivotResultState?: CanonicalPivotResultState;
-  pivotResultContract?: CanonicalPivotResultContract;
   records: Record<string, unknown>[];
   columns?: ColumnInfo[];
   columnKeyMap?: QueryColumnKeyMap;

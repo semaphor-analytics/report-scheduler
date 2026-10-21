@@ -4,10 +4,6 @@ import {
   renderDataTableHtml,
 } from '../lib/modes/data-table.js';
 import {
-  getPdfOptions as getAggregateTablePdfOptions,
-  renderAggregateTableHtml,
-} from '../lib/modes/aggregate-table.js';
-import {
   getPdfOptions as getPivotTablePdfOptions,
   renderPivotTableHtml,
 } from '../lib/modes/pivot-table.js';
@@ -231,7 +227,6 @@ describe('data table render', () => {
 
 describe.each([
   ['regular', 'data', renderDataTableHtml],
-  ['aggregate', 'aggregate', renderAggregateTableHtml],
   ['pivot', 'pivot', renderPivotTableHtml],
 ])('%s table customer-facing presentation', (_label, tableType, renderHtml) => {
   it('applies the cleanup consistently in wide-table output', () => {
@@ -324,7 +319,6 @@ describe.each([
 
 describe.each([
   ['regular', getDataTablePdfOptions],
-  ['aggregate', getAggregateTablePdfOptions],
   ['pivot', getPivotTablePdfOptions],
 ])('%s table footer', (_label, getPdfOptions) => {
   it('uses the compact shared page margins', () => {

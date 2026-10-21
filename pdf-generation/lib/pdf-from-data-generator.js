@@ -21,12 +21,8 @@ import {
   renderDataTableHtml,
 } from './modes/data-table.js';
 
-import { paginateAggregateTable } from './modes/aggregate-table-paginator.js';
-import {
-  getPdfOptions as getAggregatePdfOptions,
-  renderAggregateTableHtml,
-} from './modes/aggregate-table.js';
-
+// A Matrix prints through the pivot-table renderer (the module names predate
+// Matrix).
 import { paginateTableData } from './modes/pivot-table-paginator.js';
 import {
   getPdfOptions as getPivotTablePdfOptions,
@@ -202,33 +198,7 @@ function buildGenerationArtifacts(payload, options = {}) {
       break;
     }
 
-    case 'aggregateTable': {
-      const pages = paginateAggregateTable(paginatorInput, paginatorOptions);
-      const renderResult = renderAggregateTableHtml(pages, {
-        ...renderOptions,
-        pageSize,
-        orientation,
-        wideTableStrategy: payload.wideTableStrategy || options.wideTableStrategy || 'auto',
-      });
-      baseHtml = renderResult.html;
-      layoutApplied = renderResult.layoutApplied;
-      const effectivePageSize = renderResult.layoutApplied?.effectivePageSize || pageSize;
-      const effectiveOrientation =
-        renderResult.layoutApplied?.effectiveOrientation || orientation;
-      pdfOptions = getAggregatePdfOptions(null, effectivePageSize, {
-        orientation: effectiveOrientation,
-        pageSize: effectivePageSize,
-        timezone,
-        reportTitle,
-        filterLine,
-        wideTableStrategy: payload.wideTableStrategy || options.wideTableStrategy || 'auto',
-      });
-      pdfOptions.format = effectivePageSize;
-      break;
-    }
-
-    case 'matrixTable':
-    case 'pivotTable': {
+    case 'matrixTable': {
       const pages = paginateTableData(paginatorInput, paginatorOptions);
       const renderResult = renderPivotTableHtml(pages, {
         ...renderOptions,

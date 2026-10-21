@@ -51,9 +51,7 @@ vi.mock('../lib/content-stability.js', async (importOriginal) => ({
 }));
 vi.mock('../lib/modes/dashboard.js', () => mocks.modeMock());
 vi.mock('../lib/modes/table.js', () => mocks.modeMock());
-vi.mock('../lib/modes/pivot-table.js', () => mocks.modeMock());
 vi.mock('../lib/modes/data-table.js', () => mocks.modeMock());
-vi.mock('../lib/modes/aggregate-table.js', () => mocks.modeMock());
 vi.mock('../lib/modes/document.js', () => ({ ...mocks.modeMock(), waitForDocumentReady: vi.fn(async () => {}) }));
 vi.mock('../lib/pdf-metadata.js', () => ({ applyPdfMetadata: vi.fn(async (buffer) => buffer) }));
 vi.mock('../lib/watermark-utils.js', () => ({ applyFixedWatermark: vi.fn(), applyTiledWatermark: vi.fn() }));
@@ -63,9 +61,7 @@ const { generatePdf } = await import('../lib/pdf-generator.js');
 
 const URL = 'http://localhost:3000/view/dashboard/d_1/visual/c_1?token=t&isPdfRender=true';
 const modes = {
-  pivot: await import('../lib/modes/pivot-table.js'),
   data: await import('../lib/modes/data-table.js'),
-  aggregate: await import('../lib/modes/aggregate-table.js'),
   generic: await import('../lib/modes/table.js'),
 };
 
@@ -78,7 +74,7 @@ describe('generatePdf marker check before table extraction', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
-  it.each(['pivot', 'data', 'aggregate', 'generic'])(
+  it.each(['data', 'generic'])(
     'fails a strict %s render whose page carries a marker, before extracting rows',
     async (type) => {
       tableTypeState.type = type;

@@ -5,9 +5,7 @@ import { setupPage, attachPageListeners } from './page-setup.js';
 import { loadAllContent } from './content-loader.js';
 import * as dashboardMode from './modes/dashboard.js';
 import * as tableMode from './modes/table.js';
-import * as pivotTableMode from './modes/pivot-table.js';
 import * as dataTableMode from './modes/data-table.js';
-import * as aggregateTableMode from './modes/aggregate-table.js';
 import * as documentMode from './modes/document.js';
 import { encryptPdfBuffer } from '../pdf-encrypt.js';
 import {
@@ -183,21 +181,9 @@ export async function generatePdf(url, options = {}) {
     // 4. Apply mode-specific preparation and get PDF options
     // Detect table type for specialized handling
     const tableTypeInfo = await page.evaluate(() => {
-      // Check for different table types
-      const pivotTable = document.querySelector(
-        'table[data-pivot-table="true"]'
-      );
       const dataTable = document.querySelector('table[data-table-type="data"]');
-      const aggregateTable = document.querySelector(
-        'table[data-table-type="aggregate"]'
-      );
-
-      if (pivotTable) {
-        return { type: 'pivot', element: true };
-      } else if (dataTable) {
+      if (dataTable) {
         return { type: 'data', element: true };
-      } else if (aggregateTable) {
-        return { type: 'aggregate', element: true };
       }
       return { type: 'none', element: false };
     });
@@ -209,17 +195,9 @@ export async function generatePdf(url, options = {}) {
     } else if (options.tableMode) {
       // Select appropriate table mode based on detected type
       switch (tableTypeInfo.type) {
-        case 'pivot':
-          console.log('Using pivot table mode for PDF generation');
-          mode = pivotTableMode;
-          break;
         case 'data':
           console.log('Using data table mode for PDF generation');
           mode = dataTableMode;
-          break;
-        case 'aggregate':
-          console.log('Using aggregate table mode for PDF generation');
-          mode = aggregateTableMode;
           break;
         default:
           console.log('Using generic table mode for PDF generation');

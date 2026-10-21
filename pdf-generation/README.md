@@ -16,7 +16,8 @@ A serverless file generation service that converts web pages to PDFs or exports 
    - Automatic pagination with page breaks
    - Repeated headers on each page
    - Professional margins and formatting
-   - Supports data tables, pivot tables, and aggregated tables
+   - Supports data tables and generic tables; a Matrix prints through the
+     fast path (`pdf-from-data-generator.js`)
 
 ### CSV Export
 
@@ -660,7 +661,7 @@ The dashboard PDF generator:
 The table PDF generator:
 
 1. Navigates to the table URL using Puppeteer
-2. Detects table type (data table, pivot table, or aggregated table)
+2. Detects table type (data table or generic table)
 3. Extracts table data including headers and rows
 4. Paginates content based on page size (A4, Letter, etc.)
 5. Repeats headers on each page for readability
@@ -704,9 +705,8 @@ pdf-generation/
 │       ├── table.js            # Table PDF mode (paginated)
 │       ├── data-table.js       # Data table PDF handling
 │       ├── data-table-paginator.js  # Data table pagination
-│       ├── pivot-table.js      # Pivot table PDF handling
-│       ├── pivot-table-paginator.js # Pivot table pagination
-│       ├── aggregate-table.js  # Aggregate table PDF handling
+│       ├── pivot-table.js      # Matrix fast-path PDF rendering (name predates Matrix)
+│       ├── pivot-table-paginator.js # Matrix fast-path page wrapper
 │       └── csv-table.js        # CSV extraction from tables
 └── output/                     # Local test output directory (git-ignored)
 ```
@@ -773,8 +773,7 @@ aws cloudwatch get-metric-statistics \
 ### Supported Table Types
 
 - **Data Tables**: Standard tables with rows and columns
-- **Pivot Tables**: Multi-level headers with aggregations
-- **Aggregated Tables**: Tables with subtotals and grand totals
+- **Other Tables**: Any other table on the page
 
 ### Formatting Preservation
 

@@ -61,15 +61,6 @@ vi.mock('../lib/modes/data-table.js', () => ({
   renderDataTableHtml: renderDataTableHtmlMock,
 }));
 
-vi.mock('../lib/modes/aggregate-table-paginator.js', () => ({
-  paginateAggregateTable: vi.fn(),
-}));
-
-vi.mock('../lib/modes/aggregate-table.js', () => ({
-  getPdfOptions: vi.fn(),
-  renderAggregateTableHtml: vi.fn(),
-}));
-
 vi.mock('../lib/modes/pivot-table-paginator.js', () => ({
   paginateTableData: vi.fn(),
 }));
@@ -159,6 +150,13 @@ describe('pdf-from-data-generator', () => {
     expect(paginateTableData).toHaveBeenCalledWith(expect.objectContaining(tableStructure), expect.any(Object));
     expect(renderPivotTableHtml).toHaveBeenCalledWith(pages, expect.objectContaining({ wideTableStrategy: 'horizontal_paginate' }));
     expect(result.layoutApplied.effectiveOrientation).toBe('landscape');
+  });
+
+  it.each(['pivotTable', 'aggregateTable'])('refuses the retired %s card type', async (cardType) => {
+    const tableStructure = { headers: [{ cells: [] }], rows: [{ cells: [] }], metadata: {} };
+    await expect(generatePdfFromData({ cardType, tableStructure }))
+      .rejects.toThrow(`Unsupported card type for fast-path PDF: ${cardType}`);
+    expect(launchBrowserMock).not.toHaveBeenCalled();
   });
 
   it('does not start an aborted render and closes a browser on cancellation during rendering', async () => {

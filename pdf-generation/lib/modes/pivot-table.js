@@ -1,15 +1,9 @@
-// Pivot table mode - simplified pre-pagination approach
-// This mode extracts table data and generates pre-paginated HTML for reliable PDF generation
+// Matrix fast-path PDF renderer (the module name predates Matrix): turns the
+// Matrix print table into pre-paginated HTML for reliable PDF generation.
 
-import { assertTableRowCeiling } from '../table-row-ceiling.js';
-import { extractPivotTableData, paginateTableData } from './pivot-table-paginator.js';
 import { normalizePageSize } from '../page-size-utils.js';
 import { buildWideTableLayout } from './wide-table-layout.js';
-import {
-  groupRowsBySubtotal,
-  segmentRowsByKeepPlan,
-  splitSubtotalGroupForPagination,
-} from './subtotal-groups.js';
+import { segmentRowsByKeepPlan } from './subtotal-groups.js';
 import { buildTableFooterTemplate } from './table-footer.js';
 import {
   getTablePdfMargins,
@@ -41,53 +35,6 @@ export function getPdfOptions(dimensions, pageSize = 'A4', options = {}) {
     scale: 0.95,
   };
 }
-
-export async function preparePage(page, options = {}) {
-  console.log('Pivot table mode - Using pre-pagination approach');
-
-  // Extract the table data from the current page
-  const tableData = await extractPivotTableData(page);
-
-  if (!tableData) {
-    console.log('No pivot table found');
-    return;
-  }
-
-  console.log(`Extracted table data: ${tableData.rows.length} rows, ${tableData.headers.length} header rows`);
-  assertTableRowCeiling(tableData.rows.length, { mode: 'pivot', deliveryStrict: options.deliveryStrict });
-
-  // Paginate the data using dynamic height calculation
-  const pageSize = options.pageSize || 'Letter';
-  const orientation = options.orientation || 'portrait';
-
-  const pages = paginateTableData(tableData, {
-    pageSize,
-    keepSubtotalsTogether: true,
-    orientation
-  });
-
-  console.log(`Created ${pages.length} pages using dynamic height-based pagination`);
-
-  // Generate the new HTML with pre-paginated tables
-  const renderResult = renderPivotTableHtml(pages, options);
-  const html = renderResult.html;
-  options.layoutApplied = renderResult.layoutApplied;
-  if (renderResult.layoutApplied?.effectivePageSize) {
-    options.pageSize = renderResult.layoutApplied.effectivePageSize;
-  }
-  if (renderResult.layoutApplied?.effectiveOrientation) {
-    options.orientation = renderResult.layoutApplied.effectiveOrientation;
-  }
-
-  // Replace the page content with our pre-paginated version
-  await page.setContent(html, {
-    waitUntil: 'domcontentloaded',  // Don't wait for network, just DOM
-    timeout: 10000
-  });
-
-  console.log('Page content replaced with paginated version');
-}
-
 
 export function renderPivotTableHtml(pages, options = {}) {
   const reportTitle = options.reportTitle || 'Pivot Table Report';
@@ -156,12 +103,12 @@ export function renderPivotTableHtml(pages, options = {}) {
         })
         .join('');
 
-      // A Matrix carries the shared keep plan; legacy Pivot groups by subtotal.
+      // A Matrix row always carries the shared keep plan. Rows without it
+      // still print, in one freely breaking body, rather than disappear.
+      const sectionRows = section.rows || [];
       const bodySegments =
-        segmentRowsByKeepPlan(section.rows || []) ||
-        groupRowsBySubtotal(section.rows || []).flatMap((group) =>
-          splitSubtotalGroupForPagination(group),
-        );
+        segmentRowsByKeepPlan(sectionRows) ||
+        (sectionRows.length > 0 ? [{ className: 'group', rows: sectionRows }] : []);
       const groupedBodyHtml = bodySegments
         .map((groupSegment) => {
           const groupRowsHtml = groupSegment.rows

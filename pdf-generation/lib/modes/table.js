@@ -1,6 +1,6 @@
 // Table mode - paginated with repeated headers
 // This mode is designed for tables that need to be split across multiple pages
-// Note: For pivot tables, this delegates to pivot-table.js for specialized handling
+// Note: For data tables, this delegates to data-table.js for specialized handling
 
 import { assertTableRowCeiling } from '../table-row-ceiling.js';
 import { normalizePageSize } from '../page-size-utils.js';
@@ -87,36 +87,15 @@ export function getPdfOptions(dimensions, pageSize = 'A4', options = {}) {
 export async function preparePage(page, options = {}) {
   console.log('Table mode - Preparing page for pagination');
 
-  // Check for specialized table types
-  const tableType = await page.evaluate(() => {
-    if (document.querySelector('table[data-pivot-table="true"]')) {
-      return 'pivot';
-    } else if (document.querySelector('table[data-table-type="data"]')) {
-      return 'data';
-    } else if (document.querySelector('table[data-table-type="aggregate"]')) {
-      return 'aggregate';
-    }
-    return 'generic';
-  });
+  // A data table has its own handler.
+  const tableType = await page.evaluate(() =>
+    document.querySelector('table[data-table-type="data"]') ? 'data' : 'generic',
+  );
 
-  // Delegate to specialized handlers if available
-  if (tableType !== 'generic') {
-    console.log(`${tableType} table detected - using specialized handling`);
-    let specializedMode;
-    switch (tableType) {
-      case 'pivot':
-        specializedMode = await import('./pivot-table.js');
-        break;
-      case 'data':
-        specializedMode = await import('./data-table.js');
-        break;
-      case 'aggregate':
-        specializedMode = await import('./aggregate-table.js');
-        break;
-    }
-    if (specializedMode) {
-      return await specializedMode.preparePage(page, options);
-    }
+  if (tableType === 'data') {
+    console.log('data table detected - using specialized handling');
+    const dataTableMode = await import('./data-table.js');
+    return await dataTableMode.preparePage(page, options);
   }
 
   // A generic table's body rows, refused above the limit on a strict render only.

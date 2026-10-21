@@ -18,7 +18,6 @@ import {
   updateChunkStatus,
   ExportQueryRejectedError,
 } from './lib/api-client';
-import { resolvePivotExportResultLifecycle } from './lib/pivot-result-lifecycle';
 import {
   fetchTableTotalsMetadata,
   fetchRawTemporalClassification,
@@ -56,12 +55,9 @@ import {
   requiresRawTemporalSqlChunkEvidence,
 } from 'react-semaphor/format-utils';
 
-/** The card types the table formatter serves; Table and Detail Table, plus the deprecated pivot and aggregate tables API callers still reach. */
+/** The card types the table formatter serves: Table and Detail Table. */
 function tableCardType(queryPayload: Record<string, unknown>) {
-  const cardType = queryPayload.cardType;
-  return cardType === 'detailTable' || cardType === 'pivotTable' || cardType === 'aggregateTable'
-    ? cardType
-    : 'table';
+  return queryPayload.cardType === 'detailTable' ? 'detailTable' : 'table';
 }
 
 const SEMAPHOR_APP_URL =
@@ -226,20 +222,9 @@ export async function handler(event: ChunkInput | MatrixBatchInput): Promise<Chu
       chunkSize,
       tableTotalsRequest,
     });
-    const pivotResultLifecycle = resolvePivotExportResultLifecycle({
-      queryPayload,
-      queryResponse,
-    });
-    const canonicalPivotResult =
-      pivotResultLifecycle.kind === 'canonical'
-        ? pivotResultLifecycle.result
-        : undefined;
-
     // API returns 'records' not 'data'
-    const records =
-      canonicalPivotResult?.records || queryResponse.records || [];
-    const columns =
-      canonicalPivotResult?.columns || queryResponse.columns || [];
+    const records = queryResponse.records || [];
+    const columns = queryResponse.columns || [];
     const rowCount = records.length;
     const tableTotalsByColumnId = tableTotalsRequest
       ? parseFlatTableExportTotalsByColumnId(
@@ -259,13 +244,13 @@ export async function handler(event: ChunkInput | MatrixBatchInput): Promise<Chu
         records,
         columns,
         resultColumns: columns.flatMap((column) => {
-          const key = column.key || ('field' in column ? column.field : undefined);
+          const key = column.key || column.field;
           return key ? [{ key, dataType: column.dataType }] : [];
         }),
-        columnKeyMap:
-          canonicalPivotResult?.columnKeyMap || queryResponse.columnKeyMap,
+        columnKeyMap: queryResponse.columnKeyMap,
         columnMetadata: queryResponse.columnMetadata,
-        pivotResultKind: pivotResultLifecycle.kind,
+        // The pinned react-semaphor's TableExportResult still requires it.
+        pivotResultKind: 'not_pivot',
       },
       { withHeader: isFirstChunk },
     );

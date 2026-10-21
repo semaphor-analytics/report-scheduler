@@ -57,17 +57,11 @@ export async function generateCsv(url, options = {}) {
     // 4. Detect table type and extract data
     const tableInfo = await page.evaluate(() => {
       // Check for different table types
-      const pivotTable = document.querySelector('table[data-pivot-table="true"]');
       const dataTable = document.querySelector('table[data-table-type="data"]');
-      const aggregateTable = document.querySelector('table[data-table-type="aggregate"]');
       const genericTable = document.querySelector('table');
 
-      if (pivotTable) {
-        return { type: 'pivot', selector: 'table[data-pivot-table="true"]' };
-      } else if (dataTable) {
+      if (dataTable) {
         return { type: 'data', selector: 'table[data-table-type="data"]' };
-      } else if (aggregateTable) {
-        return { type: 'aggregate', selector: 'table[data-table-type="aggregate"]' };
       } else if (genericTable) {
         return { type: 'generic', selector: 'table' };
       }

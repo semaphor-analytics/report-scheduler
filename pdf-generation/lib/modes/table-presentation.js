@@ -85,16 +85,6 @@ export const BOUNDED_SUBTOTAL_PRINT_CSS = `
     page-break-inside: auto;
   }
 
-  tbody.group.subtotal-tail {
-    break-inside: avoid-page;
-    page-break-inside: avoid;
-  }
-
-  tbody.group.subtotal-tail:first-of-type {
-    break-inside: auto;
-    page-break-inside: auto;
-  }
-
   /* A printed Matrix's kept rows (Plan 2, 2d): a few rows at most. */
   tbody.group.keep-together {
     break-inside: avoid-page;
