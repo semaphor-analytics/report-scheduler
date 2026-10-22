@@ -3,7 +3,6 @@
  */
 import type {
   FlatTableExportTotalsByColumnId,
-  PivotResultColumnClassification,
   PresentationExecutionSnapshot,
   PresentationScope,
   RawTemporalChunkClassificationEvidence,
@@ -86,7 +85,6 @@ export interface QueryResponse {
   records: Record<string, unknown>[];
   columns?: ColumnInfo[];
   columnKeyMap?: QueryColumnKeyMap;
-  columnMetadata?: Record<string, PivotResultColumnClassification>;
   sql?: string;
   tableTotalsByColumnId?: unknown;
   pagination?: {

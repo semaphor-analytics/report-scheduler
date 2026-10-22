@@ -52,7 +52,6 @@ export function resolveCompactionTotals(input: CompactionTotalsInput): ExportCel
   );
   return prepareTableExport({
     formatting,
-    cardType: 'table',
     queryPayload: {},
   }).totals(totalsByColumnId, input.totalRows);
 }

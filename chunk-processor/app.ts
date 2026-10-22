@@ -55,11 +55,6 @@ import {
   requiresRawTemporalSqlChunkEvidence,
 } from 'react-semaphor/format-utils';
 
-/** The card types the table formatter serves: Table and Detail Table. */
-function tableCardType(queryPayload: Record<string, unknown>) {
-  return queryPayload.cardType === 'detailTable' ? 'detailTable' : 'table';
-}
-
 const SEMAPHOR_APP_URL =
   process.env.SEMAPHOR_APP_URL || 'https://semaphor.cloud';
 const LAMBDA_API_KEY = process.env.LAMBDA_API_KEY || '';
@@ -237,7 +232,6 @@ export async function handler(event: ChunkInput | MatrixBatchInput): Promise<Chu
     // 4. Format the rows through the one table formatter.
     const formattedResult = prepareTableExport({
       formatting,
-      cardType: tableCardType(queryPayload),
       queryPayload,
     }).format(
       {
@@ -248,9 +242,6 @@ export async function handler(event: ChunkInput | MatrixBatchInput): Promise<Chu
           return key ? [{ key, dataType: column.dataType }] : [];
         }),
         columnKeyMap: queryResponse.columnKeyMap,
-        columnMetadata: queryResponse.columnMetadata,
-        // The pinned react-semaphor's TableExportResult still requires it.
-        pivotResultKind: 'not_pivot',
       },
       { withHeader: isFirstChunk },
     );
