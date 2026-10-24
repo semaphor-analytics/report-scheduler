@@ -243,7 +243,11 @@ export async function waitForDocumentReady(page, { deadline }) {
   console.log(`⏱️  Document readiness total: ${Date.now() - waitStart}ms`);
 }
 
-/** The worker's last check, by the one page-fit rule (DPR-D13). */
+/**
+ * The worker's last check, by the one page-fit rule (DPR-D13), on page boxes.
+ * A table clipped by its own surface is React's to judge (DPR-D16): it codes
+ * that failure before the print, allowing for the last column's padding.
+ */
 async function assertDocumentPagesFit(page) {
   const pageLayout = await page.evaluate((tolerancePx) => {
     const pages = Array.from(
@@ -254,12 +258,7 @@ async function assertDocumentPagesFit(page) {
     const overflowingPage = pages.find(
       (element) =>
         overflows(element.scrollHeight, element.clientHeight) ||
-        overflows(element.scrollWidth, element.clientWidth) ||
-        // A table surface clips what is wider than itself, so the page box
-        // never shows it: the same rule, read on each surface (ledger P4-02).
-        Array.from(element.querySelectorAll('[data-document-table-section]')).some(
-          (surface) => overflows(surface.scrollWidth, surface.clientWidth)
-        )
+        overflows(element.scrollWidth, element.clientWidth)
     );
 
     if (!overflowingPage) {

@@ -104,22 +104,24 @@ describe('the page-fit backstop (DPR-D13)', () => {
       }),
     };
   }
-  const box = (widthPx, surfaces = []) => ({
-    scrollHeight: 1000,
+  const box = ({ heightPx = 1000, surfaces = [] } = {}) => ({
+    scrollHeight: heightPx,
     clientHeight: 1000,
-    scrollWidth: widthPx,
-    clientWidth: widthPx,
+    scrollWidth: 816,
+    clientWidth: 816,
     querySelectorAll: () => surfaces,
   });
 
-  it('passes pages whose table surfaces show all of their table', async () => {
-    const page = pageWithBoxes([box(816, [{ scrollWidth: 720, clientWidth: 720 }])]);
-    await expect(preparePage(page)).resolves.toBeUndefined();
+  it('fails the first page whose box overflows by more than 1 px', async () => {
+    const page = pageWithBoxes([box(), box({ heightPx: 1002 })]);
+    await expect(preparePage(page)).rejects.toThrow('page 2 overflowed');
   });
 
-  it('fails a page whose table surface clips its table, by the same rule (ledger P4-02)', async () => {
-    const page = pageWithBoxes([box(816), box(816, [{ scrollWidth: 1200, clientWidth: 720 }])]);
-    await expect(preparePage(page)).rejects.toThrow('page 2 overflowed');
+  it("leaves a table clipped by its own surface to React's check (ledger P4-16)", async () => {
+    // React codes a clipped table before the print, allowing for the last
+    // column's padding; the backstop reads page boxes only.
+    const page = pageWithBoxes([box({ surfaces: [{ scrollWidth: 724, clientWidth: 720 }] })]);
+    await expect(preparePage(page)).resolves.toBeUndefined();
   });
 });
 
