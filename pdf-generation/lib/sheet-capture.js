@@ -24,7 +24,6 @@ import {
   parseUrl,
 } from './dashboard-helpers.js';
 
-export const DOCUMENT_READY_TIMEOUT_MS = 90000;
 const DASHBOARD_READY_TIMEOUT_MS = 15000;
 
 /** @typedef {'dashboard'|'document'} PrintSheetKind */
@@ -47,7 +46,7 @@ const DASHBOARD_READY_TIMEOUT_MS = 15000;
  * @property {number} bytes
  */
 
-/** A sheet failure with context. Copies `code` and `deliveryBlocking` from `cause`. */
+/** A sheet failure with context. Copies `code`, `deliveryBlocking` and `facts` from `cause`. */
 export class SheetCaptureError extends Error {
   /**
    * @param {{ sheet: PrintSheetRef, index: number, total: number,
@@ -63,6 +62,8 @@ export class SheetCaptureError extends Error {
     if (cause && typeof cause === 'object') {
       if (cause.code !== undefined) this.code = cause.code;
       if (cause.deliveryBlocking === true) this.deliveryBlocking = true;
+      // A Document print failure's facts travel as its code does (C3).
+      if (cause.facts !== undefined) this.facts = cause.facts;
     }
   }
 }
@@ -190,6 +191,11 @@ export async function captureSheetPdf(
   };
   let phase = 'navigate';
   let page = null;
+  // A Document's one ready deadline: the render's shared one, else this
+  // capture's start plus the budget (Document PDF reliability DPR-D8).
+  const documentDeadline = isDocument
+    ? documentMode.documentReadyDeadline(options, Date.now())
+    : undefined;
 
   try {
     page = await browser.newPage();
@@ -207,7 +213,7 @@ export async function captureSheetPdf(
     phase = 'ready';
     startedAt = Date.now();
     if (isDocument) {
-      await documentMode.waitForDocumentReady(page, DOCUMENT_READY_TIMEOUT_MS);
+      await documentMode.waitForDocumentReady(page, { deadline: documentDeadline });
     } else {
       const isReady = await waitForDashboardReady(
         page,
@@ -230,11 +236,7 @@ export async function captureSheetPdf(
     let dimensions;
     let mode;
     if (isDocument) {
-      dimensions = await page.evaluate(() => ({
-        finalHeight: Math.max(document.body.scrollHeight, document.body.offsetHeight),
-        finalWidth: Math.max(document.body.scrollWidth, document.body.offsetWidth),
-        tableCount: document.querySelectorAll('table, [role="table"], [role="grid"]').length,
-      }));
+      dimensions = await documentMode.readDocumentDimensions(page);
       mode = documentMode;
     } else {
       if (options.expandedState) {
@@ -266,7 +268,9 @@ export async function captureSheetPdf(
     phase = 'pdf';
     startedAt = Date.now();
     await throwIfDeliveryBlockingRenderError(page);
-    const buffer = await page.pdf(pdfOptions);
+    const buffer = isDocument
+      ? await documentMode.printDocument(page, pdfOptions, documentDeadline)
+      : await page.pdf(pdfOptions);
     timing.pdfMs = Date.now() - startedAt;
     if (!buffer || buffer.length === 0) {
       throw new Error('Empty PDF buffer generated');

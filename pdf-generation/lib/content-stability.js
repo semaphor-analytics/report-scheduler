@@ -1,4 +1,7 @@
-import { createDeliveryBlockingRenderError } from './delivery-render-error.js';
+import {
+  createDeliveryBlockingRenderError,
+  createRenderErrorFromMarker,
+} from './delivery-render-error.js';
 
 // Utility functions for detecting content stability and readiness
 
@@ -639,20 +642,15 @@ export async function throwIfDeliveryBlockingRenderError(page) {
     );
     if (!element) return null;
     return {
-      code:
-        element.getAttribute('data-semaphor-render-error-code') ||
-        'render_failed',
-      message:
-        element.getAttribute('data-semaphor-render-error-message') ||
-        'Semaphor render failed',
+      code: element.getAttribute('data-semaphor-render-error-code'),
+      message: element.getAttribute('data-semaphor-render-error-message'),
+      // A Document print failure's facts (C3), parsed in Node.
+      facts: element.getAttribute('data-semaphor-render-error-facts'),
     };
   });
 
   if (renderError) {
-    throw createDeliveryBlockingRenderError(
-      renderError.code,
-      renderError.message
-    );
+    throw createRenderErrorFromMarker(renderError);
   }
 }
 

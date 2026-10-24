@@ -49,6 +49,25 @@ describe('waitForDashboardReady delivery errors', () => {
   });
 });
 
+// Document PDF reliability C3: the final boundary reads a Document failure's facts too.
+describe('throwIfDeliveryBlockingRenderError for a Document', () => {
+  it("carries the marker's facts and describes it from code and facts alone", async () => {
+    const page = {
+      evaluate: vi.fn().mockResolvedValue({
+        code: 'document_page_overflow',
+        message: 'page text that never travels',
+        facts: '{"sectionTitle":"Register","pageNumber":7,"overflowAxis":"width"}',
+      }),
+    };
+    await expect(throwIfDeliveryBlockingRenderError(page)).rejects.toMatchObject({
+      code: 'document_page_overflow',
+      deliveryBlocking: true,
+      facts: { sectionTitle: 'Register', pageNumber: 7, overflowAxis: 'width' },
+      message: 'Section "Register" on page 7 does not fit the page (width).',
+    });
+  });
+});
+
 // Report attachment delivery RA-D11 (Phase 3, ledger P3-06).
 describe('assertReadyForDelivery', () => {
   it('refuses a card attachment that never became ready', async () => {

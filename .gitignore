@@ -17,9 +17,10 @@ output/
 pdf-generation/output/
 
 # Generated at build time from React-free react-semaphor format-utils
-# (the export policy, the PDF table layout engine, the CSV file contract and
-# the rendered file contract)
+# (the export policy, the PDF table layout engine, the CSV file contract, the
+# rendered file contract and the Document print contract)
 pdf-generation/lib/generated/pdf-export-policy.js
 pdf-generation/lib/generated/pdf-table-layout.js
 pdf-generation/lib/generated/csv-file.js
 pdf-generation/lib/generated/rendered-file.js
+pdf-generation/lib/generated/document-print.js

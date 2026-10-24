@@ -19,7 +19,6 @@ import {
   waitForDashboardReady,
 } from './content-stability.js';
 import {
-  DOCUMENT_READY_TIMEOUT_MS,
   logSheetTiming,
   renderAllSheetsPdf,
   resolvePrintSheets,
@@ -29,6 +28,23 @@ import { shouldGenerateAllSheets, getCurrentSheetId } from './dashboard-helpers.
 import { applyFixedWatermark, applyTiledWatermark } from './watermark-utils.js';
 import { applyPrintState } from './print-state-utils.js';
 import { redactForLog } from './log-redaction.js';
+
+/** The tallest page `generatePdf` prints, in CSS pixels; taller fails as likely out of memory. */
+export const MAX_CAPTURE_HEIGHT_PX = 300_000;
+
+/**
+ * `generatePdf`'s size guard, shared so the Document print harness exercises
+ * it as a download does (ledger P4-14). A Document's height is its page count
+ * times its page height: 1,056 px a Letter page, so 284 pages at most.
+ */
+export function assertCaptureHeight(dimensions) {
+  if (dimensions.finalHeight > MAX_CAPTURE_HEIGHT_PX) {
+    throw new Error(
+      `Document too large for PDF export (${Math.round(dimensions.finalHeight / 1000)}k pixels). ` +
+      `Please reduce the data or use CSV export.`
+    );
+  }
+}
 
 
 export async function generatePdf(url, options = {}) {
@@ -128,16 +144,18 @@ export async function generatePdf(url, options = {}) {
     // 3. Load all content (scrolling, expanding, etc.)
     timings.contentLoadStart = Date.now();
     let dimensions;
+    // One ready deadline from the invocation start (Document PDF reliability
+    // DPR-D8); the print then gets whatever readiness left of it.
+    const documentDeadline =
+      options.pdfMode === 'document'
+        ? documentMode.documentReadyDeadline(options, timings.start)
+        : undefined;
     if (options.pdfMode === 'document') {
       console.log('Document mode: Waiting for fixed-layout document pages');
       timings.documentReadyStart = Date.now();
-      await documentMode.waitForDocumentReady(page, DOCUMENT_READY_TIMEOUT_MS);
+      await documentMode.waitForDocumentReady(page, { deadline: documentDeadline });
       timings.documentReadyDone = Date.now();
-      dimensions = await page.evaluate(() => ({
-        finalHeight: Math.max(document.body.scrollHeight, document.body.offsetHeight),
-        finalWidth: Math.max(document.body.scrollWidth, document.body.offsetWidth),
-        tableCount: document.querySelectorAll('table, [role="table"], [role="grid"]').length,
-      }));
+      dimensions = await documentMode.readDocumentDimensions(page);
     } else if (options.isVisualExport) {
       console.log('Visual export - waiting for chart to render');
       // Wait for the visual to render at its natural size
@@ -170,13 +188,7 @@ export async function generatePdf(url, options = {}) {
     console.log(`⏱️  Content loading: ${timings.contentLoadDone - timings.contentLoadStart}ms`);
 
     // Check for excessively large documents that will cause OOM
-    const MAX_HEIGHT_PX = 300000; // ~300k pixels
-    if (dimensions.finalHeight > MAX_HEIGHT_PX) {
-      throw new Error(
-        `Document too large for PDF export (${Math.round(dimensions.finalHeight / 1000)}k pixels). ` +
-        `Please reduce the data or use CSV export.`
-      );
-    }
+    assertCaptureHeight(dimensions);
 
     // 4. Apply mode-specific preparation and get PDF options
     // Detect table type for specialized handling
@@ -296,37 +308,44 @@ export async function generatePdf(url, options = {}) {
       JSON.stringify(pdfOptions, null, 2)
     );
 
-    // Check page content before generating PDF
-    const pageContent = await page.evaluate(() => {
-      return {
-        bodyHTML: document.body.innerHTML.substring(0, 500), // First 500 chars
-        bodyText: (
-          document.body.innerText ||
-          document.body.textContent ||
-          ''
-        ).substring(0, 200),
-        tableCount: document.querySelectorAll(
-          'table, [role="table"], [role="grid"]'
-        ).length,
-        visibleHeight: document.body.scrollHeight,
-      };
-    });
+    // Check page content before generating PDF. A Document reads no page
+    // text (Document PDF reliability DPR-D12): its readiness already proved
+    // every page laid out.
+    if (options.pdfMode !== 'document') {
+      const pageContent = await page.evaluate(() => {
+        return {
+          bodyHTML: document.body.innerHTML.substring(0, 500), // First 500 chars
+          bodyText: (
+            document.body.innerText ||
+            document.body.textContent ||
+            ''
+          ).substring(0, 200),
+          tableCount: document.querySelectorAll(
+            'table, [role="table"], [role="grid"]'
+          ).length,
+          visibleHeight: document.body.scrollHeight,
+        };
+      });
 
-    console.log('Page content check before PDF:');
-    console.log('  Has HTML:', pageContent.bodyHTML.length > 0);
-    console.log('  Has text:', pageContent.bodyText.length > 0);
-    console.log('  Table count:', pageContent.tableCount);
-    console.log('  Visible height:', pageContent.visibleHeight);
+      console.log('Page content check before PDF:');
+      console.log('  Has HTML:', pageContent.bodyHTML.length > 0);
+      console.log('  Has text:', pageContent.bodyText.length > 0);
+      console.log('  Table count:', pageContent.tableCount);
+      console.log('  Visible height:', pageContent.visibleHeight);
 
-    if (pageContent.bodyText.length < 10) {
-      console.warn(
-        '⚠️  Warning: Page appears to have very little text content'
-      );
-      console.warn('  First 200 chars of text:', pageContent.bodyText);
+      if (pageContent.bodyText.length < 10) {
+        console.warn(
+          '⚠️  Warning: Page appears to have very little text content'
+        );
+        console.warn('  First 200 chars of text:', pageContent.bodyText);
+      }
     }
 
     await throwIfDeliveryBlockingRenderError(page);
-    let pdfBuffer = await page.pdf(pdfOptions);
+    let pdfBuffer =
+      options.pdfMode === 'document'
+        ? await documentMode.printDocument(page, pdfOptions, documentDeadline)
+        : await page.pdf(pdfOptions);
     timings.pdfGenerateDone = Date.now();
     console.log(`⏱️  PDF generation: ${timings.pdfGenerateDone - timings.pdfGenerateStart}ms`);
     console.log('PDF Buffer Size:', pdfBuffer.length);
@@ -396,11 +415,6 @@ export async function generatePdf(url, options = {}) {
       pdfMs: timings.pdfGenerateDone - timings.pdfGenerateStart,
       bytes: pdfBuffer.length,
     });
-    if (options.pdfMode === 'document' && totalTime > DOCUMENT_READY_TIMEOUT_MS) {
-      console.warn(
-        `⚠️  Document PDF generation exceeded the ${DOCUMENT_READY_TIMEOUT_MS / 1000}s readiness target. Review the timing summary above to identify the slow stage.`
-      );
-    }
 
     return pdfBuffer;
   } catch (error) {

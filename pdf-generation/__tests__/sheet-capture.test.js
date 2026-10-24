@@ -38,6 +38,7 @@ vi.mock('../lib/content-stability.js', async (importOriginal) => ({
   // The rule itself is tested in content-stability-render-error.test.js.
   assertReadyForDelivery: mocks.assertReadyForDelivery,
   readyWaitTimeoutMs: (await importOriginal()).readyWaitTimeoutMs,
+  DELIVERY_READY_BUDGET_MS: (await importOriginal()).DELIVERY_READY_BUDGET_MS,
   recheckReadyBeforeCapture: mocks.recheckReadyBeforeCapture,
   // The real caller rule, so its outcomes are exercised through the capture.
   applyRecheckResult: (await importOriginal()).applyRecheckResult,
@@ -52,10 +53,14 @@ vi.mock('../lib/modes/table.js', () => ({
   preparePage: mocks.tablePreparePage,
   getPdfOptions: mocks.tableGetPdfOptions,
 }));
-vi.mock('../lib/modes/document.js', () => ({
+vi.mock('../lib/modes/document.js', async (importOriginal) => ({
   waitForDocumentReady: mocks.waitForDocumentReady,
   preparePage: mocks.documentPreparePage,
   getPdfOptions: mocks.documentGetPdfOptions,
+  // The real deadline and print rules (DPR-D8); the wait itself is tested in document-readiness-redaction.test.js.
+  documentReadyDeadline: (await importOriginal()).documentReadyDeadline,
+  printDocument: (await importOriginal()).printDocument,
+  readDocumentDimensions: (await importOriginal()).readDocumentDimensions,
 }));
 vi.mock('../lib/watermark-utils.js', () => ({
   applyFixedWatermark: mocks.applyFixedWatermark,
@@ -211,7 +216,10 @@ describe('captureSheetPdf', () => {
       page,
       expect.stringContaining('/view/dashboard/d_123/document/cash-report?'),
     );
-    expect(mocks.waitForDocumentReady).toHaveBeenCalledWith(page, 90000);
+    // One deadline from this capture's start (Document PDF reliability DPR-D8).
+    const [, { deadline }] = mocks.waitForDocumentReady.mock.calls[0];
+    expect(deadline - Date.now()).toBeGreaterThan(110_000);
+    expect(deadline - Date.now()).toBeLessThanOrEqual(120_000);
     expect(mocks.waitForDashboardReady).not.toHaveBeenCalled();
     expect(mocks.applyPrintState).not.toHaveBeenCalled();
     expect(mocks.loadAllContent).not.toHaveBeenCalled();
@@ -223,7 +231,11 @@ describe('captureSheetPdf', () => {
     );
     expect(mocks.applyFixedWatermark).toHaveBeenCalledWith(page, 'Draft');
     expect(mocks.applyTiledWatermark).not.toHaveBeenCalled();
-    expect(page.pdf).toHaveBeenCalledWith({ kind: 'document-options' });
+    // The print gets what readiness left of the deadline plus its own 60 s (DPR-D8).
+    const [printOptions] = page.pdf.mock.calls[0];
+    expect(printOptions).toMatchObject({ kind: 'document-options' });
+    expect(printOptions.timeout).toBeGreaterThan(170_000);
+    expect(printOptions.timeout).toBeLessThanOrEqual(180_000);
     expect(mocks.recheckReadyBeforeCapture).not.toHaveBeenCalled();
   });
 
@@ -310,6 +322,53 @@ describe('captureSheetPdf', () => {
     expect(failure.code).toBe('print_inputs_not_captured');
     expect(failure.deliveryBlocking).toBe(true);
     expect(pages[0].close).toHaveBeenCalled();
+  });
+
+  it("copies a Document failure's facts as it copies the code (C3), and prints nothing", async () => {
+    const { browser, pages } = createBrowser();
+    mocks.waitForDocumentReady.mockRejectedValueOnce(
+      Object.assign(new Error('Section "Register" on page 51 does not fit the page.'), {
+        code: 'document_page_overflow',
+        deliveryBlocking: true,
+        facts: { sectionTitle: 'Register', pageNumber: 51, overflowAxis: 'height' },
+      }),
+    );
+
+    const failure = await captureSheetPdf(browser, {
+      sheet: documentSheet,
+      index: 0,
+      total: 1,
+      viewUrl: VIEW_URL,
+    }).catch((error) => error);
+
+    expect(failure).toMatchObject({
+      code: 'document_page_overflow',
+      deliveryBlocking: true,
+      facts: { sectionTitle: 'Register', pageNumber: 51, overflowAxis: 'height' },
+    });
+    expect(pages[0].pdf).not.toHaveBeenCalled();
+    expect(pages[0].close).toHaveBeenCalled();
+  });
+
+  it("gives a delivery render's Document the render's shared deadline", async () => {
+    const { browser, pages } = createBrowser();
+    const deliveryReadyDeadline = Date.now() + 30_000;
+
+    await captureSheetPdf(browser, {
+      sheet: documentSheet,
+      index: 0,
+      total: 1,
+      viewUrl: VIEW_URL,
+      options: { deliveryReadyDeadline },
+    });
+
+    expect(mocks.waitForDocumentReady).toHaveBeenCalledWith(expect.anything(), {
+      deadline: deliveryReadyDeadline,
+    });
+    // ...and its print the time left of that deadline plus 60 s (DPR-D8).
+    const [{ timeout }] = pages[0].pdf.mock.calls[0];
+    expect(timeout).toBeGreaterThan(80_000);
+    expect(timeout).toBeLessThanOrEqual(90_000);
   });
 
   it('stops a sheet whose readiness rule refuses it, before capturing (RA-D11)', async () => {
