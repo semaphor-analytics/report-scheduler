@@ -10,6 +10,7 @@ import {
   readDocumentPrintFailureFacts,
   readDocumentPrintLayout,
 } from '../generated/document-print.js';
+import { PDF_CAPACITY } from '../generated/pdf-export-policy.js';
 
 const READY_POLL_INTERVAL_MS = 150;
 const DEADLINE_PASSED = Symbol('deadline passed');
@@ -51,15 +52,39 @@ export function printDocument(page, pdfOptions, readyDeadline) {
 
 /**
  * The laid-out Document's size, read once after readiness by both entry
- * paths (geometry only, no page text): `finalHeight` is the page stack's
- * height, which `generatePdf`'s size guard checks.
+ * paths (geometry and the layout record, no page text): `pageCount` is the
+ * final plan's page count (C4), which the page cap checks; `finalHeight` is
+ * the page stack's height, checked by the height guard only when a page
+ * publishes no layout record.
  */
-export function readDocumentDimensions(page) {
-  return page.evaluate(() => ({
+export async function readDocumentDimensions(page) {
+  const dimensions = await page.evaluate(() => ({
     finalHeight: Math.max(document.body.scrollHeight, document.body.offsetHeight),
     finalWidth: Math.max(document.body.scrollWidth, document.body.offsetWidth),
     tableCount: document.querySelectorAll('table, [role="table"], [role="grid"]').length,
+    layout:
+      document
+        .querySelector('[data-document-page-stack="true"]')
+        ?.getAttribute('data-document-print-layout') ?? null,
   }));
+  const { layout, ...rest } = dimensions;
+  return { ...rest, pageCount: readDocumentPrintLayout(layout)?.pageCount ?? null };
+}
+
+/**
+ * The worker's backstop for the PDF page cap (PDF capacity contract PC-D3,
+ * PC-D7): the page stack refuses a plan over the cap before any page mounts,
+ * so this catches only a page that did not. One plain page count, whatever
+ * the paper size or orientation (PC-D11).
+ */
+export function assertDocumentPageCap({ pageCount }) {
+  if (!(pageCount > PDF_CAPACITY.maxPages)) return;
+  const facts = readDocumentPrintFailureFacts({ pageCount, pageLimit: PDF_CAPACITY.maxPages });
+  throw createDeliveryBlockingRenderError(
+    'document_page_limit_exceeded',
+    describeDocumentPrintFailure({ code: 'document_page_limit_exceeded', facts }),
+    facts,
+  );
 }
 
 /** What is left of the deadline, with no floor (DPR-INV-10). */

@@ -1,27 +1,15 @@
-import { PDFDocument } from 'pdf-lib';
 import {
   FAST_PDF_POLICY,
-  PDF_SAFETY_LIMIT_EXCEEDED,
+  PDF_CAPACITY,
   getUtf8ByteLength,
-  isFastPdfOutputSizeEligible,
-  isFastPdfPageCountEligible,
   isFastPdfRequestSizeEligible,
   isFastPdfRowCountEligible,
 } from './generated/pdf-export-policy.js';
-import { createDeliveryBlockingRenderError } from './delivery-render-error.js';
+import { createCapacityRefusal } from './pdf-capacity.js';
 
 function createRequestError(message, statusCode) {
   const error = new Error(message);
   error.statusCode = statusCode;
-  return error;
-}
-
-function createSafetyLimitError(message) {
-  const error = createDeliveryBlockingRenderError(
-    PDF_SAFETY_LIMIT_EXCEEDED,
-    message,
-  );
-  error.statusCode = 422;
   return error;
 }
 
@@ -71,45 +59,13 @@ export function parseStructuredFastPdfRequest(event) {
         400,
       );
     }
-    throw createSafetyLimitError(
-      `Structured Fast PDF exceeds the ${FAST_PDF_POLICY.maxRows}-row limit`,
+    throw createCapacityRefusal(
+      'PDF_ROW_LIMIT_EXCEEDED',
+      `Structured Fast PDF exceeds the ${PDF_CAPACITY.maxTableRows}-row limit`,
+      { rowCount, rowLimit: PDF_CAPACITY.maxTableRows },
     );
   }
 
   payload.rowCount = rowCount;
   return { payload, requestBytes, rowCount };
-}
-
-/** Count actual generated pages after metadata and before optional encryption. */
-export async function assertFastPdfPageLimit(pdfBuffer) {
-  const pdfDocument = await PDFDocument.load(pdfBuffer, {
-    updateMetadata: false,
-  });
-  const pageCount = pdfDocument.getPageCount();
-
-  if (!isFastPdfPageCountEligible(pageCount)) {
-    if (pageCount > FAST_PDF_POLICY.maxPages) {
-      throw createSafetyLimitError(
-        `Structured Fast PDF exceeds the ${FAST_PDF_POLICY.maxPages}-page limit`,
-      );
-    }
-    throw createRequestError('Structured Fast PDF contains no pages', 500);
-  }
-
-  return pageCount;
-}
-
-/** Enforce final bytes after optional encryption and before upload. */
-export function assertFastPdfOutputLimit(pdfBuffer) {
-  const outputBytes = pdfBuffer?.length || 0;
-  if (!isFastPdfOutputSizeEligible(outputBytes)) {
-    if (outputBytes > FAST_PDF_POLICY.maxOutputBytes) {
-      throw createSafetyLimitError(
-        `Structured Fast PDF exceeds the ${FAST_PDF_POLICY.maxOutputBytes}-byte output limit`,
-      );
-    }
-    throw createRequestError('Empty PDF buffer generated', 500);
-  }
-
-  return outputBytes;
 }

@@ -17,6 +17,7 @@ import { applyFixedWatermark, applyTiledWatermark } from './watermark-utils.js';
 import { mergePDFsWithMetadata } from './pdf-merger.js';
 import { applyPdfMetadata } from './pdf-metadata.js';
 import { encryptPdfBuffer } from '../pdf-encrypt.js';
+import { assertCaptureWithinCapacity, assertPdfFileSize } from './pdf-capacity.js';
 import {
   extractDashboardIdFromUrl,
   getDashboardData,
@@ -245,6 +246,10 @@ export async function captureSheetPdf(
       dimensions = await loadAllContent(page, { tableMode: options.tableMode });
       mode = options.tableMode ? tableMode : dashboardMode;
     }
+    // Each sheet meets the same capacity check as a single render: a Document
+    // its page cap, a dashboard sheet the height guard (PDF capacity contract
+    // PC-INV-1, PC-D3, PC-D4).
+    assertCaptureWithinCapacity(dimensions, { isDocument });
     await mode.preparePage(page, options);
     const pdfOptions = mode.getPdfOptions(dimensions, options.pageSize, options);
     if (options.watermarkEnabled && options.watermarkText) {
@@ -313,10 +318,12 @@ export async function renderAllSheetsPdf({ browser, viewUrl, sheets, options = {
   }
 
   const merged = await mergePDFsWithMetadata(captured);
-  if (options.password) {
-    return encryptPdfBuffer(merged, options.password, {
-      metadata: { title: options.reportTitle },
-    });
-  }
-  return applyPdfMetadata(merged, { title: options.reportTitle });
+  const finished = options.password
+    ? await encryptPdfBuffer(merged, options.password, {
+        metadata: { title: options.reportTitle },
+      })
+    : await applyPdfMetadata(merged, { title: options.reportTitle });
+  // The merged file within the byte cap, as a recipient gets it (PC-D5).
+  assertPdfFileSize(finished);
+  return finished;
 }

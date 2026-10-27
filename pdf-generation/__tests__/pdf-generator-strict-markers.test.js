@@ -18,7 +18,14 @@ const mocks = vi.hoisted(() => {
       bodyText: 'Quarterly revenue report',
       visibleHeight: 1000,
     })),
-    pdf: vi.fn(async () => Buffer.alloc(20000)),
+    // A real one-page PDF: table mode counts a printed table's pages (PDF
+    // capacity contract PC-D3).
+    pdf: vi.fn(async () => {
+      const { PDFDocument } = await import('pdf-lib');
+      const document = await PDFDocument.create();
+      document.addPage();
+      return Buffer.from(await document.save());
+    }),
   };
   const modeMock = () => ({
     preparePage: vi.fn(async () => {}),

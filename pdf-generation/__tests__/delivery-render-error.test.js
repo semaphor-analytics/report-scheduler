@@ -39,6 +39,18 @@ describe('Document print failure facts', () => {
     });
   });
 
+  it("returns a capacity refusal's facts through the capacity parser (PDF capacity contract PC-INV-3)", () => {
+    const error = createDeliveryBlockingRenderError('PDF_PAGE_LIMIT_EXCEEDED', 'm', {
+      pageCount: 301,
+      pageLimit: 300,
+      sectionTitle: 'not a capacity fact',
+    });
+    expect(deliveryBlockingErrorResponseFields(error)).toEqual({
+      errorCode: 'PDF_PAGE_LIMIT_EXCEEDED',
+      errorFacts: { pageCount: 301, pageLimit: 300 },
+    });
+  });
+
   it("describes a page's Document marker from its code and facts, never its text", () => {
     const error = createRenderErrorFromMarker({
       code: 'document_section_query_failed',

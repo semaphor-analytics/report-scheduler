@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import {
+  DATASET_CODES,
   DATASET_ROWS,
   FAILURE_CODES,
   LAST_COLUMN_HEADER,
@@ -193,13 +194,21 @@ function describeCheck(check, rows) {
 /** Whether a run showed what its case expects. */
 function verdict(testCase, result, check) {
   if (result.harnessError) return { verdict: 'ERROR', why: result.harnessError };
+  if (result.navigationError && !result.readyError && !result.pdf) {
+    return { verdict: 'FAIL', why: `navigation failed, as a download would: ${result.navigationError}` };
+  }
   const expectedCode = testCase.failure
     ? FAILURE_CODES[testCase.failure]
-    : (testCase.variants ?? []).map((variant) => VARIANT_CODES[variant]).find(Boolean) ?? null;
+    : (testCase.variants ?? []).map((variant) => VARIANT_CODES[variant]).find(Boolean) ??
+      DATASET_CODES[testCase.dataset] ??
+      null;
   const code = result.readyError?.code ?? null;
   if (result.refused) {
+    // The worker's backstop: the page should have refused first, with its code.
     const number = (px) => Number(px).toLocaleString('en-US');
-    const why = `refused before printing by generatePdf's size guard: ${number(result.refused.heightPx)} px tall, over ${number(result.refused.maxHeightPx)} px, as a download is`;
+    const why = result.refused.code
+      ? `refused before printing by generatePdf's capacity check (${result.refused.code}, ${result.refused.pageCount} pages), not by the page`
+      : `refused before printing by generatePdf's height guard: ${number(result.refused.heightPx)} px tall, over ${number(result.refused.maxHeightPx)} px, as a download is`;
     return { verdict: 'FAIL', why: expectedCode ? `expected ${expectedCode}; ${why}` : why };
   }
   if (expectedCode) {

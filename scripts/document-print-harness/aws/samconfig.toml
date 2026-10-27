@@ -1,0 +1,17 @@
+# The measurement stack's own SAM settings. aws.mjs always passes this file
+# and runs from this folder, so the repository root's samconfig.toml (the
+# production stack) is never read.
+version = 0.1
+[default.global.parameters]
+stack_name = "semaphor-pdf-capacity-measure"
+region = "us-east-1"
+
+[default.deploy.parameters]
+resolve_s3 = true
+s3_prefix = "semaphor-pdf-capacity-measure"
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false
+fail_on_empty_changeset = false
+
+[default.delete.parameters]
+no_prompts = true

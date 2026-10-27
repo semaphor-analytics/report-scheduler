@@ -2,14 +2,11 @@ import { PDFDocument } from 'pdf-lib';
 import { describe, expect, it } from 'vitest';
 import {
   FAST_PDF_POLICY,
-  PDF_SAFETY_LIMIT_EXCEEDED,
+  PDF_CAPACITY,
   getUtf8ByteLength,
 } from '../lib/generated/pdf-export-policy.js';
-import {
-  assertFastPdfOutputLimit,
-  assertFastPdfPageLimit,
-  parseStructuredFastPdfRequest,
-} from '../lib/fast-pdf-safety.js';
+import { parseStructuredFastPdfRequest } from '../lib/fast-pdf-safety.js';
+import { assertPdfFileSize, assertPdfPageCap } from '../lib/pdf-capacity.js';
 
 function basePayload(overrides = {}) {
   return {
@@ -77,13 +74,13 @@ describe('structured Fast PDF safety', () => {
           rowCount: 999_999,
           tableStructure: {
             headers: ['Value'],
-            rows: Array.from({ length: FAST_PDF_POLICY.maxRows }, () => []),
+            rows: Array.from({ length: PDF_CAPACITY.maxTableRows }, () => []),
           },
         }),
       ),
     });
-    expect(accepted.rowCount).toBe(FAST_PDF_POLICY.maxRows);
-    expect(accepted.payload.rowCount).toBe(FAST_PDF_POLICY.maxRows);
+    expect(accepted.rowCount).toBe(PDF_CAPACITY.maxTableRows);
+    expect(accepted.payload.rowCount).toBe(PDF_CAPACITY.maxTableRows);
 
     expect(() =>
       parseStructuredFastPdfRequest({
@@ -93,7 +90,7 @@ describe('structured Fast PDF safety', () => {
             tableStructure: {
               headers: ['Value'],
               rows: Array.from(
-                { length: FAST_PDF_POLICY.maxRows + 1 },
+                { length: PDF_CAPACITY.maxTableRows + 1 },
                 () => [],
               ),
             },
@@ -102,7 +99,8 @@ describe('structured Fast PDF safety', () => {
       }),
     ).toThrowError(
       expect.objectContaining({
-        code: PDF_SAFETY_LIMIT_EXCEEDED,
+        code: 'PDF_ROW_LIMIT_EXCEEDED',
+        facts: { rowCount: PDF_CAPACITY.maxTableRows + 1, rowLimit: PDF_CAPACITY.maxTableRows },
         deliveryBlocking: true,
         statusCode: 422,
       }),
@@ -146,34 +144,40 @@ describe('structured Fast PDF safety', () => {
     }
   });
 
-  it('accepts 100 generated pages and rejects 101 with the stable code', async () => {
+  it('accepts 300 generated pages and rejects 301 with the stable code (PC-D3)', async () => {
+    expect(PDF_CAPACITY.maxPages).toBe(300);
+    // A 4,000-row card table is about 104 pages: refused at the old 100-page cap.
+    await expect(assertPdfPageCap(await pdfWithPages(104))).resolves.toBe(104);
     await expect(
-      assertFastPdfPageLimit(await pdfWithPages(FAST_PDF_POLICY.maxPages)),
-    ).resolves.toBe(FAST_PDF_POLICY.maxPages);
+      assertPdfPageCap(await pdfWithPages(PDF_CAPACITY.maxPages)),
+    ).resolves.toBe(PDF_CAPACITY.maxPages);
 
     await expect(
-      assertFastPdfPageLimit(
-        await pdfWithPages(FAST_PDF_POLICY.maxPages + 1),
+      assertPdfPageCap(
+        await pdfWithPages(PDF_CAPACITY.maxPages + 1),
       ),
     ).rejects.toMatchObject({
-      code: PDF_SAFETY_LIMIT_EXCEEDED,
+      code: 'PDF_PAGE_LIMIT_EXCEEDED',
+      facts: { pageCount: PDF_CAPACITY.maxPages + 1, pageLimit: PDF_CAPACITY.maxPages },
       deliveryBlocking: true,
       statusCode: 422,
     });
   });
 
-  it('accepts exactly 50 MiB and rejects one byte over with the stable code', () => {
+  it('accepts exactly 50 MiB and rejects one byte over with the stable code (PC-D5)', () => {
+    expect(PDF_CAPACITY.maxFileBytes).toBe(52_428_800);
     expect(
-      assertFastPdfOutputLimit({ length: FAST_PDF_POLICY.maxOutputBytes }),
-    ).toBe(FAST_PDF_POLICY.maxOutputBytes);
+      assertPdfFileSize({ length: PDF_CAPACITY.maxFileBytes }),
+    ).toBe(PDF_CAPACITY.maxFileBytes);
 
     expect(() =>
-      assertFastPdfOutputLimit({
-        length: FAST_PDF_POLICY.maxOutputBytes + 1,
+      assertPdfFileSize({
+        length: PDF_CAPACITY.maxFileBytes + 1,
       }),
     ).toThrowError(
       expect.objectContaining({
-        code: PDF_SAFETY_LIMIT_EXCEEDED,
+        code: 'PDF_SIZE_LIMIT_EXCEEDED',
+        facts: { bytes: PDF_CAPACITY.maxFileBytes + 1, byteLimit: PDF_CAPACITY.maxFileBytes },
         deliveryBlocking: true,
         statusCode: 422,
       }),

@@ -2,11 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { PDFDocument } from 'pdf-lib';
 import { generatePdfFromData } from '../../lib/pdf-from-data-generator.js';
-import {
-  assertFastPdfOutputLimit,
-  assertFastPdfPageLimit,
-  parseStructuredFastPdfRequest,
-} from '../../lib/fast-pdf-safety.js';
+import { parseStructuredFastPdfRequest } from '../../lib/fast-pdf-safety.js';
+import { assertPdfFileSize, assertPdfPageCap } from '../../lib/pdf-capacity.js';
 
 const fixtureName = process.argv[2];
 if (!['row-heavy', 'byte-heavy'].includes(fixtureName)) {
@@ -135,10 +132,10 @@ try {
         updateMetadata: false,
       });
       generatedPages = document.getPageCount();
-      await assertFastPdfPageLimit(preparedPdf);
+      await assertPdfPageCap(preparedPdf);
     },
   });
-  finalBytes = assertFastPdfOutputLimit(pdfBuffer);
+  finalBytes = assertPdfFileSize(pdfBuffer);
 } catch (error) {
   outcome = 'rejected';
   errorCode = error?.code || null;

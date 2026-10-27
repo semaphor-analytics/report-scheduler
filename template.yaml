@@ -240,7 +240,12 @@ Resources:
     Properties:
       Handler: app.handler
       CodeUri: ./pdf-generation # Directory for PDF generation code
-      MemorySize: 4096
+      # PDF capacity contract PC-D15: headroom for a 5,000-row Document (3.8 to
+      # 3.9 GB measured at 4096 MB) and disk for Chrome's shared memory on the
+      # largest prints (512 MB filled and crashed Chrome).
+      MemorySize: 6144
+      EphemeralStorage:
+        Size: 2048
       Role: !GetAtt GeneratePdfFunctionRole.Arn
       Layers:
         - !Ref QpdfLayer

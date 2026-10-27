@@ -1,0 +1,43 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  PDF capacity measurement (development tooling, never production). One
+  function set up as the production PDF worker is (GeneratePdfFunction in
+  ../../../template.yaml): Node 22, x86_64, 6144 MB, 300 s, 2048 MB /tmp, the
+  same pdf-generation code and qpdf layer. It has no Function URL, bucket, app
+  URL, API key or other secret: every case makes its own synthetic rows and
+  serves its own dev pages inside the function. Deploy, run and delete it with
+  ../aws.mjs; see the harness README.
+
+Parameters:
+  QpdfLayerArn:
+    Type: String
+    Description: The qpdf layer version the production PDF worker uses (read from it by aws.mjs; used, never changed).
+
+Resources:
+  PdfCapacityMeasure:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: PDF capacity measurement (synthetic data only; invoked with aws lambda invoke)
+      CodeUri: ../out/aws/function
+      Handler: handler.handler
+      Runtime: nodejs22.x
+      Architectures:
+        - x86_64
+      MemorySize: 6144
+      Timeout: 300
+      EphemeralStorage:
+        Size: 2048
+      Layers:
+        - !Ref QpdfLayerArn
+      Environment:
+        Variables:
+          PDF_ENCRYPTION_BACKEND: qpdf
+          QPDF_BIN: /opt/bin/qpdf
+          LD_LIBRARY_PATH: /opt/lib:/var/lang/lib:/lib64:/usr/lib64
+          # aws.mjs changes it before a cold run, so Lambda starts a new sandbox.
+          MEASURE_SANDBOX: initial
+
+Outputs:
+  FunctionName:
+    Value: !Ref PdfCapacityMeasure

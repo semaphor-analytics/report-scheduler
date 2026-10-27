@@ -3,6 +3,10 @@ import {
   isDocumentPrintFailureCode,
   readDocumentPrintFailureFacts,
 } from './generated/document-print.js';
+import {
+  isPdfCapacityRefusalCode,
+  readPdfCapacityFacts,
+} from './generated/pdf-export-policy.js';
 
 /**
  * A failure that must stop the delivery, with the page's code. A Document
@@ -55,7 +59,13 @@ export function deliveryBlockingErrorResponseFields(error) {
   if (error?.deliveryBlocking !== true || typeof error.code !== 'string') {
     return {};
   }
-  const facts = error.facts ? readDocumentPrintFailureFacts(error.facts) : {};
+  // Each code's facts through its one parser: a Document print failure's (C3)
+  // or a capacity refusal's (PDF capacity contract PC-INV-3).
+  const facts = !error.facts
+    ? {}
+    : isPdfCapacityRefusalCode(error.code)
+      ? readPdfCapacityFacts(error.facts)
+      : readDocumentPrintFailureFacts(error.facts);
   return {
     errorCode: error.code,
     ...(Object.keys(facts).length > 0 ? { errorFacts: facts } : {}),

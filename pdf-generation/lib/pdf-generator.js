@@ -28,24 +28,7 @@ import { shouldGenerateAllSheets, getCurrentSheetId } from './dashboard-helpers.
 import { applyFixedWatermark, applyTiledWatermark } from './watermark-utils.js';
 import { applyPrintState } from './print-state-utils.js';
 import { redactForLog } from './log-redaction.js';
-
-/** The tallest page `generatePdf` prints, in CSS pixels; taller fails as likely out of memory. */
-export const MAX_CAPTURE_HEIGHT_PX = 300_000;
-
-/**
- * `generatePdf`'s size guard, shared so the Document print harness exercises
- * it as a download does (ledger P4-14). A Document's height is its page count
- * times its page height: 1,056 px a Letter page, so 284 pages at most.
- */
-export function assertCaptureHeight(dimensions) {
-  if (dimensions.finalHeight > MAX_CAPTURE_HEIGHT_PX) {
-    throw new Error(
-      `Document too large for PDF export (${Math.round(dimensions.finalHeight / 1000)}k pixels). ` +
-      `Please reduce the data or use CSV export.`
-    );
-  }
-}
-
+import { assertCaptureWithinCapacity, assertPdfFileSize, assertPdfPageCap } from './pdf-capacity.js';
 
 export async function generatePdf(url, options = {}) {
   let browser = null;
@@ -187,8 +170,8 @@ export async function generatePdf(url, options = {}) {
     timings.contentLoadDone = Date.now();
     console.log(`⏱️  Content loading: ${timings.contentLoadDone - timings.contentLoadStart}ms`);
 
-    // Check for excessively large documents that will cause OOM
-    assertCaptureHeight(dimensions);
+    // Refuse what one PDF cannot hold, before printing.
+    assertCaptureWithinCapacity(dimensions, { isDocument: options.pdfMode === 'document' });
 
     // 4. Apply mode-specific preparation and get PDF options
     // Detect table type for specialized handling
@@ -353,6 +336,11 @@ export async function generatePdf(url, options = {}) {
     if (!pdfBuffer?.length) {
       throw new Error('Empty PDF buffer generated');
     }
+    // A table's pages are known only once printed: the page cap's check
+    // (PDF capacity contract PC-D3); a Document's ran before printing.
+    if (options.tableMode) {
+      await assertPdfPageCap(pdfBuffer);
+    }
 
     if (pdfBuffer.length < 10000) {
       console.warn(
@@ -376,6 +364,9 @@ export async function generatePdf(url, options = {}) {
         title: options.reportTitle,
       });
     }
+
+    // The finished file within the byte cap, as a recipient gets it (PC-D5).
+    assertPdfFileSize(pdfBuffer);
 
     if (layoutApplied) {
       pdfBuffer.layoutApplied = layoutApplied;

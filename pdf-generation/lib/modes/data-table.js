@@ -60,7 +60,7 @@ export async function preparePage(page, options = {}) {
   console.log(`Extracted data table: ${rowCount} rows`);
 
   // Refuse a table too large for a PDF (shared limit, every request).
-  assertTableRowCeiling(rowCount, { mode: 'data', deliveryStrict: options.deliveryStrict });
+  assertTableRowCeiling(rowCount);
 
   // Paginate the data
   const pageSize = options.pageSize || 'Letter';

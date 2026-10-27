@@ -10,7 +10,21 @@
 export const DATASET_ROWS = {
   'wrapped-278': 1970,
   'rows-10000': 10_000,
+  'rows-7500': 7_500,
+  'rows-6000': 6_000,
+  'rows-5000': 5_000,
   'kpi-and-table': 1000,
+};
+
+/**
+ * Datasets that must stop with a code: a Table section over the PDF row limit
+ * (5,000 rows, PDF capacity contract PC-D2) stops before its pages lay out.
+ * `wrapped-278` plans exactly 300 pages, the page cap, and prints.
+ */
+export const DATASET_CODES = {
+  'rows-10000': 'document_row_limit_exceeded',
+  'rows-7500': 'document_row_limit_exceeded',
+  'rows-6000': 'document_row_limit_exceeded',
 };
 
 /** The print failure code (C1) each forced failure must stop with. */
@@ -24,7 +38,14 @@ export const FAILURE_CODES = {
   stall: 'document_print_timed_out',
 };
 
-export const VARIANTS = ['a4-landscape', 'nulls', 'empty', 'wide'];
+/**
+ * `variable`: a data variable in the header that answers after the rows and
+ * wraps the line; the print waits for it (data variables DV-D32).
+ * `long-words`: an unbreakable reference in some notes, far wider than the
+ * column; it breaks inside the cell and the PDF prints complete (PDF capacity
+ * contract ledger P0-03).
+ */
+export const VARIANTS = ['a4-landscape', 'nulls', 'empty', 'wide', 'variable', 'long-words'];
 
 /**
  * Variants that must stop with a code. `wide` keeps the default column widths,
@@ -49,6 +70,8 @@ export const SUITES = {
     { dataset: 'wrapped-278', variants: ['a4-landscape'] },
     { dataset: 'wrapped-278', variants: ['nulls'] },
     { dataset: 'wrapped-278', variants: ['empty'] },
+    { dataset: 'wrapped-278', variants: ['variable'] },
+    { dataset: 'kpi-and-table', variants: ['long-words'] },
   ],
   /** Every forced failure stops with its code (`stall` waits out the 120 s deadline). */
   failures: [

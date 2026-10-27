@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
   FAST_PDF_POLICY,
-  PDF_SAFETY_LIMIT_EXCEEDED,
+  PDF_CAPACITY,
 } from '../lib/generated/pdf-export-policy.js';
 
 const mocks = vi.hoisted(() => ({
@@ -64,12 +64,14 @@ describe('structured Fast PDF handler safety responses', () => {
 
   it('returns the stable terminal code for actual row overflow before Chromium', async () => {
     const response = await handler(
-      eventWithRows(FAST_PDF_POLICY.maxRows + 1, 1),
+      eventWithRows(PDF_CAPACITY.maxTableRows + 1, 1),
     );
 
     expect(response.statusCode).toBe(422);
+    // The code and facts the app writes its line from (PDF capacity contract PC-INV-3).
     expect(JSON.parse(response.body)).toMatchObject({
-      errorCode: PDF_SAFETY_LIMIT_EXCEEDED,
+      errorCode: 'PDF_ROW_LIMIT_EXCEEDED',
+      errorFacts: { rowCount: PDF_CAPACITY.maxTableRows + 1, rowLimit: PDF_CAPACITY.maxTableRows },
     });
     expect(mocks.generatePdfFromData).not.toHaveBeenCalled();
   });
@@ -95,14 +97,15 @@ describe('structured Fast PDF handler safety responses', () => {
 
   it('returns the stable code when final encrypted-or-plain output is oversized', async () => {
     mocks.generatePdfFromData.mockResolvedValue({
-      length: FAST_PDF_POLICY.maxOutputBytes + 1,
+      length: PDF_CAPACITY.maxFileBytes + 1,
     });
 
     const response = await handler(eventWithRows(1));
 
     expect(response.statusCode).toBe(422);
     expect(JSON.parse(response.body)).toMatchObject({
-      errorCode: PDF_SAFETY_LIMIT_EXCEEDED,
+      errorCode: 'PDF_SIZE_LIMIT_EXCEEDED',
+      errorFacts: { bytes: PDF_CAPACITY.maxFileBytes + 1, byteLimit: PDF_CAPACITY.maxFileBytes },
     });
   });
 });

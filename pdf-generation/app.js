@@ -17,11 +17,8 @@ import {
 import { redactForLog } from './lib/log-redaction.js';
 import { generatePdfFromData } from './lib/pdf-from-data-generator.js';
 import { deliveryBlockingErrorResponseFields } from './lib/delivery-render-error.js';
-import {
-  assertFastPdfOutputLimit,
-  assertFastPdfPageLimit,
-  parseStructuredFastPdfRequest,
-} from './lib/fast-pdf-safety.js';
+import { parseStructuredFastPdfRequest } from './lib/fast-pdf-safety.js';
+import { assertPdfFileSize, assertPdfPageCap } from './lib/pdf-capacity.js';
 
 // Initialize S3 client
 const s3 = new S3Client({});
@@ -348,7 +345,7 @@ async function handleDataDirectRequest(event) {
       isLambda: true,
       wideTableStrategy: payload.wideTableStrategy,
       validatePreparedPdf: async preparedPdf => {
-        generatedPageCount = await assertFastPdfPageLimit(preparedPdf);
+        generatedPageCount = await assertPdfPageCap(preparedPdf);
       },
     };
 
@@ -358,7 +355,7 @@ async function handleDataDirectRequest(event) {
     let pdfBuffer = await generatePdfFromData(payload, options);
     const layoutApplied = pdfBuffer?.layoutApplied || null;
 
-    const outputBytes = assertFastPdfOutputLimit(pdfBuffer);
+    const outputBytes = assertPdfFileSize(pdfBuffer);
 
     console.log('PDF generated successfully:', {
       generatedPageCount,

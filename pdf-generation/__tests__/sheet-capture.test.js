@@ -61,6 +61,7 @@ vi.mock('../lib/modes/document.js', async (importOriginal) => ({
   documentReadyDeadline: (await importOriginal()).documentReadyDeadline,
   printDocument: (await importOriginal()).printDocument,
   readDocumentDimensions: (await importOriginal()).readDocumentDimensions,
+  assertDocumentPageCap: (await importOriginal()).assertDocumentPageCap,
 }));
 vi.mock('../lib/watermark-utils.js', () => ({
   applyFixedWatermark: mocks.applyFixedWatermark,
@@ -72,6 +73,7 @@ vi.mock('../lib/pdf-merger.js', () => ({
 vi.mock('../lib/pdf-metadata.js', () => ({ applyPdfMetadata: mocks.applyPdfMetadata }));
 vi.mock('../pdf-encrypt.js', () => ({ encryptPdfBuffer: mocks.encryptPdfBuffer }));
 
+const { PDF_CAPACITY } = await import('../lib/generated/pdf-export-policy.js');
 const {
   buildSheetPrintUrl,
   captureSheetPdf,
@@ -510,6 +512,44 @@ describe('renderAllSheetsPdf', () => {
       metadata: { title: 'Report' },
     });
     expect(mocks.applyPdfMetadata).not.toHaveBeenCalled();
+  });
+
+  // PDF capacity contract Phase 4: every sheet and the merged file meet the
+  // same caps as a single render (PC-INV-1, PC-D4, PC-D5).
+  it('refuses a dashboard sheet taller than the height guard before capturing it, naming the sheet', async () => {
+    const { browser, pages } = createBrowser();
+    mocks.loadAllContent.mockResolvedValueOnce({ finalHeight: 300_001 });
+    const failure = await renderAllSheetsPdf({
+      browser,
+      viewUrl: VIEW_URL,
+      sheets: [dashboardSheet, documentSheet],
+    }).catch((error) => error);
+    expect(failure).toBeInstanceOf(SheetCaptureError);
+    expect(failure).toMatchObject({
+      code: 'PDF_CAPTURE_TOO_TALL',
+      deliveryBlocking: true,
+      facts: { heightPx: 300_001, heightLimitPx: 300_000 },
+    });
+    expect(failure.message).toContain('Sheet "Overview" (1 of 2)');
+    expect(pages[0].pdf).not.toHaveBeenCalled();
+    expect(mocks.mergePDFsWithMetadata).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['plain', {}],
+    ['encrypted', { password: 'secret' }],
+  ])('refuses a %s merged file over the byte cap, with the size code and facts', async (_label, options) => {
+    const { browser } = createBrowser();
+    const bytes = PDF_CAPACITY.maxFileBytes + 1;
+    mocks.mergePDFsWithMetadata.mockResolvedValueOnce(Buffer.alloc(bytes));
+    mocks.encryptPdfBuffer.mockResolvedValueOnce(Buffer.alloc(bytes));
+    await expect(
+      renderAllSheetsPdf({ browser, viewUrl: VIEW_URL, sheets: [dashboardSheet], options }),
+    ).rejects.toMatchObject({
+      code: 'PDF_SIZE_LIMIT_EXCEEDED',
+      deliveryBlocking: true,
+      facts: { bytes, byteLimit: PDF_CAPACITY.maxFileBytes },
+    });
   });
 
   it('stops at the first failing sheet', async () => {

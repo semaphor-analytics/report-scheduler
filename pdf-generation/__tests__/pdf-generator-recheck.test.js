@@ -1,3 +1,4 @@
+import { PDFDocument } from 'pdf-lib';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
@@ -57,12 +58,20 @@ vi.mock('../lib/modes/document.js', async (importOriginal) => ({
   documentReadyDeadline: (await importOriginal()).documentReadyDeadline,
   printDocument: (await importOriginal()).printDocument,
   readDocumentDimensions: (await importOriginal()).readDocumentDimensions,
+  assertDocumentPageCap: (await importOriginal()).assertDocumentPageCap,
 }));
 vi.mock('../lib/pdf-metadata.js', () => ({ applyPdfMetadata: vi.fn(async (buffer) => buffer) }));
 vi.mock('../lib/watermark-utils.js', () => ({ applyFixedWatermark: vi.fn(), applyTiledWatermark: vi.fn() }));
 vi.mock('../lib/print-state-utils.js', () => ({ applyPrintState: vi.fn() }));
 
 const { generatePdf } = await import('../lib/pdf-generator.js');
+const { PDF_CAPACITY } = await import('../lib/generated/pdf-export-policy.js');
+
+async function pdfWithPages(pageCount) {
+  const document = await PDFDocument.create();
+  for (let index = 0; index < pageCount; index += 1) document.addPage();
+  return Buffer.from(await document.save());
+}
 
 const URL = 'http://localhost:3000/view/dashboard/d_1?token=t&isPdfRender=true';
 
@@ -99,6 +108,8 @@ describe('generatePdf capture-point recheck', () => {
     ['table mode', { tableMode: true }],
     ['a visual export', { isVisualExport: true }],
   ])('never rechecks for %s', async (_name, options) => {
+    // A table's pages are counted after printing, so it prints a real PDF.
+    if (options.tableMode) mocks.page.pdf.mockResolvedValueOnce(await pdfWithPages(1));
     await generatePdf(URL, options);
     expect(mocks.recheckReadyBeforeCapture).not.toHaveBeenCalled();
     expect(mocks.page.pdf).toHaveBeenCalled();
@@ -149,10 +160,37 @@ describe('generatePdf for a Document', () => {
     expect(mocks.page.pdf).not.toHaveBeenCalled();
   });
 
-  // Ledger P4-14: the download path's size guard, which the print harness also runs.
-  it('refuses a Document taller than the size guard before printing it (385 Letter pages)', async () => {
+  // PDF capacity contract PC-D3, PC-D11: a Document is held to the page cap by
+  // its layout record's page count, before printing, whatever its page size.
+  const laidOut = (pageCount) =>
+    JSON.stringify({ stage: 'laidOut', measuredRowCount: 10, totalRowCount: 10, pageCount });
+
+  it('refuses a Document of 301 pages before printing it, with the page-limit code and facts', async () => {
     const shape = await mocks.page.evaluate();
-    mocks.page.evaluate.mockResolvedValue({ ...shape, finalHeight: 385 * 1056 });
+    // 301 landscape Letter pages are 245,616 px: under the old height guard, refused by the cap.
+    mocks.page.evaluate.mockResolvedValue({ ...shape, finalHeight: 301 * 816, layout: laidOut(301) });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(generatePdf(URL, { pdfMode: 'document' })).rejects.toMatchObject({
+      code: 'document_page_limit_exceeded',
+      deliveryBlocking: true,
+      facts: { pageCount: 301, pageLimit: 300 },
+    });
+    expect(mocks.page.pdf).not.toHaveBeenCalled();
+    mocks.page.evaluate.mockResolvedValue(shape);
+  });
+
+  it('prints a Document of 300 pages, though taller than the height guard (300 Letter portrait pages)', async () => {
+    const shape = await mocks.page.evaluate();
+    mocks.page.evaluate.mockResolvedValue({ ...shape, finalHeight: 300 * 1056, layout: laidOut(300) });
+    await generatePdf(URL, { pdfMode: 'document' });
+    expect(mocks.page.pdf).toHaveBeenCalled();
+    mocks.page.evaluate.mockResolvedValue(shape);
+  });
+
+  // Ledger P4-14: a page that publishes no layout record keeps the height guard.
+  it('keeps the height guard for a Document page with no layout record (385 Letter pages)', async () => {
+    const shape = await mocks.page.evaluate();
+    mocks.page.evaluate.mockResolvedValue({ ...shape, finalHeight: 385 * 1056, layout: null });
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await expect(generatePdf(URL, { pdfMode: 'document' })).rejects.toThrow(
       'Document too large for PDF export (407k pixels)',
@@ -161,12 +199,47 @@ describe('generatePdf for a Document', () => {
     mocks.page.evaluate.mockResolvedValue(shape);
   });
 
-  it('prints a Document just under the size guard (280 Letter pages)', async () => {
-    const shape = await mocks.page.evaluate();
-    mocks.page.evaluate.mockResolvedValue({ ...shape, finalHeight: 280 * 1056 });
-    await generatePdf(URL, { pdfMode: 'document' });
-    expect(mocks.page.pdf).toHaveBeenCalled();
-    mocks.page.evaluate.mockResolvedValue(shape);
+  it('still refuses a dashboard taller than 300,000 px, with its code and facts (PC-D4, PC-INV-3)', async () => {
+    const { loadAllContent } = await import('../lib/content-loader.js');
+    loadAllContent.mockResolvedValueOnce({ finalHeight: 300_001, tableCount: 0 });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(generatePdf(URL, {})).rejects.toMatchObject({
+      code: 'PDF_CAPTURE_TOO_TALL',
+      deliveryBlocking: true,
+      facts: { heightPx: 300_001, heightLimitPx: 300_000 },
+    });
+    expect(mocks.page.pdf).not.toHaveBeenCalled();
   });
 });
 
+// PDF capacity contract Phase 4: a single render meets the same page and byte
+// caps as the fast path, for downloads and deliveries alike (PC-INV-1).
+describe('generatePdf capacity after printing', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  it('prints a table of 300 pages and refuses one of 301, with the page code and facts', async () => {
+    mocks.page.pdf.mockResolvedValueOnce(await pdfWithPages(300));
+    await expect(generatePdf(URL, { tableMode: true })).resolves.toBeTruthy();
+    mocks.page.pdf.mockResolvedValueOnce(await pdfWithPages(301));
+    await expect(generatePdf(URL, { tableMode: true })).rejects.toMatchObject({
+      code: 'PDF_PAGE_LIMIT_EXCEEDED',
+      deliveryBlocking: true,
+      facts: { pageCount: 301, pageLimit: 300 },
+    });
+  });
+
+  it('refuses a finished file over the byte cap, with the size code and facts', async () => {
+    const bytes = PDF_CAPACITY.maxFileBytes + 1;
+    mocks.page.pdf.mockResolvedValueOnce(Buffer.alloc(bytes));
+    await expect(generatePdf(URL, {})).rejects.toMatchObject({
+      code: 'PDF_SIZE_LIMIT_EXCEEDED',
+      deliveryBlocking: true,
+      facts: { bytes, byteLimit: PDF_CAPACITY.maxFileBytes },
+    });
+  });
+});

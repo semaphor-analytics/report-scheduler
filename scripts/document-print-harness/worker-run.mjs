@@ -15,17 +15,24 @@ const LIFTED_LIMIT_MS = 30 * 60_000;
 /** The worker's Document mode, page setup and size guard, from a `pdf-generation` folder. */
 export async function loadWorker(workerDir) {
   const load = (file) => import(pathToFileURL(path.join(workerDir, file)).href);
-  const [documentMode, pageSetup, generator] = await Promise.all([
+  const [documentMode, pageSetup, generator, capacity] = await Promise.all([
     load('lib/modes/document.js'),
     load('lib/page-setup.js'),
     load('lib/pdf-generator.js'),
+    // The capacity checks' own module; an older worker keeps them in the generator.
+    load('lib/pdf-capacity.js').catch(() => null),
   ]);
+  const checks = capacity ?? generator;
   return {
     documentMode,
     setupPage: pageSetup.setupPage,
-    // generatePdf's size guard (ledger P4-14); an older worker keeps it inline, out of reach here.
-    assertCaptureHeight: generator.assertCaptureHeight,
-    maxCaptureHeightPx: generator.MAX_CAPTURE_HEIGHT_PX,
+    // generatePdf's check before printing: the page cap by page count (PDF capacity
+    // contract PC-D3), else the height guard (ledger P4-14); an older worker keeps
+    // it inline, out of reach here.
+    assertCapacity: checks.assertCaptureWithinCapacity
+      ? (dimensions) => checks.assertCaptureWithinCapacity(dimensions, { isDocument: true })
+      : checks.assertCaptureHeight,
+    maxCaptureHeightPx: checks.MAX_CAPTURE_HEIGHT_PX,
     hasReadyDeadline: typeof documentMode.documentReadyDeadline === 'function',
     hasPrintBudget: typeof documentMode.printDocument === 'function',
   };
@@ -37,11 +44,13 @@ const describe = (error) => String(error?.message ?? error).slice(0, 400);
  * Prints `url` on `page`. `limits: 'worker'` keeps the worker's time bounds;
  * `'lifted'` gives readiness and print 30 minutes each and navigates to
  * DOMContentLoaded, for an emulated Lambda image, which is far slower than a
- * real Lambda (its runs measure memory, not time). Returns timings, the
+ * real Lambda (its runs measure memory, not time). `sizeGuard: false` skips
+ * only the size guard, keeping the worker's time bounds: the PDF capacity
+ * measurement prints a Document the guard would refuse. Returns timings, the
  * readiness failure if any (code, facts), the page's layout record and the
  * PDF (`buffer`, `bytes`, `ms`, `limitMs`) or its error.
  */
-export async function printThroughWorker(page, worker, { url, startedAt, navigation = 'worker', limits = 'worker' }) {
+export async function printThroughWorker(page, worker, { url, startedAt, navigation = 'worker', limits = 'worker', sizeGuard = true }) {
   const { documentMode, setupPage } = worker;
   const lifted = limits === 'lifted';
   const result = { timings: {}, navigationError: null, readyError: null, layout: null, pdf: null };
@@ -59,6 +68,9 @@ export async function printThroughWorker(page, worker, { url, startedAt, navigat
     result.navigationError = describe(error);
   }
   result.timings.navigationMs = Date.now() - navigationStart;
+  // generatePdf fails the export when navigation fails; so does this, unless
+  // the limits are lifted for an emulated image (PDF capacity contract P0-07).
+  if (result.navigationError && !lifted) return result;
 
   const readyDeadline = lifted
     ? startedAt + LIFTED_LIMIT_MS
@@ -92,16 +104,19 @@ export async function printThroughWorker(page, worker, { url, startedAt, navigat
 
   if (result.readyError) return result;
 
-  // generatePdf's size guard, where a download runs it: after readiness, before
-  // printing. Lifted limits skip it, to measure a print the guard would refuse.
-  if (worker.assertCaptureHeight && documentMode.readDocumentDimensions) {
+  // generatePdf's capacity check, where a download runs it: after readiness,
+  // before printing. Lifted limits skip it, to measure a print it would refuse.
+  if (worker.assertCapacity && documentMode.readDocumentDimensions) {
     result.dimensions = await documentMode.readDocumentDimensions(page).catch(() => null);
-    if (result.dimensions && !lifted) {
+    if (result.dimensions && !lifted && sizeGuard) {
       try {
-        worker.assertCaptureHeight(result.dimensions);
+        worker.assertCapacity(result.dimensions);
       } catch (error) {
         result.refused = {
+          code: error?.code ?? null,
+          facts: error?.facts ?? null,
           message: describe(error),
+          pageCount: result.dimensions.pageCount ?? null,
           heightPx: result.dimensions.finalHeight,
           maxHeightPx: worker.maxCaptureHeightPx,
         };

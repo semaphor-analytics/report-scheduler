@@ -98,11 +98,11 @@ export async function preparePage(page, options = {}) {
     return await dataTableMode.preparePage(page, options);
   }
 
-  // A generic table's body rows, refused above the limit on a strict render only.
+  // A generic table's body rows, refused above the shared limit (IN-04).
   const rowCount = await page.evaluate(
     () => document.querySelectorAll('table tbody tr').length,
   );
-  assertTableRowCeiling(rowCount, { mode: 'table', deliveryStrict: options.deliveryStrict });
+  assertTableRowCeiling(rowCount);
   
   // Clean up the page to prevent empty first page and remove unnecessary elements
   await page.evaluate(() => {

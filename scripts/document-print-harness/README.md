@@ -32,11 +32,13 @@ nothing here is deployed.
    server, no port, and any request to another host is refused.
 3. **Run the worker's own steps.** `worker-run.mjs` imports the worker's
    `lib/modes/document.js`, `lib/page-setup.js` and `lib/pdf-generator.js` and
-   runs navigation, readiness, the size guard (`assertCaptureHeight` on
-   `readDocumentDimensions`: a page stack over 300,000 px is refused, as a
-   download refuses it), preparation and print exactly as `generatePdf` does
-   for a Document, with the worker's own deadlines. Nothing is re-implemented.
-   `--limits lifted` skips the guard, to measure a print it would refuse.
+   runs navigation, readiness, the capacity check before printing
+   (`assertCaptureWithinCapacity` on `readDocumentDimensions`: a Document over
+   the PDF page cap, 300 pages, is refused by its page count, as a download
+   refuses it; the page itself refuses first, with `document_page_limit_exceeded`),
+   preparation and print exactly as `generatePdf` does for a Document, with
+   the worker's own deadlines. Nothing is re-implemented. `--limits lifted`
+   skips the check, to measure a print it would refuse.
 4. **Measure.** On the desktop: stage timings, React commits, printed slice
    mounts (per 500-row measuring step), time spent in page-text reads, a
    150 ms sample of the page's markers, and Chrome's memory. In the Lambda
@@ -128,6 +130,12 @@ A run's JSON holds:
 
 - **The data is synthetic.** It is one shape per dataset, not a customer's
   Document. A failure on a real Document still needs that Document.
+- **The fonts are fallbacks.** The dev pages load no web font, so the report
+  font (Open Sans first) falls back to Arial on a Mac and to a wider font on
+  the Lambda, while production's print view loads Open Sans. Page counts of
+  wrapped text can differ from production by a few percent: `wrapped-278`
+  plans 300 pages on a Mac and 325 on the Lambda (PDF capacity contract
+  ledger CO-02).
 - **Desktop timings bracket a Lambda; they do not measure one.** A Mac's CPU is
   faster, Chrome runs several processes, and three flags are off. `--cpu 2` and
   `--cpu 4` are rough stand-ins for a slower CPU.
@@ -158,7 +166,14 @@ A run's JSON holds:
 ## Reference results, 2026-10-24
 
 What the Document PDF reliability plan measured with this page, so a later run
-has something to compare against (ledger P4-04 to P4-10). Desktop is Chrome
+has something to compare against (ledger P4-04 to P4-10). Since 2026-10-26 a
+word wider than its cell breaks inside the cell in print (PDF capacity
+contract ledger P0-03), so the measuring layer and the pages use the same
+column widths: `wrapped-278` now plans 300 pages on desktop and
+`kpi-and-table` 152. `rows-7500` (about 290 pages, near the PDF page cap)
+printed in 14 s at 3.8 GB private memory on desktop. The `long-words` variant
+puts an unbreakable reference in some notes; `diagnose-page-overflow.mjs`
+compares an overflowing page's rows and columns with the measuring layer's. Desktop is Chrome
 155 on Apple silicon; x2 and x4 are `--cpu 2` and `--cpu 4`.
 
 | Case | Ready | Print | PDF | Private memory |
@@ -170,9 +185,9 @@ has something to compare against (ledger P4-04 to P4-10). Desktop is Chrome
 | `rows-10000`, x4 | 32 to 58 s | 69 to 82 s | 41 MB | |
 
 - The 10,000-row print times above ran with the size guard skipped (the
-  harness did not run it then). A download refuses those 385 pages
-  (406,560 px) before printing, and so does this harness now (ledger P4-14):
-  any Document over about 284 Letter pages fails at the guard.
+  harness did not run it then). Those 385 pages are now over the PDF page cap
+  (PDF capacity contract PC-D3): the page refuses them before any page mounts
+  (`document_page_limit_exceeded`, about 5 s, 1 GB), and `prints` expects it.
 - At x4 the 10,000-row print overran the old fixed 60 s print limit every
   time; the worker now gives the print what readiness left of its 120 s
   deadline plus 60 s (`documentPrintTimeoutMs`), and it completes.
@@ -184,6 +199,89 @@ has something to compare against (ledger P4-04 to P4-10). Desktop is Chrome
 - Before the plan's changes the same page remounted every printed slice on
   each 500-row measuring step (1,113 mounts for 279 pages, 6,237 for 385) and
   missed the deadline at x4: the production failure (ledger P0-03, P0-04).
+
+## Measuring on a real Lambda
+
+`aws.mjs` prints on a real Lambda set up as the production PDF worker is
+(`GeneratePdfFunction`: Node 22, x86_64, 6144 MB, 300 s, 2048 MB of `/tmp`, its
+qpdf layer). It covers every PDF mechanism, not only Documents: the structured
+fast path, a Table card's rendered path, Documents and the all-sheets PDF,
+plain and encrypted. It was built for the
+[PDF capacity contract](../../../semaphor-app/docs/implementation-plans/pdf-capacity-contract/PLAN.md),
+whose ledger (Phase 0) holds the measurements so far.
+
+**Use it** for any change that can move a PDF's memory, time or limits: the
+worker's memory or disk, a row or page limit, a print path, Chrome flags,
+encryption, a large-print layout. It is the only way to measure Lambda time,
+and the only way to measure large cases' memory from Apple silicon. Use the
+desktop and Lambda-image runs above first for correctness; come here for
+numbers that decide something.
+
+**Before you deploy, ask Rohit.** The stack, `semaphor-pdf-capacity-measure`
+in `us-east-1`, is separate from production but lives in the production
+account. It holds one function (`aws/template.yaml`) and has no Function URL,
+bucket, app URL, API key or other secret. Each case makes its own synthetic
+rows and serves the dev pages from inside the function; Chrome resolves only
+their host. Every SAM command runs from `aws/` with `aws/samconfig.toml`, so
+the repository root's `samconfig.toml` (the production stack) is never read;
+the only production call is a read of the production stack's resource list,
+for its qpdf layer version (never the function's configuration, which carries
+its environment).
+
+**Deploy it to measure, delete it when done.** Idle, it costs nothing worth
+counting: Lambda bills per invocation, and the code in SAM's bucket and the
+log group cost under a cent a month. But a deployed function runs whatever
+was last built, so a copy left standing invites measuring stale code. Build
+and deploy right before you measure, then `delete`, which removes the stack
+and the function's log group. When production's `GeneratePdfFunction` changes
+size, runtime or layer, change `aws/template.yaml` with it.
+
+```bash
+node scripts/document-print-harness/aws.mjs build
+```
+
+```bash
+node scripts/document-print-harness/aws.mjs smoke
+```
+
+```bash
+node scripts/document-print-harness/aws.mjs deploy
+```
+
+```bash
+node scripts/document-print-harness/aws.mjs run --suite capacity
+```
+
+```bash
+node scripts/document-print-harness/aws.mjs delete
+```
+
+| Command | What it does |
+| --- | --- |
+| `build` | Builds the dev pages, the worker's adapters from the local react-semaphor, and copies the worker with its installed production packages (nothing downloaded) into `out/aws/function`. The copy's row limit is lifted so a table past it is measured; the repository's worker is unchanged. `--lift-page-cap` also lifts the dev pages' page cap, to measure a Document past it. |
+| `smoke` | Runs two small cases in the local Lambda image: proves the function boots. Emulated on Apple silicon, so its numbers are not used. |
+| `deploy` | `sam deploy` of the measurement stack (Docker not needed: the function is already built). Run it again after a `build` to measure changed code. |
+| `run` | Invokes each case: `--cold` runs on a new sandbox each (it changes one variable on the measurement function), then `--warm` runs. One line per run, a heartbeat every 10 s, everything in `out/aws-runs/<time>/results.json`. |
+| `memory <MB>` | Sets the measurement function's memory, to find where a case fits; `deploy` restores the template's size. |
+| `delete` | `sam delete` of the measurement stack, then its function's log group. |
+
+The cases and suites are in `capacity.mjs`:
+
+| Suite | What it runs |
+| --- | --- |
+| `smoke` | A small fast-path table and a small rendered card table. |
+| `capacity` | Phase 0's envelope: the fast path (narrow rows to 10,000, wide rows at 1,000), the rendered card path at 5,000 and 10,000 rows, Documents of 280 and 385 pages and of 5,000 to 10,000 short rows, the all-sheets PDF plain and encrypted. |
+| `page-cap` | The page cap: a 4,000-row card prints; 1,000 wide rows and a 385-page Document are refused. |
+| `documents` | Wrapped and mixed Documents and the all-sheets PDF. |
+| `document-rows` | A Document's memory between 5,000 and 6,000 short rows. |
+| `memory` | The cases that failed or ran close at 4096 MB, for `memory <MB>` runs. |
+
+Each line gives `Max Memory Used` from the invocation's REPORT line (the
+authoritative peak), the init time on a cold run, the duration, pages, bytes,
+and for the fast path the request size against its 2.5 MiB cap. A navigation
+that times out is reported as a failure, never as a print. To add a case, add
+it to `CAPACITY_CASES` (a dataset of the Document or card print dev page, or a
+fast-path request) and to a suite.
 
 ## Compare with production (read-only)
 
@@ -238,6 +336,11 @@ content", the two failures the plan removes. After a release, a new worker logs
 | `serve-page.mjs` | Serves the built page by request interception |
 | `page.vite.config.mjs` | The production build of the dev page |
 | `check-pdf.py` | Reads a PDF back and checks it |
+| `capacity.mjs` | The real-Lambda measurement's cases and the fast-path request they send |
+| `aws.mjs` | The real-Lambda measurement: build, smoke, deploy, run, delete |
+| `aws/handler.mjs` | The measurement function: one case per invocation, through the worker's own code |
+| `diagnose-page-overflow.mjs` | On an overflowing page: its rows, columns and fonts against the measuring layer's |
+| `aws/template.yaml`, `aws/samconfig.toml` | The measurement stack, with its own SAM settings |
 
 For a quick look at a real URL instead, `pdf-generation/test-local.js` prints
 one page through the worker.

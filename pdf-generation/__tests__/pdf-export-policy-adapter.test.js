@@ -2,6 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import {
   FAST_PDF_POLICY,
+  PDF_CAPACITY,
   PDF_SAFETY_LIMIT_EXCEEDED,
 } from '../lib/generated/pdf-export-policy.js';
 
@@ -18,11 +19,10 @@ describe('generated PDF export policy adapter', () => {
     ]);
 
     expect(FAST_PDF_POLICY).toEqual({
-      maxRows: 5_000,
       maxRequestBytes: 2_621_440,
-      maxPages: 100,
-      maxOutputBytes: 52_428_800,
     });
+    // The PDF capacity contract (PC-D2, PC-D3, PC-D5).
+    expect(PDF_CAPACITY).toEqual({ maxPages: 300, maxTableRows: 5_000, maxFileBytes: 52_428_800 });
     expect(PDF_SAFETY_LIMIT_EXCEEDED).toBe('PDF_SAFETY_LIMIT_EXCEEDED');
     expect(metadata.size).toBeLessThan(10_000);
     expect(contents).not.toMatch(/dompurify|date-fns|zustand/i);
