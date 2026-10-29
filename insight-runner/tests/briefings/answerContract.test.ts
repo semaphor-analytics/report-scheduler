@@ -4,7 +4,10 @@ import {
   buildAnswerContract,
   buildSchemaDiscoveryCall,
 } from "../../src/briefings/answerContract.js";
-import type { EvidenceLedgerSnapshot } from "../../src/evidence/evidenceLedger.js";
+import {
+  EvidenceLedger,
+  type EvidenceLedgerSnapshot,
+} from "../../src/evidence/evidenceLedger.js";
 import type {
   InsightLoopDefinition,
   NormalizedAnswerRequest,
@@ -1481,6 +1484,269 @@ describe("buildAnswerContract", () => {
       }),
     );
   });
+});
+
+// An empty period change answers no slot, whatever the reason it gives
+// (relative-date-as-of Plan B, SPEC-B 3.7). The result is recorded by the real
+// evidence ledger from the shape semaphor_analyze returns, so coverage reads
+// it as a Briefing run does.
+describe("assessAnswerCoverage for a period change with no changes", () => {
+  const lastMonth = {
+    kind: "periods",
+    unit: "month",
+    from: -1,
+    to: -1,
+    anchor: "now",
+  } as const;
+  const span =
+    "from 2026-09-01T00:00:00.000Z to 2026-09-30T23:59:59.999Z (Last month)";
+  const noChangesCases = [
+    {
+      reason: "row_limit",
+      orderBy: "absolute_change",
+      rowLimitExceeded: true,
+      message:
+        "The source query stopped at its 1000-row limit, so the changes can't be worked out from the rows returned.",
+      fix: "Narrow the dimensions or add a filter.",
+    },
+    {
+      reason: "no_changes_in_direction",
+      orderBy: "positive_change",
+      rowLimitExceeded: false,
+      message: `Revenue has 3 changes ${span}, but none is an increase.`,
+      fix: 'To rank every change, use orderBy "absolute_change".',
+    },
+    {
+      reason: "no_values_in_window",
+      orderBy: "absolute_change",
+      rowLimitExceeded: false,
+      message: `No Revenue values ${span}.`,
+      fix: 'To count back from the newest row, use anchor "latest_data".',
+    },
+    {
+      reason: "no_comparable_values",
+      orderBy: "absolute_change",
+      rowLimitExceeded: false,
+      message: `Revenue has values ${span}, but no group also has a value in the period before, so there is nothing to compare.`,
+      fix: undefined,
+    },
+  ] as const;
+
+  const cases = noChangesCases.flatMap((noChanges) => [
+    { ...noChanges, tagged: true },
+    { ...noChanges, tagged: false },
+  ]);
+
+  it.each(cases)(
+    "$reason (slot-tagged: $tagged) answers no slot",
+    ({ reason, orderBy, rowLimitExceeded, message, fix, tagged }) => {
+      const coverage = assessAnswerCoverage({
+        contract: revenueDriversContract(),
+        evidence: recordPeriodChange({
+          tagged,
+          orderBy,
+          data: periodChangeResult({
+            changes: [],
+            noChanges: { reason, message, ...(fix ? { fix } : {}) },
+            orderBy,
+            rowLimitExceeded,
+          }),
+        }),
+      });
+
+      expect(coverage.answeredUserGoal).toBe(false);
+      expect(coverage.slots).toHaveLength(1);
+      expect(coverage.slots[0]?.status).not.toBe("answered");
+      expect(coverage.executionResults[0]?.status).not.toBe("answered");
+      if (tagged) {
+        // The typed result the app returns for no rows is partial, not answered.
+        expect(coverage.slots[0]).toMatchObject({
+          slotId: "revenue_drivers",
+          status: "partial",
+          evidenceIds: ["ev_001"],
+        });
+      }
+    },
+  );
+
+  // The control: the same call with one change row answers the slot, so the
+  // cases above fail on the empty rows alone.
+  it.each([true, false])(
+    "a period change with change rows answers the slot (slot-tagged: %s)",
+    (tagged) => {
+      const coverage = assessAnswerCoverage({
+        contract: revenueDriversContract(),
+        evidence: recordPeriodChange({
+          tagged,
+          orderBy: "absolute_change",
+          data: periodChangeResult({
+            changes: [
+              {
+                period: "2026-09-01",
+                region: "West",
+                current_value: 1200,
+                previous_value: 1000,
+                delta: 200,
+                percent_change: 20,
+                change_direction: "increase",
+              },
+            ],
+            orderBy: "absolute_change",
+            rowLimitExceeded: false,
+          }),
+        }),
+      });
+
+      expect(coverage.answeredUserGoal).toBe(true);
+      expect(coverage.slots[0]).toMatchObject({
+        slotId: "revenue_drivers",
+        status: "answered",
+        evidenceIds: ["ev_001"],
+      });
+    },
+  );
+
+  function revenueDriversContract() {
+    return buildAnswerContract({
+      definition: makeDefinition(
+        "Which regions drove the change in revenue last month?",
+      ),
+      intent: makeIntent([
+        {
+          id: "revenue_drivers",
+          type: "driver_analysis",
+          subject: "revenue drivers by region",
+          prompt: "Which regions drove the change in revenue last month?",
+          entityCandidates: ["fact_orders"],
+          dateFieldCandidates: ["order_date"],
+          displayFieldCandidates: ["revenue", "region"],
+          requiredFieldCandidates: ["revenue", "order_date"],
+          timeWindowMonths: 1,
+          required: true,
+        },
+      ]),
+    });
+  }
+
+  function recordPeriodChange(input: {
+    tagged: boolean;
+    orderBy: string;
+    data: Record<string, unknown>;
+  }): EvidenceLedgerSnapshot {
+    const ledger = new EvidenceLedger("run_period_change");
+    ledger.recordToolCall({
+      purpose: `${input.tagged ? "[slot:revenue_drivers] " : ""}Rank last month's revenue changes by region over order_date.`,
+      call: {
+        name: "semaphor_analyze",
+        arguments: {
+          domainId: "domain_sales",
+          datasetName: "fact_orders",
+          measures: [{ name: "revenue", datasetName: "fact_orders" }],
+          primaryMeasure: { name: "revenue", datasetName: "fact_orders" },
+          dateField: { name: "order_date", datasetName: "fact_orders" },
+          timeGrain: "month",
+          dimensions: [{ name: "region", datasetName: "fact_orders" }],
+          analysis: { kind: "period_change", orderBy: input.orderBy },
+          timeWindow: lastMonth,
+          limit: 25,
+        },
+      },
+      result: { toolName: "semaphor_analyze", ok: true, data: input.data },
+    });
+    return ledger.snapshot();
+  }
+
+  // The payload semaphor_analyze returns for a period change (semaphor-app
+  // query-spec-service.ts, period_change): with no change rows, the execution
+  // result is partial with an empty_result warning, and metadata.noChanges
+  // says why.
+  function periodChangeResult(input: {
+    changes: Array<Record<string, unknown>>;
+    noChanges?: { reason: string; message: string; fix?: string };
+    orderBy: string;
+    rowLimitExceeded: boolean;
+  }): Record<string, unknown> {
+    const answered = input.changes.length > 0;
+    const metadata = {
+      sourceRowCount: input.rowLimitExceeded ? 1000 : 6,
+      normalizedSourceRowCount: input.rowLimitExceeded ? 1000 : 6,
+      changeRowCount: input.changes.length,
+      rowLimitExceeded: input.rowLimitExceeded,
+      timeWindow: {
+        window: lastMonth,
+        label: "Last month",
+        definition: "the previous full month",
+        dateField: "order_date",
+        start: "2026-09-01T00:00:00.000Z",
+        end: "2026-09-30T23:59:59.999Z",
+        timezone: "UTC",
+        referenceTime: "2026-10-28T12:00:00.000Z",
+        filteredChangeCount: input.changes.length,
+        unfilteredChangeCount:
+          input.noChanges?.reason === "no_changes_in_direction"
+            ? 3
+            : input.changes.length,
+      },
+      ...(input.noChanges ? { noChanges: input.noChanges } : {}),
+      comparisonKind: "previous_period",
+      orderBy: input.orderBy,
+    };
+    return {
+      answerSummary: input.noChanges
+        ? [input.noChanges.message, input.noChanges.fix]
+            .filter(Boolean)
+            .join(" ")
+        : "Revenue changes by period.",
+      mode: "period_change_analysis",
+      executionResult: {
+        queryId: "semaphor_analyze:period_change",
+        status: answered ? "answered" : "partial",
+        resultShape: "period_change",
+        validation: {
+          ok: answered,
+          errors: [],
+          warnings: answered
+            ? []
+            : [
+                {
+                  code: "empty_result",
+                  message:
+                    "The governed period-change query executed, but returned no change rows.",
+                  path: "executionResult.result",
+                },
+              ],
+          repairHints: [],
+        },
+        coverage: {
+          answeredObligations: answered ? ["governed_query_executed"] : [],
+          missingObligations: answered ? [] : ["non_empty_result"],
+          warnings: [],
+        },
+        missingFields: [],
+        result: {
+          kind: "records",
+          queryPath: "query_spec",
+          columns: answered
+            ? [
+                { key: "period", name: "order_date", label: "Order Date" },
+                { key: "region", name: "region", label: "Region" },
+                { key: "current_value", name: "revenue", label: "Revenue" },
+              ]
+            : [],
+          records: input.changes,
+          rowCount: input.changes.length,
+          limit: 25,
+          rowLimitExceeded: input.rowLimitExceeded,
+        },
+        metadata,
+      },
+      data: { records: input.changes },
+      changes: input.changes,
+      largestNegativeChanges: [],
+      largestPositiveChanges: input.changes,
+      metadata,
+    };
+  }
 });
 
 const PRODUCT_BRIEFING_PROMPT =

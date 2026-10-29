@@ -985,7 +985,10 @@ describe("applyPlannedToolCallPolicy", () => {
 
     expect(result.calls).toHaveLength(0);
     expect(result.violations[0]).toContain('comparison "last_6_months" is not valid');
-    expect(result.violations[0]).toContain("canonical timeWindow");
+    expect(result.violations[0]).toContain("timeWindow in the window form");
+    expect(result.violations[0]).toContain(
+      '{"kind":"periods","unit":"month","from":-6,"to":-1,"anchor":"now"}',
+    );
     expect(result.violations[0]).toContain("missing app-owned query-spec capability");
   });
 
@@ -1349,9 +1352,10 @@ describe("applyPlannedToolCallPolicy", () => {
               ],
               analysis: { kind: "period_change" },
               timeWindow: {
+                kind: "rolling",
                 unit: "day",
-                value: 7,
-                anchor: "latest_available",
+                n: 7,
+                anchor: "latest_data",
               },
               limit: 25,
             },
@@ -1375,6 +1379,12 @@ describe("applyPlannedToolCallPolicy", () => {
         datasetName: "fact_inventory_movement",
       },
       analysis: { kind: "period_change" },
+      timeWindow: {
+        kind: "rolling",
+        unit: "day",
+        n: 7,
+        anchor: "latest_data",
+      },
     });
     expect(result.calls[0]?.arguments).not.toHaveProperty("metrics");
     expect(result.calls[0]?.arguments).not.toHaveProperty("primaryMetric");

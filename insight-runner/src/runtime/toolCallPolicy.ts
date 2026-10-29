@@ -631,7 +631,7 @@ function validateCanonicalComparisonArg(
     return {
       error:
         `Skipped semaphor_analyze because comparison "${comparison}" is not valid. ` +
-        'Use canonical comparison objects such as {"kind":"previous_period"} or {"kind":"previous_year"}. Express custom windows with canonical timeWindow or surface the missing app-owned query-spec capability.',
+        'Use canonical comparison objects such as {"kind":"previous_period"} or {"kind":"previous_year"}. Express the window as timeWindow in the window form, with its anchor, for example {"kind":"periods","unit":"month","from":-6,"to":-1,"anchor":"now"} for the last 6 complete months, or surface the missing app-owned query-spec capability.',
     };
   }
   if (
