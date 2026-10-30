@@ -3,6 +3,7 @@ const {
   DeleteEmailIdentityCommand,
   GetEmailIdentityCommand,
   PutEmailIdentityDkimSigningAttributesCommand,
+  PutEmailIdentityMailFromAttributesCommand,
   SESv2Client,
 } = require('@aws-sdk/client-sesv2');
 
@@ -107,6 +108,27 @@ function getDkimDnsRecords(domain, response) {
   }
 
   return records;
+}
+
+// The custom MAIL FROM records put the envelope sender on the customer's
+// domain so SPF aligns with it. The MX priority is part of the value, the form
+// most DNS providers take.
+function getMailFromDnsRecords(mailFromDomain, sesRegion) {
+  const feedbackHost = `feedback-smtp.${sesRegion}.amazonses.com`;
+  if (
+    !isValidSigningHostedZone(mailFromDomain) ||
+    !isValidSigningHostedZone(feedbackHost)
+  ) {
+    return null;
+  }
+  return [
+    { type: 'MX', name: mailFromDomain, value: `10 ${feedbackHost}` },
+    {
+      type: 'TXT',
+      name: mailFromDomain,
+      value: 'v=spf1 include:amazonses.com ~all',
+    },
+  ];
 }
 
 function mapVerificationStatus(response) {
@@ -245,11 +267,54 @@ function createSenderDomainService({
     };
   }
 
-  function normalizeIdentity(domain, response) {
+  // Sets MAIL FROM bounce.<domain> when the identity has none, and puts the
+  // same domain again when SES's MX search failed, which restarts it. A MAIL
+  // FROM domain already on the identity is kept whatever its label, so one set
+  // by hand carries over. USE_DEFAULT_VALUE keeps the amazonses.com envelope
+  // while the MX record is missing, so this can never stop a send. MAIL FROM
+  // is an addition to the domain: a failed write returns no records and never
+  // fails setup or status.
+  async function ensureMailFrom(domain, response) {
+    if (response?.IdentityType !== 'DOMAIN') {
+      return null;
+    }
+    const current = response.MailFromAttributes;
+    const mailFromDomain = current?.MailFromDomain || `bounce.${domain}`;
+    const records = getMailFromDnsRecords(mailFromDomain, sesRegion);
+    if (!records) {
+      return null;
+    }
+    if (current?.MailFromDomain && current.MailFromDomainStatus !== 'FAILED') {
+      return records;
+    }
+    try {
+      await getClient().send(
+        new PutEmailIdentityMailFromAttributesCommand({
+          EmailIdentity: domain,
+          MailFromDomain: mailFromDomain,
+          BehaviorOnMxFailure: 'USE_DEFAULT_VALUE',
+        })
+      );
+      return records;
+    } catch (error) {
+      console.warn('Sending domain MAIL FROM setup failed', {
+        domain,
+        mailFromDomain,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
+  async function normalizeIdentity(domain, response) {
+    const dkimRecords = getDkimDnsRecords(domain, response);
+    const mailFromRecords = await ensureMailFrom(domain, response);
     return {
       success: true,
       verificationStatus: mapVerificationStatus(response),
-      dnsRecords: getDkimDnsRecords(domain, response),
+      dnsRecords: mailFromRecords
+        ? [...dkimRecords, ...mailFromRecords]
+        : dkimRecords,
     };
   }
 

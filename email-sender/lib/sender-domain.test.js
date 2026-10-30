@@ -8,6 +8,26 @@ const {
 
 const TOKENS = ['tokenOne', 'tokenTwo', 'tokenThree'];
 const SIGNING_HOSTED_ZONE = 'dkim.amazonses.com';
+const MAIL_FROM_SET = {
+  MailFromDomain: 'bounce.respark.com',
+  MailFromDomainStatus: 'SUCCESS',
+  BehaviorOnMxFailure: 'USE_DEFAULT_VALUE',
+};
+
+function mailFromRecords(mailFromDomain, region = 'us-east-1') {
+  return [
+    {
+      type: 'MX',
+      name: mailFromDomain,
+      value: `10 feedback-smtp.${region}.amazonses.com`,
+    },
+    {
+      type: 'TXT',
+      name: mailFromDomain,
+      value: 'v=spf1 include:amazonses.com ~all',
+    },
+  ];
+}
 
 function identityResponse(overrides = {}) {
   return {
@@ -59,7 +79,7 @@ test('provider, domain, and platform guards run before any SES command', async (
   assert.equal(calls, 0);
 });
 
-test('setup creates the exact identity and returns three SigningHostedZone CNAMEs', async () => {
+test('setup creates the exact identity, sets MAIL FROM, and returns the CNAMEs then the MAIL FROM records', async () => {
   const commands = [];
   const service = createService(async (command) => {
     commands.push(command);
@@ -70,16 +90,25 @@ test('setup creates the exact identity and returns three SigningHostedZone CNAME
 
   assert.deepEqual(commands.map((command) => command.constructor.name), [
     'CreateEmailIdentityCommand',
+    'PutEmailIdentityMailFromAttributesCommand',
   ]);
   assert.deepEqual(commands[0].input, { EmailIdentity: 'respark.com' });
+  assert.deepEqual(commands[1].input, {
+    EmailIdentity: 'respark.com',
+    MailFromDomain: 'bounce.respark.com',
+    BehaviorOnMxFailure: 'USE_DEFAULT_VALUE',
+  });
   assert.deepEqual(result, {
     success: true,
     verificationStatus: 'PENDING',
-    dnsRecords: TOKENS.map((token) => ({
-      type: 'CNAME',
-      name: `${token}._domainkey.respark.com`,
-      value: `${token}.${SIGNING_HOSTED_ZONE}`,
-    })),
+    dnsRecords: [
+      ...TOKENS.map((token) => ({
+        type: 'CNAME',
+        name: `${token}._domainkey.respark.com`,
+        value: `${token}.${SIGNING_HOSTED_ZONE}`,
+      })),
+      ...mailFromRecords('bounce.respark.com'),
+    ],
   });
 });
 
@@ -119,7 +148,11 @@ test('exact identity proof requires DOMAIN, DKIM SUCCESS, and verified-for-sendi
       },
     }),
   ];
-  const service = createService(async () => responses.shift());
+  const service = createService(async (command) =>
+    command.constructor.name === 'GetEmailIdentityCommand'
+      ? responses.shift()
+      : {}
+  );
 
   assert.equal(
     (await service.status('reports.respark.com')).verificationStatus,
@@ -177,6 +210,7 @@ test('explicit ambiguous retry inspects an existing identity', async () => {
   assert.deepEqual(commands.map((command) => command.constructor.name), [
     'CreateEmailIdentityCommand',
     'GetEmailIdentityCommand',
+    'PutEmailIdentityMailFromAttributesCommand',
   ]);
   assert.deepEqual(commands[1].input, { EmailIdentity: 'respark.com' });
 });
@@ -319,6 +353,7 @@ for (const [description, keyAttributes, expectedKeyLength] of [
             SigningHostedZone: SIGNING_HOSTED_ZONE,
             ...keyAttributes,
           },
+          MailFromAttributes: MAIL_FROM_SET,
         });
       }
       assert.equal(command.constructor.name, 'PutEmailIdentityDkimSigningAttributesCommand');
@@ -332,7 +367,7 @@ for (const [description, keyAttributes, expectedKeyLength] of [
 
     const result = await service.status('respark.com');
     assert.equal(result.verificationStatus, 'PENDING');
-    assert.equal(result.dnsRecords.length, 3);
+    assert.equal(result.dnsRecords.length, 5);
     assert.equal(result.dnsRecords[0].name, 'tokenOne._domainkey.respark.com');
     assert.deepEqual(commands.map((command) => command.constructor.name), [
       'GetEmailIdentityCommand',
@@ -349,6 +384,7 @@ test('status does not restart DKIM for pending or verified identities', async ()
       return identityResponse({
         VerifiedForSendingStatus: status === 'SUCCESS',
         DkimAttributes: { Status: status, Tokens: TOKENS, SigningHostedZone: SIGNING_HOSTED_ZONE },
+        MailFromAttributes: MAIL_FROM_SET,
       });
     });
     await service.status('respark.com');
@@ -372,6 +408,7 @@ test('status never restarts a failed identity that does not use plain Easy DKIM'
           Tokens: TOKENS,
           SigningHostedZone: SIGNING_HOSTED_ZONE,
         },
+        MailFromAttributes: MAIL_FROM_SET,
       });
     });
 
@@ -419,4 +456,131 @@ test('a failed DKIM restart is an ambiguous 5xx failure, not a silent FAILED', a
       error instanceof SenderDomainRequestError &&
       error.code === 'DOMAIN_OPERATION_FAILED' && error.statusCode === 502
   );
+});
+
+test('status sets MAIL FROM bounce.<domain> on an identity that has none', async () => {
+  const commands = [];
+  const service = createService(
+    async (command) => {
+      commands.push(command);
+      // SES reports the default behavior even when no MAIL FROM domain is set.
+      return identityResponse({
+        VerifiedForSendingStatus: true,
+        DkimAttributes: { Status: 'SUCCESS', Tokens: TOKENS, SigningHostedZone: SIGNING_HOSTED_ZONE },
+        MailFromAttributes: { BehaviorOnMxFailure: 'USE_DEFAULT_VALUE' },
+      });
+    },
+    { sesRegion: 'eu-west-1' }
+  );
+
+  const result = await service.status('reports.respark.com');
+
+  assert.equal(result.verificationStatus, 'VERIFIED');
+  assert.deepEqual(commands.map((command) => command.constructor.name), [
+    'GetEmailIdentityCommand',
+    'PutEmailIdentityMailFromAttributesCommand',
+  ]);
+  assert.deepEqual(commands[1].input, {
+    EmailIdentity: 'reports.respark.com',
+    MailFromDomain: 'bounce.reports.respark.com',
+    BehaviorOnMxFailure: 'USE_DEFAULT_VALUE',
+  });
+  assert.deepEqual(
+    result.dnsRecords.slice(3),
+    mailFromRecords('bounce.reports.respark.com', 'eu-west-1')
+  );
+});
+
+test('status keeps a MAIL FROM domain already on the identity, whatever its label', async () => {
+  for (const mailFromStatus of ['SUCCESS', 'PENDING', 'TEMPORARY_FAILURE']) {
+    const commands = [];
+    const service = createService(async (command) => {
+      commands.push(command);
+      return identityResponse({
+        MailFromAttributes: {
+          MailFromDomain: 'mail.respark.com',
+          MailFromDomainStatus: mailFromStatus,
+          BehaviorOnMxFailure: 'REJECT_MESSAGE',
+        },
+      });
+    });
+
+    const result = await service.status('respark.com');
+
+    assert.deepEqual(
+      commands.map((command) => command.constructor.name),
+      ['GetEmailIdentityCommand'],
+      mailFromStatus
+    );
+    assert.deepEqual(result.dnsRecords.slice(3), mailFromRecords('mail.respark.com'));
+  }
+});
+
+test('status puts a failed MAIL FROM domain again to restart the search', async () => {
+  const commands = [];
+  const service = createService(async (command) => {
+    commands.push(command);
+    return identityResponse({
+      MailFromAttributes: {
+        MailFromDomain: 'mail.respark.com',
+        MailFromDomainStatus: 'FAILED',
+        BehaviorOnMxFailure: 'USE_DEFAULT_VALUE',
+      },
+    });
+  });
+
+  const result = await service.status('respark.com');
+
+  assert.deepEqual(commands.map((command) => command.constructor.name), [
+    'GetEmailIdentityCommand',
+    'PutEmailIdentityMailFromAttributesCommand',
+  ]);
+  assert.equal(commands[1].input.MailFromDomain, 'mail.respark.com');
+  assert.deepEqual(result.dnsRecords.slice(3), mailFromRecords('mail.respark.com'));
+});
+
+test('a failed MAIL FROM write returns the three CNAMEs and the same status', async (t) => {
+  const warn = t.mock.method(console, 'warn', () => {});
+  for (const action of ['setup', 'status']) {
+    const service = createService(async (command) => {
+      if (command.constructor.name === 'PutEmailIdentityMailFromAttributesCommand') {
+        const error = new Error('access denied');
+        error.name = 'AccessDeniedException';
+        throw error;
+      }
+      return identityResponse({
+        VerifiedForSendingStatus: true,
+        DkimAttributes: { Status: 'SUCCESS', Tokens: TOKENS, SigningHostedZone: SIGNING_HOSTED_ZONE },
+      });
+    });
+
+    const result =
+      action === 'setup'
+        ? await service.setup('respark.com', false)
+        : await service.status('respark.com');
+
+    assert.equal(result.verificationStatus, 'VERIFIED', action);
+    assert.deepEqual(
+      result.dnsRecords.map((record) => record.type),
+      ['CNAME', 'CNAME', 'CNAME'],
+      action
+    );
+  }
+  assert.equal(warn.mock.callCount(), 2);
+});
+
+test('MAIL FROM is never set on a non-domain identity', async () => {
+  const commands = [];
+  const service = createService(async (command) => {
+    commands.push(command);
+    return identityResponse({ IdentityType: 'EMAIL_ADDRESS' });
+  });
+
+  const result = await service.status('respark.com');
+
+  assert.equal(result.verificationStatus, 'FAILED');
+  assert.equal(result.dnsRecords.length, 3);
+  assert.deepEqual(commands.map((command) => command.constructor.name), [
+    'GetEmailIdentityCommand',
+  ]);
 });

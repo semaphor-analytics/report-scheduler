@@ -78,7 +78,12 @@ validated top-level `fromAddress`. Branded v1 rejects `fromAddress`; branded v2
 requires it. Both custom-domain send actions are available only in SES mode.
 
 The SES-only domain actions use SES v2 Easy DKIM. Setup creates the exact
-domain identity and returns its three CNAME records. Status inspects that exact
+domain identity and returns its three CNAME records. Setup and status also set
+a custom MAIL FROM domain, `bounce.<domain>`, when the identity has none (an
+existing one is kept; a failed one is put again to restart SES's search), with
+`USE_DEFAULT_VALUE` on MX failure, and return its MX and SPF TXT records after
+the CNAMEs. A failed MAIL FROM write returns the three CNAMEs only and never
+fails the action or changes its status. Status inspects that exact
 identity and returns `VERIFIED` only for a domain identity with DKIM `SUCCESS`
 and `VerifiedForSendingStatus: true`. Delete removes the exact identity and
 treats an already missing identity as successful cleanup. The actions never
@@ -94,9 +99,9 @@ ambiguous-setup retry.
   - `SES_REGION=us-east-1` (or your SES region)
 - Sends multipart MIME email with attachment via `ses:SendRawEmail`.
 - Creates, reads, and removes Easy DKIM identities via
-  `ses:CreateEmailIdentity`, `ses:GetEmailIdentity`, and
-  `ses:DeleteEmailIdentity` for authenticated domain setup, status, and
-  removal actions.
+  `ses:CreateEmailIdentity`, `ses:GetEmailIdentity`,
+  `ses:PutEmailIdentityMailFromAttributes`, and `ses:DeleteEmailIdentity`
+  for authenticated domain setup, status, and removal actions.
 
 ### 2) External mode
 

@@ -298,6 +298,7 @@ Resources:
                   - ses:CreateEmailIdentity
                   - ses:GetEmailIdentity
                   - ses:PutEmailIdentityDkimSigningAttributes
+                  - ses:PutEmailIdentityMailFromAttributes
                   - ses:DeleteEmailIdentity
                 Resource: '*'
 
