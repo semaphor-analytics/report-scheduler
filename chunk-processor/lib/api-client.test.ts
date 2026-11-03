@@ -35,7 +35,7 @@ describe('queryData table totals projection', () => {
         {
           fieldId: 'revenue-id',
           role: 'metric' as const,
-          behavior: 'sum' as const,
+          behavior: 'overall' as const,
         },
       ],
     };

@@ -64,7 +64,7 @@ const tableTotalsRequest = {
   source: 'documentFlatTable',
   columns: [
     { fieldId: 'region-id', role: 'groupby', behavior: 'label', label: 'Total' },
-    { fieldId: 'revenue-id', role: 'metric', behavior: 'sum' },
+    { fieldId: 'revenue-id', role: 'metric', behavior: 'overall' },
   ],
 };
 
@@ -95,6 +95,42 @@ describe('resolveCompactionFooter', () => {
     });
 
     expect(footer).toBe('Total,"$9,000.00"\r\n');
+  });
+
+  it("writes an empty cell for a measure the server leaves without a total, and Sum of rows as served (table overall totals P4.3)", () => {
+    const footer = resolveCompactionFooter({
+      tableTotalsRequest: {
+        source: 'documentFlatTable',
+        columns: [
+          { fieldId: 'region-id', role: 'groupby', behavior: 'label', label: 'Total' },
+          { fieldId: 'revenue-id', role: 'metric', behavior: 'sumOfRows' },
+          { fieldId: 'moving-id', role: 'metric', behavior: 'none' },
+        ],
+      },
+      formatting: {
+        ...formatting,
+        visibleColumns: ['region', 'revenue', 'revenue_moving'],
+        presentationExecutionSnapshot: {
+          ...formatting.presentationExecutionSnapshot,
+          resolvedFormats: [
+            ...formatting.presentationExecutionSnapshot.resolvedFormats,
+            { ...formatting.presentationExecutionSnapshot.resolvedFormats[1], target: { kind: 'column', columnKey: 'revenue_moving' } },
+          ],
+        },
+      },
+      totalRows: 10,
+      chunkResults: [
+        {
+          chunkId: 'chunk-1',
+          status: 'completed',
+          rowsProcessed: 10,
+          s3Key: '001.csv',
+          tableTotalsByColumnId: { region: 'Total', revenue: '9000.00', revenue_moving: null },
+        },
+      ],
+    });
+
+    expect(footer).toBe('Total,"$9,000.00",\r\n');
   });
 
   it('accepts generalized temporal presentation snapshots for totals exports', () => {

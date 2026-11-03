@@ -48,7 +48,7 @@ const REPORT_CONTEXT = {
 const scope = { dashboardId: 'dashboard-1', cardId: 'card-1' };
 const TOTALS_REQUEST = {
   source: 'documentFlatTable',
-  columns: [{ fieldId: 'revenue-id', role: 'metric', behavior: 'sum' }],
+  columns: [{ fieldId: 'revenue-id', role: 'metric', behavior: 'overall' }],
 };
 
 /** A table: a text region, a currency revenue, and `extra` plain number columns. */

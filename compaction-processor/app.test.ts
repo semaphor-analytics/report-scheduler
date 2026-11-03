@@ -135,7 +135,7 @@ describe('compaction handler table totals', () => {
           {
             fieldId: 'revenue-id',
             role: 'metric',
-            behavior: 'sum',
+            behavior: 'overall',
           },
         ],
       },
@@ -254,7 +254,7 @@ describe('compaction handler table totals', () => {
             {
               fieldId: 'revenue-id',
               role: 'metric',
-              behavior: 'sum',
+              behavior: 'overall',
             },
           ],
         },

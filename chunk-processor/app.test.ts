@@ -50,7 +50,7 @@ const request = {
     {
       fieldId: 'revenue-id',
       role: 'metric',
-      behavior: 'sum',
+      behavior: 'overall',
     },
   ],
 };
