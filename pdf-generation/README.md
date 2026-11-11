@@ -1,6 +1,6 @@
-# PDF & CSV Generation Service
+# PDF and PNG Generation Service
 
-A serverless file generation service that converts web pages to PDFs or exports tables to CSV using AWS Lambda and Puppeteer.
+A serverless file generation service that renders web pages to PDFs and PNGs using AWS Lambda and Puppeteer. It also stores CSV files the app writes from card data (`POST ?store=csv`); it never copies a page as a CSV.
 
 ## Key Features
 
@@ -18,13 +18,6 @@ A serverless file generation service that converts web pages to PDFs or exports 
    - Professional margins and formatting
    - Supports data tables and generic tables; a Matrix prints through the
      fast path (`pdf-from-data-generator.js`)
-
-### CSV Export
-
-- Extract formatted table data preserving all UI formatting
-- Maintains number formats, currency symbols, dates, percentages
-- Respects column visibility and ordering
-- Includes subtotals and grand totals
 
 ### Additional Features
 
@@ -268,7 +261,7 @@ This is the canonical local UI export harness. It
 supports:
 
 - URL-rendered dashboard, visual, and table PDF through `GET`;
-- URL-rendered table CSV extraction through `GET`; and
+- storing an app-written CSV through `POST ?store=csv`;
 - structured-data Fast PDF generation through `POST`;
 - production chunk-handler query/formatting behavior;
 - production compaction, completion, failure, notification, and download
@@ -323,13 +316,12 @@ node test-local.js --url <url> [options]
 | Flag                  | Description                                             | Default    |
 | --------------------- | ------------------------------------------------------- | ---------- |
 | `--url <url>`         | URL to convert (required)                               | -          |
-| `--format <type>`     | Output format: `pdf` or `csv`                           | `pdf`      |
+| `--format <type>`     | Output format: `pdf`                                    | `pdf`      |
 | `--visual`            | Single visual export mode (fits chart to one page)      | -          |
 | `--orientation <dir>` | PDF orientation: `portrait` or `landscape`              | `portrait` |
 | `--page-size <size>`  | PDF page size: `A4`, `Letter`, `Legal`, `A3`, `Tabloid` | `A4`       |
 | `--table`             | Table mode (paginated PDF)                              | -          |
 | `--password <pwd>`    | PDF password protection                                 | -          |
-| `--delimiter <char>`  | CSV delimiter: `comma`, `semicolon`, `tab`              | `comma`    |
 | `--watermark <text>`  | Add diagonal watermark text to PDF                      | -          |
 | `--header-logo <url>` | Add header logo to PDF (image URL)                      | -          |
 | `--help`, `-h`        | Show help                                               | -          |
@@ -370,18 +362,13 @@ node test-local.js --url "https://example.com/table" --table --page-size a4 --or
 node test-local.js --url "https://example.com/table" --table --password "mypassword"
 ```
 
-### Test CSV Export
+### CSV files
 
-```bash
-# Basic CSV export
-node test-local.js --url "https://example.com/table" --format csv
-
-# CSV with semicolon delimiter (for Excel in some locales)
-node test-local.js --url "https://example.com/table" --format csv --delimiter semicolon
-
-# CSV with tab delimiter
-node test-local.js --url "https://example.com/table" --format csv --delimiter tab
-```
+The renderer never copies a page as a CSV. A scheduled report's card CSV is
+written from the card's data by the app (an export job, or the card's one
+query) and only stored here with `POST ?store=csv` and a JSON body
+`{ reportTitle, content }`: the file is uploaded under `pdfs/` as sent and its
+link returned (card data attachments CD-D8, CD-D10).
 
 ### Test Watermark and Header Logo
 
@@ -464,7 +451,7 @@ sam deploy --stack-name pdf-generation-prod --region us-east-1
 sam local invoke GeneratePdfFunction --event event.json
 
 # Run with inline event
-echo '{"queryStringParameters":{"url":"https://example.com","format":"csv"}}' | sam local invoke GeneratePdfFunction
+echo '{"queryStringParameters":{"url":"https://example.com","format":"pdf"}}' | sam local invoke GeneratePdfFunction
 
 # Run with Docker network (if your URL is on localhost)
 sam local invoke GeneratePdfFunction --event event.json --docker-network host
@@ -484,20 +471,6 @@ cat raw.log | jq -r '.body' | tr ',' '\n' | awk '{printf "%c", $1}' | xxd -r -p 
 ```
 
 ### Sample event.json Files
-
-#### For CSV Generation
-
-```json
-{
-  "queryStringParameters": {
-    "url": "https://example.com/table",
-    "format": "csv",
-    "delimiter": ",",
-    "scheduleId": "sched_123",
-    "attachmentMetadata": "{\"name\":\"Sales Report\",\"attachmentIndex\":0,\"totalAttachments\":1}"
-  }
-}
-```
 
 #### For Dashboard PDF (Single Page)
 
@@ -615,24 +588,13 @@ GET https://[api-id].execute-api.[region].amazonaws.com/Prod/generate?url=https:
 GET https://[api-id].execute-api.[region].amazonaws.com/Prod/generate?url=https://example.com/table&format=pdf&tableMode=true&reportTitle=Q4%20Report
 ```
 
-#### Generate CSV
-
-```bash
-# Basic CSV export
-GET https://[api-id].execute-api.[region].amazonaws.com/Prod/generate?url=https://example.com/table&format=csv
-
-# CSV with custom delimiter
-GET https://[api-id].execute-api.[region].amazonaws.com/Prod/generate?url=https://example.com/table&format=csv&delimiter=;
-```
-
 ### Query Parameters
 
 - `url` (required): The webpage URL to convert
-- `format` (optional): `"pdf"` (default) or `"csv"`
+- `format` (optional): `"pdf"` (default) or `"png"`; any other format is refused (400)
 - `tableMode` (optional): `"true"` for paginated PDF mode
 - `pageSize` (optional): Page size for PDFs (A4, Letter, Legal, etc.)
 - `orientation` (optional): `"portrait"` (default) or `"landscape"`
-- `delimiter` (optional): CSV delimiter (`,` default, `;` or `\t`)
 - `password` (optional): Password for PDF encryption
 - `watermarkEnabled` (optional): `"true"` to enable watermark
 - `watermarkText` (optional): Text to display as watermark (e.g., "CONFIDENTIAL")
@@ -669,18 +631,6 @@ The table PDF generator:
 
 **Use Case**: Data exports, printable reports, formal documentation
 
-### CSV Generation Approach
-
-The CSV generator uses Puppeteer to:
-
-1. Navigate to the table URL
-2. Extract already-formatted text from the DOM
-3. Preserve all frontend formatting (currency, dates, percentages)
-4. Respect column visibility and ordering
-5. Include subtotals and grand totals where applicable
-
-**Key Benefit**: No complex formatting logic needed - the frontend has already applied all formatting!
-
 ## Project Structure
 
 ```
@@ -692,7 +642,7 @@ pdf-generation/
 ├── lib/
 │   ├── pdf-generator.js        # PDF generation orchestrator
 │   ├── pdf-from-data-generator.js  # Fast path PDF from POST data
-│   ├── csv-extractor.js        # CSV extraction using Puppeteer
+│   ├── stored-csv.js           # Validates a CSV the app wrote, for storage
 │   ├── browser.js              # Browser management
 │   ├── page-setup.js           # Page navigation and setup
 │   ├── content-loader.js       # Content scrolling and loading
@@ -706,8 +656,7 @@ pdf-generation/
 │       ├── data-table.js       # Data table PDF handling
 │       ├── data-table-paginator.js  # Data table pagination
 │       ├── pivot-table.js      # Matrix fast-path PDF rendering (name predates Matrix)
-│       ├── pivot-table-paginator.js # Matrix fast-path page wrapper
-│       └── csv-table.js        # CSV extraction from tables
+│       └── pivot-table-paginator.js # Matrix fast-path page wrapper
 └── output/                     # Local test output directory (git-ignored)
 ```
 
@@ -724,14 +673,14 @@ For Lambda deployment (configured in template.yaml):
 
 ```bash
 # Edit your code
-vim lib/csv-extractor.js
+vim lib/pdf-generator.js
 ```
 
 ### 2. Test Locally
 
 ```bash
 # Test with test-local.js
-node test-local.js --url "https://example.com/table" --format csv
+node test-local.js --url "https://example.com/table" --table
 
 # Test with SAM local
 sam local invoke GeneratePdfFunction --event event.json
@@ -767,29 +716,6 @@ aws cloudwatch get-metric-statistics \
   --period 3600 \
   --statistics Average
 ```
-
-## CSV Features
-
-### Supported Table Types
-
-- **Data Tables**: Standard tables with rows and columns
-- **Other Tables**: Any other table on the page
-
-### Formatting Preservation
-
-The CSV export preserves:
-
-- Number formatting (1,234.56)
-- Currency symbols ($1,234.56)
-- Percentages (12.5%)
-- Date formatting (Jan 1, 2024)
-- Custom formats applied in the UI
-
-### Column Management
-
-- Respects hidden columns (not exported)
-- Maintains column ordering from UI
-- Preserves column widths proportions
 
 ## PDF Features
 
@@ -853,7 +779,7 @@ Adds organization branding to the top of PDF exports.
 
 ### Common Issues
 
-1. **Empty CSV/PDF**:
+1. **Empty PDF**:
 
    - Check if the page requires authentication
    - Verify the URL is accessible
@@ -911,9 +837,6 @@ docker logs $(docker ps -lq)
 You can test with any Semaphor dashboard URL that includes a token:
 
 ```bash
-# Test CSV export from a table
-node test-local.js --url "https://semaphor.cloud/view/dashboard/[dashboard-id]/visual/[visual-id]?token=[token]" --format csv
-
 # Test dashboard PDF (single page)
 node test-local.js --url "https://semaphor.cloud/view/dashboard/[dashboard-id]?token=[token]"
 
@@ -938,9 +861,6 @@ npm ci --include=dev
 npm --prefix pdf-generation ci
 cd pdf-generation
 
-# 2. Test CSV generation with a real table URL
-node test-local.js --url "YOUR_TABLE_URL_WITH_TOKEN" --format csv
-
 # 3. Test PDF generation for a dashboard
 node test-local.js --url "YOUR_DASHBOARD_URL_WITH_TOKEN"
 
@@ -952,7 +872,7 @@ node test-local.js --url "YOUR_VISUAL_URL?isPdfRender=true" --visual --orientati
 
 # 6. Check the output
 ls -la output/
-# Files will be named: test-output-{timestamp}.csv or test-output-{timestamp}.pdf
+# Files will be named: test-output-{timestamp}.pdf
 ```
 
 #### SAM Local Testing
@@ -963,7 +883,7 @@ cat > event.json << 'EOF'
 {
   "queryStringParameters": {
     "url": "https://semaphor.cloud/view/dashboard/YOUR_DASHBOARD_ID?token=YOUR_TOKEN",
-    "format": "csv"
+    "format": "pdf"
   }
 }
 EOF
@@ -1028,7 +948,6 @@ sam deploy --config-env prod
 
 ## Performance Considerations
 
-- CSV extraction is faster than PDF generation
 - Table mode PDFs take longer due to pagination
 - Large tables may require increased Lambda memory
 - Consider implementing streaming for very large datasets

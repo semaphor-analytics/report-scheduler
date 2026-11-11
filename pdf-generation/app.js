@@ -7,8 +7,8 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { renderArtifact } from './lib/render-artifact.js';
 import { imageCaptureErrorResponseFields } from './lib/image-capture.js';
 import {
-  DEFAULT_CSV_ENCODING,
-  parseCsvEncoding,
+  CSV_CONTENT_TYPE,
+  exportFileTraits,
 } from './lib/generated/csv-file.js';
 import {
   parseImageCaptureRequest,
@@ -18,6 +18,7 @@ import { redactForLog } from './lib/log-redaction.js';
 import { generatePdfFromData } from './lib/pdf-from-data-generator.js';
 import { deliveryBlockingErrorResponseFields } from './lib/delivery-render-error.js';
 import { parseStructuredFastPdfRequest } from './lib/fast-pdf-safety.js';
+import { isStoredCsvRequest, parseStoredCsvRequest } from './lib/stored-csv.js';
 import { assertPdfFileSize, assertPdfPageCap } from './lib/pdf-capacity.js';
 
 // Initialize S3 client
@@ -231,14 +232,6 @@ async function handleScheduledStepFunctionRequest(event) {
     scheduleId,
     reportParams: lambdaReportParams,
     format,
-    delimiter:
-      settings.delimiter ||
-      reportParams?.csvOptions?.delimiter ||
-      ',',
-    // No app-side producer resolves an encoding for this legacy mode.
-    csvEncoding: DEFAULT_CSV_ENCODING,
-    includeHeaders: settings.includeHeaders !== false,
-    useFormattedValues: settings.useFormattedValues !== false,
     isVisualExport: targetUrl.includes('/visual/'),
     watermarkEnabled: watermark.enabled === true,
     watermarkText:
@@ -312,6 +305,43 @@ function scheduledDeliveryBlockingFailure(event, error) {
     errorCode: responseFields.errorCode,
     statusMessage,
   };
+}
+
+/**
+ * Store a finished CSV (card data attachments CD-D10): the app built the file
+ * from the card's one query; this only uploads it under `pdfs/`, where report
+ * delivery reads files, and returns its link.
+ */
+async function handleStoredCsvRequest(event) {
+  try {
+    const { reportTitle, fileBuffer } = parseStoredCsvRequest(event.body, event.isBase64Encoded);
+    const uploaded = await uploadArtifactToS3({
+      fileBuffer,
+      contentType: CSV_CONTENT_TYPE,
+      fileExtension: exportFileTraits('csv').extension,
+      reportTitle,
+      format: 'csv',
+    });
+    console.log('Stored CSV uploaded:', uploaded.fileKey, uploaded.sizeBytes);
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: uploaded.presignedUrl,
+        s3Bucket: uploaded.bucketName,
+        s3Key: uploaded.fileKey,
+        contentType: CSV_CONTENT_TYPE,
+        sizeBytes: uploaded.sizeBytes,
+      }),
+    };
+  } catch (error) {
+    console.error('Stored CSV error:', redactForLog(error));
+    return {
+      statusCode: Number.isInteger(error?.statusCode) ? error.statusCode : 500,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: error.message || 'Internal server error', error: error.message }),
+    };
+  }
 }
 
 /**
@@ -455,6 +485,12 @@ export const handler = async (event) => {
 
     console.log('Lambda invocation - Method:', method, 'Has body:', !!event.body);
 
+    // A CSV the app wrote from a card's one query: stored, never rendered
+    // (card data attachments CD-D10).
+    if (event.body && method === 'POST' && isStoredCsvRequest(event.queryStringParameters)) {
+      return await handleStoredCsvRequest(event);
+    }
+
     if (event.body && method === 'POST') {
       console.log('Detected data-direct POST request (fast path)');
       return await handleDataDirectRequest(event);
@@ -565,11 +601,6 @@ export const handler = async (event) => {
       scheduleId: scheduleId,
       reportParams: reportParams,
       format: format,
-      delimiter: event?.queryStringParameters?.delimiter || ',',
-      csvEncoding: parseCsvEncoding(event?.queryStringParameters?.csvEncoding),
-      includeHeaders: event?.queryStringParameters?.includeHeaders !== 'false',
-      useFormattedValues:
-        event?.queryStringParameters?.useFormattedValues !== 'false',
       isVisualExport: isVisualExport,
       watermarkEnabled: watermarkEnabled,
       watermarkText: watermarkText,
@@ -580,18 +611,6 @@ export const handler = async (event) => {
           ? parseImageCaptureRequest(event?.queryStringParameters ?? {})
           : undefined,
     };
-
-    // The app resolves the encoding (D5); a CSV request without one is a bug
-    // upstream, not something the renderer should guess.
-    if (format === 'csv' && !options.csvEncoding) {
-      return {
-        statusCode: 400,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: "CSV requests require csvEncoding 'utf-8-bom' or 'utf-8'",
-        }),
-      };
-    }
 
     console.log(
       'Lambda handler - Format:',

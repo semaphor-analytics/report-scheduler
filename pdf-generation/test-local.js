@@ -1,7 +1,6 @@
 import fs from 'fs';
 import path from 'path';
 import { generatePdf } from './lib/pdf-generator.js';
-import { generateCsv } from './lib/csv-extractor.js';
 
 /**
  * Parse command line arguments into options object
@@ -15,7 +14,6 @@ function parseArgs(args) {
     pageSize: 'A4',
     table: false,
     password: null,
-    delimiter: ',',
     watermarkEnabled: false,
     watermarkText: null,
     headerLogoUrl: null,
@@ -46,15 +44,6 @@ function parseArgs(args) {
       case '--password':
         options.password = args[++i];
         break;
-      case '--delimiter':
-        const delim = args[++i];
-        const delimiterMap = {
-          comma: ',',
-          semicolon: ';',
-          tab: '\t',
-        };
-        options.delimiter = delimiterMap[delim] ?? delim;
-        break;
       case '--watermark':
         options.watermarkEnabled = true;
         options.watermarkText = args[++i];
@@ -83,7 +72,7 @@ function parseArgs(args) {
  */
 function printHelp() {
   console.log(`
-📖 PDF/CSV Test Generator
+📖 PDF Test Generator
 
 Usage:
   node test-local.js --url <url> [options]
@@ -91,13 +80,12 @@ Usage:
 
 Options:
   --url <url>           URL to convert (required)
-  --format <type>       Output format: pdf (default) or csv
+  --format <type>       Output format: pdf (default)
   --visual              Single visual export mode (fits chart to one page)
   --orientation <dir>   PDF orientation: portrait (default) or landscape
   --page-size <size>    PDF page size: A4 (default), Letter, Legal, A3, Tabloid
   --table               Table mode (paginated PDF)
   --password <pwd>      PDF password protection
-  --delimiter <char>    CSV delimiter: comma (default), semicolon, tab
   --watermark <text>    Add watermark text to PDF (diagonal across pages)
   --header-logo <url>   Add header logo to PDF (URL to logo image)
   --help, -h            Show this help
@@ -115,12 +103,6 @@ Examples:
   # Table export with pagination
   node test-local.js --url "http://localhost:3000/view/456" --table --page-size letter
 
-  # CSV export
-  node test-local.js --url "http://localhost:3000/view/456" --format csv
-
-  # CSV with semicolon delimiter
-  node test-local.js --url "http://localhost:3000/view/456" --format csv --delimiter semicolon
-
   # PDF with watermark
   node test-local.js --url "http://localhost:5173/?isPdfRender=true" --visual --watermark "CONFIDENTIAL"
 
@@ -132,7 +114,7 @@ Examples:
 `);
 }
 
-// Test script for local PDF/CSV generation
+// Test script for local PDF generation
 async function testGeneration() {
   try {
     const options = parseArgs(process.argv.slice(2));
@@ -163,37 +145,9 @@ async function testGeneration() {
     }
 
     if (options.format === 'csv') {
-      // CSV Generation
-      const csvOptions = {
-        isLambda: false,
-        delimiter: options.delimiter,
-        csvEncoding: 'utf-8-bom',
-        includeHeaders: true,
-        includeSubtotals: true,
-        includeGrandTotal: true,
-        reportTitle: 'Test Report',
-        timezone: 'UTC',
-        debug: true,
-      };
-
-      console.log('Testing CSV generation');
-      console.log('  URL:', options.url);
-      console.log('  Delimiter:', options.delimiter === '\t' ? 'tab' : options.delimiter);
-
-      const csvBuffer = await generateCsv(options.url, csvOptions);
-
-      if (!csvBuffer?.length) {
-        throw new Error('Empty CSV buffer generated');
-      }
-
-      const outputFilename = `test-output-${Date.now()}.csv`;
-      const outputPath = path.join(outputDir, outputFilename);
-      fs.writeFileSync(outputPath, csvBuffer);
-
-      console.log('✅ CSV generated successfully!');
-      console.log(`   Output: ${outputPath}`);
-      console.log(`   Size: ${(csvBuffer.length / 1024).toFixed(2)} KB`);
-
+      // A card CSV is written from its data by the app and only stored by the
+      // worker (card data attachments CD-D8); the renderer makes no CSVs.
+      throw new Error('The renderer makes PDFs only; CSV is no longer supported here.');
     } else {
       // PDF Generation
       const pdfOptions = {

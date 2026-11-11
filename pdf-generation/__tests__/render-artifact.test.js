@@ -1,19 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// PNG exports SPEC §3.5 (PN-SI-10): one format switch; PDF and CSV are made
-// exactly as the two switches it replaces made them.
+// PNG exports SPEC §3.5 (PN-SI-10): one format switch. It makes PDF and PNG
+// only: a page is never copied as a CSV (card data attachments CD-D8).
 const mocks = vi.hoisted(() => ({
   generatePdf: vi.fn(),
-  generateCsv: vi.fn(),
   captureImage: vi.fn(),
 }));
 
 vi.mock('../lib/pdf-generator.js', () => ({ generatePdf: mocks.generatePdf }));
-vi.mock('../lib/csv-extractor.js', () => ({ generateCsv: mocks.generateCsv }));
 vi.mock('../lib/image-capture.js', () => ({ captureImage: mocks.captureImage }));
 
 const { renderArtifact, UnsupportedFormatError } = await import('../lib/render-artifact.js');
-const { CSV_CONTENT_TYPE } = await import('../lib/generated/csv-file.js');
 
 const URL = 'https://app.test/view/dashboard/d/visual/c?token=t&isPdfRender=true';
 
@@ -34,16 +31,8 @@ describe('renderArtifact', () => {
     expect(mocks.generatePdf).toHaveBeenCalledWith(URL, options);
   });
 
-  it('makes a CSV as before', async () => {
-    const csv = Buffer.from('a,b');
-    mocks.generateCsv.mockResolvedValue(csv);
-    await expect(renderArtifact({ format: 'csv', targetUrl: URL, options: {} })).resolves.toEqual({
-      fileBuffer: csv,
-      fileKind: 'csv',
-      contentType: CSV_CONTENT_TYPE,
-      fileExtension: 'csv',
-      layoutApplied: null,
-    });
+  it('refuses a CSV: the renderer never copies a page as a CSV (CD-D8)', async () => {
+    await expect(renderArtifact({ format: 'csv', targetUrl: URL, options: {} })).rejects.toBeInstanceOf(UnsupportedFormatError);
   });
 
   it('makes a PNG, or a zip of sheet PNGs, with the rendered file traits', async () => {

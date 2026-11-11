@@ -8,10 +8,6 @@ vi.mock('../lib/pdf-generator.js', () => ({
   generatePdf: mocks.generatePdf,
 }));
 
-vi.mock('../lib/csv-extractor.js', () => ({
-  generateCsv: vi.fn(),
-}));
-
 vi.mock('../lib/pdf-from-data-generator.js', () => ({
   generatePdfFromData: vi.fn(),
 }));

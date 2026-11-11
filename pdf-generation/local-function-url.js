@@ -5,7 +5,7 @@ import http from 'http';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createGunzip } from 'zlib';
 import { fileURLToPath } from 'url';
-import { renderArtifact } from './lib/render-artifact.js';
+import { renderArtifact, UnsupportedFormatError } from './lib/render-artifact.js';
 import {
   RENDERED_FILE_KINDS,
   parseImageCaptureRequest,
@@ -16,9 +16,9 @@ import {
   CSV_CONTENT_TYPE,
   EXPORT_FILE_FORMATS,
   exportFileTraits,
-  parseCsvEncoding,
 } from './lib/generated/csv-file.js';
 import { generatePdfFromData } from './lib/pdf-from-data-generator.js';
+import { isStoredCsvRequest, parseStoredCsvRequest } from './lib/stored-csv.js';
 import {
   preloadLocalChunkedExportHandlers,
   runLocalChunkedExport,
@@ -286,35 +286,12 @@ export async function handleGet(req, res, parsedUrl) {
   const format = (query.get('format') || 'pdf').toLowerCase();
   const reportTitle = query.get('reportTitle') || 'report';
 
-  if (format === 'csv') {
-    const delimiterMap = { comma: ',', semicolon: ';', tab: '\t' };
-    const requestedDelimiter = query.get('delimiter') || ',';
-    const delimiter = delimiterMap[requestedDelimiter] ?? requestedDelimiter;
-    // Mirror the Lambda: the app resolves the encoding and sends it.
-    const csvEncoding = parseCsvEncoding(query.get('csvEncoding'));
-    if (!csvEncoding) {
-      sendJson(res, 400, {
-        message: "CSV requests require csvEncoding 'utf-8-bom' or 'utf-8'",
-      });
-      return;
-    }
-
-    const { fileBuffer: csvBuffer } = await renderArtifact({ format: 'csv', targetUrl, options: {
-      isLambda: false,
-      delimiter,
-      csvEncoding,
-      includeHeaders: query.get('includeHeaders') !== 'false',
-      includeSubtotals: true,
-      includeGrandTotal: true,
-      useFormattedValues: query.get('useFormattedValues') !== 'false',
-      reportTitle,
-      timezone: query.get('timezone') || 'UTC',
-      filterLine: query.get('filterLine') || '',
-      debug: true,
-    } });
-
-    const output = writeOutput(csvBuffer, 'csv', reportTitle);
-    sendJson(res, 200, { url: output.url });
+  // The renderer makes PDF and PNG only. A page is never copied as a CSV
+  // (card data attachments CD-D8): a card's CSV is written from its data by
+  // the app and stored with `?store=csv`. Same answer as the Lambda.
+  if (format !== 'pdf' && format !== 'png') {
+    const unsupported = new UnsupportedFormatError(format);
+    sendJson(res, unsupported.statusCode, { message: unsupported.message, error: unsupported.message });
     return;
   }
 
@@ -385,8 +362,24 @@ export async function handleGet(req, res, parsedUrl) {
   });
 }
 
-async function handlePost(req, res) {
+async function handlePost(req, res, parsedUrl) {
   const rawBody = await readRequestBody(req);
+  // A CSV the app wrote from a card's one query: stored, never rendered
+  // (card data attachments CD-D10), as the Lambda handler does.
+  if (isStoredCsvRequest(Object.fromEntries(parsedUrl.searchParams))) {
+    try {
+      const { reportTitle, fileBuffer } = parseStoredCsvRequest(rawBody);
+      const output = writeOutput(fileBuffer, 'csv', reportTitle);
+      sendJson(res, 200, { url: output.url, contentType: 'text/csv; charset=utf-8', sizeBytes: fileBuffer.length });
+    } catch (error) {
+      // The Lambda's status and fields, so the app reads the same reason.
+      sendJson(res, Number.isInteger(error?.statusCode) ? error.statusCode : 500, {
+        message: error?.message || 'Internal server error',
+        error: error?.message,
+      });
+    }
+    return;
+  }
   let payload;
   try {
     payload = JSON.parse(rawBody || '{}');
@@ -486,7 +479,7 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         outputDir: OUTPUT_DIR,
         semaphorAppUrl: process.env.SEMAPHOR_APP_URL,
-        capabilities: ['rendered-pdf', 'rendered-csv', 'fast-pdf', 'chunked-csv', 'chunked-xlsx'],
+        capabilities: ['rendered-pdf', 'rendered-png', 'stored-csv', 'fast-pdf', 'chunked-csv', 'chunked-xlsx'],
         activeChunkedExports: ACTIVE_EXPORTS.size,
       });
       return;
@@ -546,7 +539,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST') {
-      await handlePost(req, res);
+      await handlePost(req, res, parsedUrl);
       return;
     }
 

@@ -1,6 +1,4 @@
 import { generatePdf } from './pdf-generator.js';
-import { generateCsv } from './csv-extractor.js';
-import { CSV_CONTENT_TYPE, exportFileTraits } from './generated/csv-file.js';
 import { renderedFileTraits } from './generated/rendered-file.js';
 import { captureImage } from './image-capture.js';
 
@@ -14,10 +12,10 @@ export class UnsupportedFormatError extends Error {
 }
 
 /**
- * @typedef {'pdf' | 'csv' | 'png'} RenderFormat   the renderer's `format` query parameter
+ * @typedef {'pdf' | 'png'} RenderFormat   the renderer's `format` query parameter
  * @typedef {{
  *   fileBuffer: Buffer,
- *   fileKind: 'pdf' | 'csv' | 'png' | 'zip',
+ *   fileKind: 'pdf' | 'png' | 'zip',
  *   contentType: string,
  *   fileExtension: string,
  *   layoutApplied: object | null,
@@ -26,8 +24,9 @@ export class UnsupportedFormatError extends Error {
 
 /**
  * The renderer's one format switch (PNG exports SPEC §3.5): both handlers,
- * interactive and scheduled, call it. PDF and CSV are made exactly as before
- * (PN-SI-10); PNG is a card, a sheet, or a zip of every dashboard sheet.
+ * interactive and scheduled, call it. A PDF is made exactly as before
+ * (PN-SI-10); PNG is a card, a sheet, or a zip of every dashboard sheet. A
+ * page is never copied as a CSV (card data attachments CD-D8).
  * @param {{ format: RenderFormat, targetUrl: string, options: object }} input
  * @returns {Promise<RenderedArtifact>}
  */
@@ -42,16 +41,6 @@ export async function renderArtifact({ format, targetUrl, options }) {
         contentType: traits.contentType,
         fileExtension: traits.extension,
         layoutApplied: pdfBuffer?.layoutApplied || null,
-      };
-    }
-    case 'csv': {
-      const csvBuffer = await generateCsv(targetUrl, options);
-      return {
-        fileBuffer: csvBuffer,
-        fileKind: 'csv',
-        contentType: CSV_CONTENT_TYPE,
-        fileExtension: exportFileTraits('csv').extension,
-        layoutApplied: null,
       };
     }
     case 'png': {

@@ -1,12 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  generateCsv: vi.fn(),
   generatePdf: vi.fn(),
-}));
-
-vi.mock('../lib/csv-extractor.js', () => ({
-  generateCsv: mocks.generateCsv,
 }));
 
 vi.mock('../lib/pdf-generator.js', () => ({
