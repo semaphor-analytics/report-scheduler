@@ -1450,7 +1450,7 @@ describe("buildAnswerContract", () => {
                 { name: "sales", datasetName: "sales_data" },
               ],
               dateField: { name: "order_date", datasetName: "sales_data" },
-              comparison: { kind: "previous_year" },
+              comparison: { kind: "shift", unit: "year" },
             },
           },
           query: {

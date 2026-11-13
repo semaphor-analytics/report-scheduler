@@ -2214,19 +2214,11 @@ function entryHasComparisonArgument(entry: EvidenceEntry): boolean {
 function readComparisonArgument(
   value: unknown,
 ): "previous_period" | "same_period_last_year" | undefined {
-  const stringValue = readString(value);
-  if (stringValue === "previous_period") {
-    return "previous_period";
-  }
-  if (stringValue === "same_period_last_year") {
-    return "same_period_last_year";
-  }
+  // semaphor_analyze's words (compare-with CW-D24): a step back by years is the same period last year; any other
+  // step is an earlier period.
   const record = asRecord(value);
-  if (record?.kind === "previous_period") {
-    return "previous_period";
-  }
-  if (record?.kind === "previous_year") {
-    return "same_period_last_year";
+  if (record?.kind === "shift") {
+    return record.unit === "year" ? "same_period_last_year" : "previous_period";
   }
   return undefined;
 }

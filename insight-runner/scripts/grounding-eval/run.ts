@@ -608,7 +608,7 @@ class SlottedSemanticModel extends FakeInsightLoopModelClient {
             datasetName: "Orders",
             measures: [{ name: "revenue", datasetName: "Orders" }],
             dateField: "order_date",
-            comparison: { kind: "previous_period" },
+            comparison: { kind: "shift", unit: "period" },
             limit: 100,
           },
           purpose: "[slot:revenue_summary] Execute governed revenue summary query.",

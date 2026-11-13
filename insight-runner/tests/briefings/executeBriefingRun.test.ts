@@ -672,8 +672,8 @@ class RepeatingPlanningModelClient extends FakeInsightLoopModelClient {
             dateField: "order_date",
             comparison:
               iteration === 1
-                ? { kind: "previous_period" }
-                : { kind: "previous_year" },
+                ? { kind: "shift", unit: "period" }
+                : { kind: "shift", unit: "year" },
             limit: 100 + iteration,
           },
           purpose: `Run query variant ${iteration}.`,

@@ -75,7 +75,7 @@ const PLANNING_TOOL_DESCRIPTIONS: Record<string, string> = {
   semaphor_get_domain_relationships:
     "Inspect semantic relationships for a domain; requires domainId.",
   semaphor_analyze:
-    'Default governed analytics tool for standard BI analysis. Use first for grouped metrics, time series, top-N, filters, modeled semantic joins, simple comparisons, and common breakdowns because it reuses Semaphor semantics. Example args: {"domainId":"...","datasetName":"sales_data","measures":[{"name":"sales","datasetName":"sales_data"}],"dateField":{"name":"order_date","datasetName":"sales_data"},"timeGrain":"week","dimensions":[{"name":"segment","datasetName":"sales_data"},{"name":"region","datasetName":"dim_facility"}],"comparison":{"kind":"previous_period"},"driverMode":"all","limit":100}. For period movement questions, pass analysis {"kind":"period_change"} and request driverMode "all" or "positive_and_negative" with concrete dimensions from schemaSummary before falling back to SQL. If you only need the headline comparison, omit driverMode.',
+    'Default governed analytics tool for standard BI analysis. Use first for grouped metrics, time series, top-N, filters, modeled semantic joins, simple comparisons, and common breakdowns because it reuses Semaphor semantics. Example args: {"domainId":"...","datasetName":"sales_data","measures":[{"name":"sales","datasetName":"sales_data"}],"dateField":{"name":"order_date","datasetName":"sales_data"},"timeGrain":"week","dimensions":[{"name":"segment","datasetName":"sales_data"},{"name":"region","datasetName":"dim_facility"}],"comparison":{"kind":"shift","unit":"period"},"driverMode":"all","limit":100}. For period movement questions, pass analysis {"kind":"period_change"} and request driverMode "all" or "positive_and_negative" with concrete dimensions from schemaSummary before falling back to SQL. If you only need the headline comparison, omit driverMode.',
   semaphor_query_sql_advanced:
     "Advanced raw-SQL escape hatch. Use only when semaphor_analyze cannot express the analysis cleanly: custom CTEs, window functions, percentiles, cohort/retention logic, custom date logic, nested queries, exploratory intermediate checks, or fields/relationships not exposed in semantic grounding. Requires connectionId and bounded read-only SELECT/WITH SQL with an explicit outer LIMIT.",
 };
@@ -621,6 +621,9 @@ function validateCanonicalAnalysisArg(analysis: unknown): { error?: string } {
   return {};
 }
 
+/** The steps a comparison takes: the window's own length (`period`) or a calendar unit (compare-with CW-D3). */
+const COMPARISON_UNITS = new Set(["period", "day", "week", "month", "quarter", "year"]);
+
 function validateCanonicalComparisonArg(
   comparison: unknown,
 ): { error?: string } {
@@ -631,7 +634,7 @@ function validateCanonicalComparisonArg(
     return {
       error:
         `Skipped semaphor_analyze because comparison "${comparison}" is not valid. ` +
-        'Use canonical comparison objects such as {"kind":"previous_period"} or {"kind":"previous_year"}. Express the window as timeWindow in the window form, with its anchor, for example {"kind":"periods","unit":"month","from":-6,"to":-1,"anchor":"now"} for the last 6 complete months, or surface the missing app-owned query-spec capability.',
+        'Use comparison objects such as {"kind":"shift","unit":"period"} (the period before) or {"kind":"shift","unit":"year"} (the same period last year). Express the window as timeWindow in the window form, with its anchor, for example {"kind":"periods","unit":"month","from":-6,"to":-1,"anchor":"now"} for the last 6 complete months, or surface the missing app-owned query-spec capability.',
     };
   }
   if (
@@ -644,15 +647,21 @@ function validateCanonicalComparisonArg(
         "Skipped semaphor_analyze because comparison must be a canonical object.",
     };
   }
+  // semaphor_analyze takes a card measure's comparison words (compare-with CW-D24); the app checks them in full.
   const kind = (comparison as { kind?: unknown }).kind;
-  if (
-    kind !== "previous_period" &&
-    kind !== "previous_year" &&
-    kind !== "target"
-  ) {
+  if (kind === "shift") {
+    if (!COMPARISON_UNITS.has(String((comparison as { unit?: unknown }).unit))) {
+      return {
+        error:
+          'Skipped semaphor_analyze because comparison.kind "shift" requires unit "period", "day", "week", "month", "quarter" or "year".',
+      };
+    }
+    return {};
+  }
+  if (kind !== "target") {
     return {
       error:
-        'Skipped semaphor_analyze because comparison.kind must be "previous_period", "previous_year", or "target".',
+        'Skipped semaphor_analyze because comparison.kind must be "shift" or "target": send {"kind":"shift","unit":"period"} (the period before) or {"kind":"shift","unit":"year"} (the same period last year), or {"kind":"target","targetValue":100}.',
     };
   }
   if (

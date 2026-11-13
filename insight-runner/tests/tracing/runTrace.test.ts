@@ -23,7 +23,7 @@ describe("RunTrace diagnostics", () => {
           dateField: "order_date",
           timeGrain: "week",
           dimensions: ["segment"],
-          comparison: { kind: "previous_period" },
+          comparison: { kind: "shift", unit: "period" },
           driverMode: "all",
           limit: 100,
         },
@@ -85,7 +85,7 @@ describe("RunTrace diagnostics", () => {
           primaryMeasure: { name: "revenue", datasetName: "orders" },
           dateField: "order_date",
           dimensions: ["segment"],
-          comparison: { kind: "previous_period" },
+          comparison: { kind: "shift", unit: "period" },
         },
         validation: {
           code: "invalid_metric",

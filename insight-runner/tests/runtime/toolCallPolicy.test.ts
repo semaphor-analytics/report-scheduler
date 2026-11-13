@@ -910,7 +910,7 @@ describe("applyPlannedToolCallPolicy", () => {
               datasetName: "sales_data",
               measures: [{ name: "Sales", datasetName: "sales_data" }],
               dateField: "Order Date",
-              comparison: { kind: "previous_period" },
+              comparison: { kind: "shift", unit: "period" },
               driverMode: "all",
             },
             purpose: "driver analysis",
@@ -941,7 +941,7 @@ describe("applyPlannedToolCallPolicy", () => {
                 },
               ],
               dateField: "movement_date",
-              comparison: { kind: "previous_period" },
+              comparison: { kind: "shift", unit: "period" },
               driverMode: "all",
               dimensions: [
                 { name: "region", datasetName: "dim_facility" },
@@ -1016,7 +1016,35 @@ describe("applyPlannedToolCallPolicy", () => {
     expect(result.violations[0]).toContain(
       'comparison "previous_period" is not valid',
     );
-    expect(result.violations[0]).toContain("canonical comparison objects");
+    expect(result.violations[0]).toContain('comparison objects such as {"kind":"shift","unit":"period"}');
+  });
+
+  // Compare-with CW-D24: semaphor_analyze takes a card measure's comparison words; the old ones never leave the runner.
+  it.each([
+    [{ kind: "shift", unit: "period" }, true],
+    [{ kind: "shift", unit: "week", offset: 2 }, true],
+    [{ kind: "shift", unit: "year", matchWeekdays: true }, true],
+    [{ kind: "target", targetValue: 100 }, true],
+    [{ kind: "previous_period" }, false],
+    [{ kind: "previous_year" }, false],
+    [{ kind: "shift", unit: "fortnight" }, false],
+  ])("sends %j to semaphor_analyze only in the new words: %s", (comparison, sent) => {
+    const result = applyPlannedToolCallPolicy({
+      limits: { maxToolCalls: 4 },
+      plan: plan({
+        plannedToolCalls: [
+          {
+            name: "semaphor_analyze",
+            arguments: { domainId: "domain_sales", datasetName: "sales_data", measures: [{ name: "profit", datasetName: "sales_data" }], dateField: "order_date", comparison },
+            purpose: "comparison call",
+          },
+        ],
+      }),
+    });
+    expect(result.calls).toHaveLength(sent ? 1 : 0);
+    if (!sent && (comparison as { kind: string }).kind !== "shift") {
+      expect(result.violations[0]).toContain('{"kind":"shift","unit":"period"}');
+    }
   });
 
   it("rejects malformed analysis values for semaphor_analyze", () => {
@@ -1525,7 +1553,7 @@ describe("applyPlannedToolCallPolicy", () => {
               datasetName: "sales_data",
               measures: [{ name: "Sales", datasetName: "sales_data" }],
               dateField: "Order Date",
-              comparison: { kind: "previous_period" },
+              comparison: { kind: "shift", unit: "period" },
               driverMode: "all",
               dimensions: ["Segment", "Region"],
             },

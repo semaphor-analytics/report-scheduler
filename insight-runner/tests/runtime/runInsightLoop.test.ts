@@ -1163,7 +1163,7 @@ class ComposingTestModel implements InsightLoopModelClient {
             datasetName: "sales_data",
             measures: [{ name: "sales", datasetName: "sales_data" }],
             dateField: "order_date",
-            comparison: { kind: "previous_period" },
+            comparison: { kind: "shift", unit: "period" },
             limit: 10,
           },
           purpose: "Collect revenue result evidence.",

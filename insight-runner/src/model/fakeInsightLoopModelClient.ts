@@ -68,7 +68,7 @@ export class FakeInsightLoopModelClient implements InsightLoopModelClient {
             datasetName: "Orders",
             measures: [{ name: "revenue", datasetName: "Orders" }],
             dateField: "order_date",
-            comparison: { kind: "previous_period" },
+            comparison: { kind: "shift", unit: "period" },
             limit: 100,
           },
           purpose: "Run the governed common analytics query path.",
