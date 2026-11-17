@@ -380,6 +380,17 @@ async function handlePost(req, res, parsedUrl) {
     }
     return;
   }
+  // A custom visual's checks, as the Lambda handler runs them (custom visuals Plan 1, Phase 4).
+  if (parsedUrl.searchParams.get('pdfMode') === 'extension-check') {
+    try {
+      // Loaded on use, so its bundle can never stop the runner from starting.
+      const { parseExtensionCheckRequest, runExtensionChecks } = await import('./lib/modes/extension-check.js');
+      sendJson(res, 200, await runExtensionChecks(parseExtensionCheckRequest(rawBody), { isLambda: false }));
+    } catch (error) {
+      sendJson(res, Number.isInteger(error?.statusCode) ? error.statusCode : 500, { message: error?.message, error: error?.message });
+    }
+    return;
+  }
   let payload;
   try {
     payload = JSON.parse(rawBody || '{}');

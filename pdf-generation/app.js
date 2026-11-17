@@ -491,6 +491,14 @@ export const handler = async (event) => {
       return await handleStoredCsvRequest(event);
     }
 
+    // A custom visual's checks: rendered in the viewers' sandbox and audited,
+    // nothing stored (custom visuals Plan 1, Phase 4).
+    // Loaded on use, so its bundle can never stop the other modes from loading.
+    if (event.body && method === 'POST' && event?.queryStringParameters?.pdfMode === 'extension-check') {
+      const { handleExtensionCheckRequest } = await import('./lib/modes/extension-check.js');
+      return await handleExtensionCheckRequest(event);
+    }
+
     if (event.body && method === 'POST') {
       console.log('Detected data-direct POST request (fast path)');
       return await handleDataDirectRequest(event);

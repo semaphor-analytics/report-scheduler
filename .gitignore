@@ -24,3 +24,4 @@ pdf-generation/lib/generated/pdf-table-layout.js
 pdf-generation/lib/generated/csv-file.js
 pdf-generation/lib/generated/rendered-file.js
 pdf-generation/lib/generated/document-print.js
+pdf-generation/lib/generated/extension-check.js
