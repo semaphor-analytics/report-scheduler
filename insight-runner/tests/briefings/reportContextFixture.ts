@@ -20,6 +20,7 @@ export const TEST_REPORT_CONTEXT: ReportRuntimeContext = {
     calendar: {
       tz: "system_default",
       weekStart: "system_default",
+      workDays: "system_default",
     },
     valueFormat: {
       locale: "system_default",

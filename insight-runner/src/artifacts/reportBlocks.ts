@@ -557,19 +557,14 @@ function semanticNumericFormatToCanonical(
     (format.type !== "number" &&
       format.type !== "currency" &&
       format.type !== "percent" &&
-      format.type !== "percentage" &&
       format.type !== "scientific")
   ) {
     return undefined;
   }
 
-  const parsed = parseNumericCanonicalFormat({
-    ...format,
-    type: format.type === "percentage" ? "percent" : format.type,
-    ...(format.type === "percentage" && format.percentValueMode === undefined
-      ? { percentValueMode: "fraction" }
-      : {}),
-  });
+  // The execution result's schema already reads the retired "percentage"
+  // spelling as "percent" (react-semaphor `toStoredValueFormat`).
+  const parsed = parseNumericCanonicalFormat(format);
   return parsed.ok ? parsed.value : undefined;
 }
 

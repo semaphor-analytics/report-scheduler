@@ -17,6 +17,7 @@ import {
   SUITES,
   VARIANT_CODES,
   VARIANTS,
+  VARIANT_TEXT,
   caseLabel,
 } from './cases.mjs';
 import { runDesktop } from './desktop.mjs';
@@ -172,9 +173,13 @@ const environment = {
 say(`Worker ${environment.worker.commit ?? '?'}${environment.worker.dirty ? ' (uncommitted changes)' : ''}, react-semaphor ${environment.reactSemaphor.commit ?? '?'}${environment.reactSemaphor.dirty ? ' (uncommitted changes)' : ''}; results in ${runDir}`);
 
 /** The PDF check (check-pdf.py), or null when pypdf is not installed. */
-function checkPdf(file, rows) {
+function checkPdf(file, rows, variants = []) {
   if (!canCheckPdf) return null;
-  const out = spawnSync('python3', [path.join(HARNESS_DIR, 'check-pdf.py'), file, String(rows), '--last-column', LAST_COLUMN_HEADER], {
+  const text = variants.flatMap((variant) => [
+    ...(VARIANT_TEXT[variant]?.expect ?? []).flatMap((t) => ['--expect-text', t]),
+    ...(VARIANT_TEXT[variant]?.refuse ?? []).flatMap((t) => ['--refuse-text', t]),
+  ]);
+  const out = spawnSync('python3', [path.join(HARNESS_DIR, 'check-pdf.py'), file, String(rows), '--last-column', LAST_COLUMN_HEADER, ...text], {
     encoding: 'utf8',
   });
   if (out.status !== 0) return { ok: false, error: out.stderr.trim().split('\n').pop() };
@@ -188,6 +193,8 @@ function describeCheck(check, rows) {
   if (check.labelProblems) problems.push(`${check.labelProblems} pages with a wrong "Page N of M"`);
   if (check.pagesWithoutLastColumn) problems.push(`${check.pagesWithoutLastColumn} pages without the last column`);
   if (check.hiddenKeyPages.length) problems.push('hidden columns printed');
+  if (check.missingText?.length) problems.push(`missing text: ${check.missingText.join(', ')}`);
+  if (check.refusedText?.length) problems.push(`printed text it must not: ${check.refusedText.join(', ')}`);
   return problems.join('; ');
 }
 
@@ -253,7 +260,7 @@ function summaryLine(name, result, check, outcome) {
 /** Writes the run's JSON, checks its PDF, removes the PDF unless --keep-pdf, and reports. */
 function finishRun(testCase, name, result, pdfFile) {
   const rows = DATASET_ROWS[testCase.dataset];
-  const check = pdfFile && fs.existsSync(pdfFile) ? checkPdf(pdfFile, rows) : null;
+  const check = pdfFile && fs.existsSync(pdfFile) ? checkPdf(pdfFile, rows, testCase.variants ?? []) : null;
   const outcome = verdict(testCase, result, check);
   if (pdfFile && !values['keep-pdf'] && fs.existsSync(pdfFile)) fs.rmSync(pdfFile);
   fs.writeFileSync(path.join(runDir, `${name}.json`), JSON.stringify({ case: testCase, environment, ...result, check, outcome }, null, 2));

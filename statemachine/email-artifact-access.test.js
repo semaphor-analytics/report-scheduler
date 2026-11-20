@@ -22,12 +22,13 @@ test('existing email role can read final Matrix artifacts, not checkpoints or ch
   assert.equal(bucket.Principal.AWS, 'EmailSenderFunctionRole.Arn');
   for (const statement of [role, bucket]) {
     assert.deepEqual(statement.Action, ['s3:GetObject']);
-    const exportResources = statement.Resource.filter(resource => resource.includes('/exports/'));
-    assert.equal(exportResources.length, 1);
-    const path = exportResources[0].split('/').slice(1);
-    assert.deepEqual(path, ['exports', '*', 'attempts', '*', 'export.csv.gz']);
+    // Every finished export file is granted (pinned by email-sender-file-access.test.js);
+    // here, the Matrix attempt react-semaphor names is one of them, and no grant reaches a chunk.
+    const paths = statement.Resource.filter(resource => resource.includes('/exports/'))
+      .map(resource => resource.split('/').slice(1));
+    assert.ok(paths.some(path => path.join('/') === 'exports/*/attempts/*/export.csv.gz'));
     const key = matrixAttemptKey('job', 'attempt', 'export.csv.gz').split('/');
-    assert.ok(path.every((part, index) => part === '*' || part === key[index]));
-    assert.equal(path.length, key.length);
+    assert.ok(paths.some(path => path.length === key.length && path.every((part, index) => part === '*' || part === key[index])));
+    assert.ok(paths.every(path => !path.includes('chunks') && !path.includes('checkpoints') && !path.at(-1).startsWith('*')));
   }
 });

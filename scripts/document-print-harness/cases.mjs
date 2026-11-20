@@ -44,8 +44,20 @@ export const FAILURE_CODES = {
  * `long-words`: an unbreakable reference in some notes, far wider than the
  * column; it breaks inside the cell and the PDF prints complete (PDF capacity
  * contract ledger P0-03).
+ * `controlled`: a config KPI under the Document's own control prints the
+ * value that ran (`VARIANT_TEXT`).
  */
-export const VARIANTS = ['a4-landscape', 'nulls', 'empty', 'wide', 'variable', 'long-words'];
+export const VARIANTS = ['a4-landscape', 'nulls', 'empty', 'wide', 'variable', 'long-words', 'controlled'];
+
+/**
+ * Text a variant's PDF must show and must not. `controlled`: the Count of
+ * closes under the Document's own control set to Latest prints the latest
+ * close as a date, never its raw instant (controls render what ran F4-D5,
+ * F4-INV-2; the dev page's `controlled` variant).
+ */
+export const VARIANT_TEXT = {
+  controlled: { expect: ['LAST CLOSE', '1/5/26'], refuse: ['2026-01-05T'] },
+};
 
 /**
  * Variants that must stop with a code. `wide` keeps the default column widths,
@@ -72,6 +84,7 @@ export const SUITES = {
     { dataset: 'wrapped-278', variants: ['empty'] },
     { dataset: 'wrapped-278', variants: ['variable'] },
     { dataset: 'kpi-and-table', variants: ['long-words'] },
+    { dataset: 'kpi-and-table', variants: ['controlled'] },
   ],
   /** Every forced failure stops with its code (`stall` waits out the 120 s deadline). */
   failures: [

@@ -1,6 +1,6 @@
 """Reads a Document print PDF back and checks it is complete.
 
-Usage: python3 check-pdf.py <pdf> <expected rows> [--last-column NOTES]
+Usage: python3 check-pdf.py <pdf> <expected rows> [--last-column NOTES] [--expect-text T ...] [--refuse-text T ...]
 
 Checks, and prints one JSON line:
 - every synthetic row id R00001..Rnnnnn appears exactly once, in order;
@@ -8,7 +8,8 @@ Checks, and prints one JSON line:
 - every page that prints rows carries the last visible column's header (headers
   print upper case; a narrow unwrapped header may truncate, so only the last
   column's label is required), so no column was clipped;
-- the hidden sort keys never print.
+- the hidden sort keys never print;
+- each --expect-text appears somewhere, and no --refuse-text does.
 
 Text is compared with whitespace removed, since a wrapped cell can break a row
 id across lines. Needs pypdf (pip install pypdf).
@@ -24,6 +25,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('pdf')
 parser.add_argument('expected_rows', type=int)
 parser.add_argument('--last-column', default='NOTES')
+parser.add_argument('--expect-text', action='append', default=[])
+parser.add_argument('--refuse-text', action='append', default=[])
 args = parser.parse_args()
 
 reader = PdfReader(args.pdf)
@@ -33,8 +36,10 @@ label_problems = []
 pages_without_last_column = []
 hidden_key_pages = []
 labels_seen = []
+all_text = []
 for index, page in enumerate(reader.pages):
     text = page.extract_text() or ''
+    all_text.append(text)
     flat = re.sub(r'\s+', ' ', text)
     labels = re.findall(r'Page (\d+) of (\d+)', flat)
     labels_seen.append(labels[:1])
@@ -70,8 +75,13 @@ result = {
         'last': ' of '.join(labels_seen[-1][0]) if labels_seen and labels_seen[-1] else None,
     },
 }
+document_text = re.sub(r'\s+', ' ', ' '.join(all_text))
+result['missingText'] = [t for t in args.expect_text if t not in document_text]
+result['refusedText'] = [t for t in args.refuse_text if t in document_text]
 result['ok'] = (
-    result['complete']
+    not result['missingText']
+    and not result['refusedText']
+    and result['complete']
     and result['labelProblems'] == 0
     and result['pagesWithoutLastColumn'] == 0
     and not result['hiddenKeyPages']
