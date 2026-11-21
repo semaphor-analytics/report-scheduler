@@ -308,7 +308,10 @@ Resources:
     Properties:
       Handler: app.handler
       CodeUri: ./email-sender # Directory for email sending code
-      MemorySize: 128 # Smaller memory since it's lightweight
+      # An attached file is held several times while the message is built and
+      # sent: a 6.5 MB file (the most the 9 MB message budget attaches) peaks
+      # near 200 MB. 128 MB ran out of memory on files over about 2 MB.
+      MemorySize: 1024
       Role: !GetAtt EmailSenderFunctionRole.Arn
       Environment:
         Variables:

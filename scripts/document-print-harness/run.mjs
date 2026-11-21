@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import {
   DATASET_CODES,
+  DATASET_PRINT_EXPECTATIONS,
   DATASET_ROWS,
   FAILURE_CODES,
   LAST_COLUMN_HEADER,
@@ -173,13 +174,15 @@ const environment = {
 say(`Worker ${environment.worker.commit ?? '?'}${environment.worker.dirty ? ' (uncommitted changes)' : ''}, react-semaphor ${environment.reactSemaphor.commit ?? '?'}${environment.reactSemaphor.dirty ? ' (uncommitted changes)' : ''}; results in ${runDir}`);
 
 /** The PDF check (check-pdf.py), or null when pypdf is not installed. */
-function checkPdf(file, rows, variants = []) {
+function checkPdf(file, rows, { dataset, variants = [] }) {
   if (!canCheckPdf) return null;
   const text = variants.flatMap((variant) => [
     ...(VARIANT_TEXT[variant]?.expect ?? []).flatMap((t) => ['--expect-text', t]),
     ...(VARIANT_TEXT[variant]?.refuse ?? []).flatMap((t) => ['--refuse-text', t]),
   ]);
-  const out = spawnSync('python3', [path.join(HARNESS_DIR, 'check-pdf.py'), file, String(rows), '--last-column', LAST_COLUMN_HEADER, ...text], {
+  const textOnce = (DATASET_PRINT_EXPECTATIONS[dataset]?.expectOnce ?? [])
+    .flatMap((t) => ['--expect-text-once', t]);
+  const out = spawnSync('python3', [path.join(HARNESS_DIR, 'check-pdf.py'), file, String(rows), '--last-column', LAST_COLUMN_HEADER, ...text, ...textOnce], {
     encoding: 'utf8',
   });
   if (out.status !== 0) return { ok: false, error: out.stderr.trim().split('\n').pop() };
@@ -195,6 +198,7 @@ function describeCheck(check, rows) {
   if (check.hiddenKeyPages.length) problems.push('hidden columns printed');
   if (check.missingText?.length) problems.push(`missing text: ${check.missingText.join(', ')}`);
   if (check.refusedText?.length) problems.push(`printed text it must not: ${check.refusedText.join(', ')}`);
+  if (check.incorrectTextCounts?.length) problems.push(`text must appear once: ${check.incorrectTextCounts.join(', ')}`);
   return problems.join('; ');
 }
 
@@ -226,8 +230,9 @@ function verdict(testCase, result, check) {
   if (result.readyError) return { verdict: 'FAIL', why: `readiness failed: ${code ?? result.readyError.message}` };
   if (!result.pdf || result.pdf.error) return { verdict: 'FAIL', why: `the print failed: ${result.pdf?.error ?? 'no PDF'}` };
   const rows = DATASET_ROWS[testCase.dataset];
-  if (result.layout && result.layout.totalRowCount !== rows) {
-    return { verdict: 'FAIL', why: `the page planned ${result.layout.totalRowCount} rows; cases.mjs expects ${rows} (update it with the dev page's document-print-fixtures.ts)` };
+  const layoutRows = rows + (DATASET_PRINT_EXPECTATIONS[testCase.dataset]?.footerRows ?? 0);
+  if (result.layout && result.layout.totalRowCount !== layoutRows) {
+    return { verdict: 'FAIL', why: `the page planned ${result.layout.totalRowCount} rows; cases.mjs expects ${layoutRows} (update it with the dev page's document-print-fixtures.ts)` };
   }
   if (check && !check.ok) return { verdict: 'FAIL', why: describeCheck(check, rows) };
   return { verdict: 'PASS', why: check ? undefined : 'PDF not checked' };
@@ -260,7 +265,7 @@ function summaryLine(name, result, check, outcome) {
 /** Writes the run's JSON, checks its PDF, removes the PDF unless --keep-pdf, and reports. */
 function finishRun(testCase, name, result, pdfFile) {
   const rows = DATASET_ROWS[testCase.dataset];
-  const check = pdfFile && fs.existsSync(pdfFile) ? checkPdf(pdfFile, rows, testCase.variants ?? []) : null;
+  const check = pdfFile && fs.existsSync(pdfFile) ? checkPdf(pdfFile, rows, testCase) : null;
   const outcome = verdict(testCase, result, check);
   if (pdfFile && !values['keep-pdf'] && fs.existsSync(pdfFile)) fs.rmSync(pdfFile);
   fs.writeFileSync(path.join(runDir, `${name}.json`), JSON.stringify({ case: testCase, environment, ...result, check, outcome }, null, 2));

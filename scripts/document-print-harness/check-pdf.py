@@ -9,7 +9,8 @@ Checks, and prints one JSON line:
   print upper case; a narrow unwrapped header may truncate, so only the last
   column's label is required), so no column was clipped;
 - the hidden sort keys never print;
-- each --expect-text appears somewhere, and no --refuse-text does.
+- each --expect-text appears somewhere, each --expect-text-once appears exactly once,
+  and no --refuse-text appears.
 
 Text is compared with whitespace removed, since a wrapped cell can break a row
 id across lines. Needs pypdf (pip install pypdf).
@@ -26,6 +27,7 @@ parser.add_argument('pdf')
 parser.add_argument('expected_rows', type=int)
 parser.add_argument('--last-column', default='NOTES')
 parser.add_argument('--expect-text', action='append', default=[])
+parser.add_argument('--expect-text-once', action='append', default=[])
 parser.add_argument('--refuse-text', action='append', default=[])
 args = parser.parse_args()
 
@@ -78,9 +80,11 @@ result = {
 document_text = re.sub(r'\s+', ' ', ' '.join(all_text))
 result['missingText'] = [t for t in args.expect_text if t not in document_text]
 result['refusedText'] = [t for t in args.refuse_text if t in document_text]
+result['incorrectTextCounts'] = [t for t in args.expect_text_once if document_text.count(t) != 1]
 result['ok'] = (
     not result['missingText']
     and not result['refusedText']
+    and not result['incorrectTextCounts']
     and result['complete']
     and result['labelProblems'] == 0
     and result['pagesWithoutLastColumn'] == 0

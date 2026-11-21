@@ -14,6 +14,15 @@ export const DATASET_ROWS = {
   'rows-6000': 6_000,
   'rows-5000': 5_000,
   'kpi-and-table': 1000,
+  'table-totals': 500,
+};
+
+/** Text and additional layout rows expected by a dataset. */
+export const DATASET_PRINT_EXPECTATIONS = {
+  'table-totals': {
+    footerRows: 1,
+    expectOnce: ['No records to display', 'Total 8,765'],
+  },
 };
 
 /**
@@ -85,6 +94,7 @@ export const SUITES = {
     { dataset: 'wrapped-278', variants: ['variable'] },
     { dataset: 'kpi-and-table', variants: ['long-words'] },
     { dataset: 'kpi-and-table', variants: ['controlled'] },
+    { dataset: 'table-totals' },
   ],
   /** Every forced failure stops with its code (`stall` waits out the 120 s deadline). */
   failures: [
