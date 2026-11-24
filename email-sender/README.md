@@ -13,8 +13,9 @@
 2. Resolves recipients + sender context (for scheduled reports via `GET /api/v1/schedules/{id}/internal`).
 3. Sends one email per recipient with the same attachment set.
 4. Applies the existing email size guardrail to SES and external delivery; gzip is
-   measured after decoding. Oversized files become secure download links. Admitted
-   external attachments carry a signed `maxBytes` bound enforced by the receiver.
+   measured after decoding. When the email exceeds the limit, the sender copies
+   the files to the private report download prefix and emails seven-day links
+   issued by the app. Admitted external attachments carry a signed `maxBytes` bound enforced by the receiver.
 5. Chooses delivery provider based on `EMAIL_PROVIDER_MODE`:
    - `SES` (default)
    - `EXTERNAL` (signed webhook call)
@@ -38,6 +39,12 @@ LAMBDA_API_KEY=<shared-internal-api-key>
 BRIEFINGS_EMAIL_SENDER_URL=<EmailSenderFunctionUrl output>
 LAMBDA_API_KEY=<same-shared-internal-api-key>
 ```
+
+For oversized emails, the sender uses the same API key to request download
+tokens from the app after copying the files to the stack bucket. Configure the
+app's export bucket to match and grant its S3 credentials read access to
+the report download prefix. Deploy the app with the download endpoints before
+updating this stack.
 
 Semaphor App calls the Function URL with:
 

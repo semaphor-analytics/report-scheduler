@@ -135,6 +135,16 @@ Resources:
             Prefix: exports/
             Status: Enabled
             ExpirationInDays: 1
+          - Id: DeleteReportDownloads
+            Prefix: report-downloads/
+            Status: Enabled
+            ExpirationInDays: 8
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
+          - Id: DeleteReportDownloadMarkers
+            Prefix: report-downloads/
+            Status: Enabled
+            ExpiredObjectDeleteMarker: true
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         IgnorePublicAcls: true
@@ -176,6 +186,14 @@ Resources:
               - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*/attempts/*/export.xlsx'
               - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*/final/export.csv.gz'
               - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*/final/export.xlsx'
+          - Sid: AllowEmailSenderToStoreReportDownloads
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt EmailSenderFunctionRole.Arn
+            Action:
+              - s3:PutObject
+            Resource:
+              - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/report-downloads/*'
           - Sid: AllowChunkProcessorAccess
             Effect: Allow
             Principal:
@@ -294,6 +312,11 @@ Resources:
                   - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/exports/*/final/export.xlsx'
               - Effect: Allow
                 Action:
+                  - s3:PutObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::semaphor-reports-${AWS::AccountId}-${AWS::StackName}/report-downloads/*'
+              - Effect: Allow
+                Action:
                   - ses:SendRawEmail
                   - ses:CreateEmailIdentity
                   - ses:GetEmailIdentity
@@ -315,6 +338,7 @@ Resources:
       Role: !GetAtt EmailSenderFunctionRole.Arn
       Environment:
         Variables:
+          S3_BUCKET_NAME: !Ref PdfBucket
           SES_SENDER_EMAIL: !Ref SesSenderEmail
           EMAIL_PROVIDER_MODE: !Ref EmailProviderMode
           SES_REGION: !Ref SesRegion

@@ -24,10 +24,9 @@ function getEmailSenderConfig() {
       process.env.EMAIL_MAX_RAW_SIZE_BYTES,
       9 * 1024 * 1024
     ),
-    attachmentLinkExpirySeconds: parseInteger(
-      process.env.EMAIL_ATTACHMENT_LINK_EXPIRY_SECONDS,
-      24 * 60 * 60
-    ),
+    reportDownloadBucket: process.env.S3_BUCKET_NAME,
+    appUrl: process.env.SEMAPHOR_APP_URL,
+    lambdaApiKey: process.env.LAMBDA_API_KEY,
     sesSenderEmail:
       process.env.SES_SENDER_EMAIL || 'Semaphor <noreply@example.com>',
   };

@@ -37,7 +37,6 @@ function buildTestConfig(mode = 'SES') {
     emailExternalWebhookUrl: 'https://example.com/provider',
     emailExternalAuthSecret: 'secret',
     emailMaxRawSizeBytes: 9 * 1024 * 1024,
-    attachmentLinkExpirySeconds: 900,
     sesSenderEmail: 'Acme Analytics <reports@acme.com>',
   };
 }
@@ -64,6 +63,10 @@ for (const mode of ['SES', 'EXTERNAL']) test(`${mode} Matrix gzip delivery appli
         senderEmail: 'reports@example.com', companyName: 'Acme' },
       provider: { name: mode }, config: { ...buildTestConfig(mode), emailMaxRawSizeBytes: limit },
       storage: { getObject: () => ({ promise: async () => ({ Body: compressed }) }) },
+      prepareDownloadLinks: async (attachments) => {
+        assert.equal(attachments[0].contentEncoding, 'gzip');
+        return [{ name: 'Matrix', format: 'csv', url: 'https://app.example/api/v1/briefings/report-download?token=matrix' }];
+      },
     });
   };
   const result = await prepare('Region,Revenue\nSouth,0.000009\n');
@@ -77,7 +80,8 @@ for (const mode of ['SES', 'EXTERNAL']) test(`${mode} Matrix gzip delivery appli
   const large = await prepare('0'.repeat(200000));
   assert.equal(large.usedLinkFallback, true);
   assert.deepEqual(large.attachmentsForProvider, []);
-  assert.match(large.htmlBody, /response-content-encoding=gzip/);
+  assert.match(large.htmlBody, /report-download\?token=matrix/);
+  assert.match(large.textBody, /report-download\?token=matrix/);
 });
 
 function buildPreparedDelivery() {
@@ -987,10 +991,7 @@ test('prepareEmailDelivery keeps external provider URLs on the short expiry', as
     provider: { name: 'EXTERNAL' },
     scheduleId: 'sched_123',
     leaseOwner: 'lease_123',
-    config: {
-      ...buildTestConfig('EXTERNAL'),
-      attachmentLinkExpirySeconds: 24 * 60 * 60,
-    },
+    config: buildTestConfig('EXTERNAL'),
   });
 
   assert.equal(prepared.attachmentsForProvider.length, 1);
@@ -1021,6 +1022,7 @@ for (const mode of ['SES', 'EXTERNAL']) test(`${mode} attaches a PNG card image 
       senderEmail: 'reports@example.com', companyName: 'Acme' },
     provider: { name: mode }, config: { ...buildTestConfig(mode), emailMaxRawSizeBytes: limit },
     storage: { getObject: () => ({ promise: async () => ({ Body: png }) }) },
+    prepareDownloadLinks: async () => [{ name: 'Orders', format: 'png', url: 'https://app.example/api/v1/briefings/report-download?token=png' }],
   });
   const prepared = await prepare();
   assert.equal(prepared.usedLinkFallback, false);

@@ -4,6 +4,7 @@ const { gunzipSync } = require('node:zlib');
 const s3 = new AWS.S3();
 
 const { getEmailSenderConfig } = require('./lib/config');
+const { prepareReportDownloadLinks } = require('./lib/report-downloads');
 const {
   REPORT_EMAIL_BRANDED_ACTION,
   REPORT_EMAIL_BRANDED_V2_ACTION,
@@ -96,20 +97,6 @@ function normalizeArtifacts(rawAttachments) {
         typeof attachment?.sizeBytes === 'number' ? attachment.sizeBytes : null,
     };
   });
-}
-
-function buildDownloadLinks(attachments, expiresInSeconds) {
-  return attachments.map((attachment) => ({
-    name: attachment.rawName,
-    format: attachment.format,
-    url: s3.getSignedUrl('getObject', {
-      Bucket: attachment.s3Bucket,
-      Key: attachment.s3Key,
-      Expires: expiresInSeconds,
-      ResponseContentDisposition: `attachment; filename="${attachment.name}"`,
-      ...(attachment.contentEncoding ? { ResponseContentEncoding: attachment.contentEncoding, ResponseContentType: attachment.contentType } : {}),
-    }),
-  }));
 }
 
 function buildExternalPayloadAttachments(attachments, expiresInSeconds) {
@@ -323,6 +310,7 @@ async function prepareEmailDelivery({
   branding = null,
   fromAddress = null,
   storage = s3,
+  prepareDownloadLinks = prepareReportDownloadLinks,
 }) {
   let attachmentsForProvider = artifacts;
   let totalAttachmentBytes = 0;
@@ -379,10 +367,7 @@ async function prepareEmailDelivery({
     if (estimatedSesRawSizeBytes > config.emailMaxRawSizeBytes) {
       usedLinkFallback = true;
       attachmentsForProvider = [];
-      downloadLinks = buildDownloadLinks(
-        sizedArtifacts,
-        config.attachmentLinkExpirySeconds
-      );
+      downloadLinks = await prepareDownloadLinks(sizedArtifacts, storage, config);
       emailBodies = buildEmailBodies({
         emailMessage: emailContext.emailMessage,
         emailTextMessage: emailContext.emailTextMessage,

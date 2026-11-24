@@ -32,3 +32,25 @@ test('existing email role can read final Matrix artifacts, not checkpoints or ch
     assert.ok(paths.every(path => !path.includes('chunks') && !path.includes('checkpoints') && !path.at(-1).startsWith('*')));
   }
 });
+
+test('report copies have a dedicated write grant and outlive the emailed token', () => {
+  const resources = template.Resources;
+  const role = resources.EmailSenderFunctionRole.Properties.Policies[0].PolicyDocument.Statement
+    .find(statement => statement.Action.includes('s3:PutObject'));
+  const bucket = resources.PdfBucketPolicy.Properties.PolicyDocument.Statement
+    .find(statement => statement.Sid === 'AllowEmailSenderToStoreReportDownloads');
+  assert.equal(bucket.Principal.AWS, 'EmailSenderFunctionRole.Arn');
+  for (const statement of [role, bucket]) {
+    assert.deepEqual(statement.Action, ['s3:PutObject']);
+    assert.equal(statement.Resource.length, 1);
+    assert.ok(statement.Resource[0].endsWith('/report-downloads/*'));
+  }
+  assert.equal(resources.EmailSenderFunction.Properties.Environment.Variables.S3_BUCKET_NAME, 'PdfBucket');
+  const rules = resources.PdfBucket.Properties.LifecycleConfiguration.Rules;
+  assert.equal(rules.find(rule => rule.Prefix === 'exports/').ExpirationInDays, 1);
+  const downloads = rules.find(rule => rule.Id === 'DeleteReportDownloads');
+  assert.equal(downloads.Prefix, 'report-downloads/');
+  assert.equal(downloads.ExpirationInDays, 8);
+  assert.equal(downloads.Status, 'Enabled');
+  assert.equal(downloads.NoncurrentVersionExpiration.NoncurrentDays, 1);
+});
